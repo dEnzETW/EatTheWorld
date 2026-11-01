@@ -1,4 +1,4 @@
--- GELUT FLIGHT MODE V6 - 2000 STUDS + SPEED 200 (STANDALONE TEST)
+-- GELUT FLIGHT MODE V6 - 3000 STUDS + SPEED 300 (STANDALONE TEST)
 -- ON  : simpan posisi awal, lalu PivotTo target ketinggian ke atas.
 -- HOVER: tahan ketinggian sambil joystick menggerakkan karakter mendatar.
 -- OFF : PivotTo kembali ke posisi awal.
@@ -14,8 +14,8 @@ local playerGui = player:WaitForChild("PlayerGui")
 local oldGui = playerGui:FindFirstChild("GELUT_FLIGHT_TELEPORT_HOVER_V6")
 if oldGui then oldGui:Destroy() end
 
-local TELEPORT_HEIGHT = 5000 -- target uji: 5000 studs
-local HORIZONTAL_SPEED = 500 -- kecepatan gerak mendatar
+local TELEPORT_HEIGHT = 3000 -- target uji: 3000 studs
+local HORIZONTAL_SPEED = 300 -- kecepatan gerak mendatar
 
 local enabled = false
 local savedPivot = nil
