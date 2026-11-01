@@ -1,8 +1,9 @@
--- GELUT FLIGHT MODE - VERTICAL TELEPORT + HOVER (STANDALONE TEST)
--- ON  : teleport vertikal ke atas, lalu melayang di ketinggian.
--- MOVE: joystick untuk bergerak mendatar.
--- OFF : lepaskan penahan udara agar karakter turun karena gravitasi.
--- Script pengujian terpisah; tidak mengubah GELUT utama.
+-- GELUT FLIGHT MODE V2 - VERTICAL TELEPORT + HOVER (STANDALONE TEST)
+-- ON  : simpan posisi awal, lalu PivotTo 500 studs ke atas.
+-- HOVER: tahan ketinggian sambil joystick menggerakkan karakter mendatar.
+-- OFF : PivotTo kembali ke posisi awal.
+-- Catatan: server game dapat mengoreksi atau menolak teleport lokal.
+-- Script ini terpisah; tidak mengubah GELUT utama.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -10,30 +11,30 @@ local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
-local oldGui = playerGui:FindFirstChild("GELUT_FLIGHT_TELEPORT_TEST")
-if oldGui then
-    oldGui:Destroy()
-end
+local oldGui = playerGui:FindFirstChild("GELUT_FLIGHT_TELEPORT_HOVER_V2")
+if oldGui then oldGui:Destroy() end
 
-local TELEPORT_HEIGHT = 800 -- studs ke atas dari posisi awal (uji)
-local HORIZONTAL_SPEED = 600
+local TELEPORT_HEIGHT = 500 -- ubah angka ini untuk mengatur ketinggian
+local HORIZONTAL_SPEED = 60 -- kecepatan gerak mendatar
 
 local enabled = false
-local velocity
-local gyro
-local heartbeatConnection
-local savedStartCFrame = nil
+local savedPivot = nil
+local savedPosition = nil
+local hoverY = nil
+local velocity = nil
+local gyro = nil
+local heartbeatConnection = nil
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "GELUT_FLIGHT_TELEPORT_TEST"
+gui.Name = "GELUT_FLIGHT_TELEPORT_HOVER_V2"
 gui.ResetOnSpawn = false
 gui.DisplayOrder = 999
 gui.Parent = playerGui
 
 local button = Instance.new("TextButton")
 button.Name = "FlightToggle"
-button.Size = UDim2.fromOffset(166, 44)
-button.Position = UDim2.new(0.10, -43, 0.48, 0)
+button.Size = UDim2.fromOffset(172, 44)
+button.Position = UDim2.new(0.5, -86, 0.78, 0)
 button.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
 button.TextColor3 = Color3.fromRGB(255, 255, 255)
 button.Text = "FLIGHT MODE  OFF"
@@ -51,40 +52,48 @@ stroke.Color = Color3.fromRGB(139, 0, 0)
 stroke.Thickness = 2
 stroke.Parent = button
 
-local function stopFlight()
-    enabled = false
-
+local function clearFlightObjects()
     if heartbeatConnection then
         heartbeatConnection:Disconnect()
         heartbeatConnection = nil
     end
-
     if velocity then
         velocity:Destroy()
         velocity = nil
     end
-
     if gyro then
         gyro:Destroy()
         gyro = nil
     end
+end
+
+local function stopFlight()
+    enabled = false
+    clearFlightObjects()
 
     local character = player.Character
-    local root = character and character:FindFirstChild("HumanoidRootPart")
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 
-    -- OFF: teleport kembali ke posisi awal, bukan jatuh perlahan.
-    if root and savedStartCFrame then
-        root.CFrame = savedStartCFrame
-        root.AssemblyLinearVelocity = Vector3.zero
-        root.AssemblyAngularVelocity = Vector3.zero
+    -- Kembali ke transform awal dengan satu PivotTo.
+    if character and savedPivot then
+        pcall(function()
+            character:PivotTo(savedPivot)
+            local root = character:FindFirstChild("HumanoidRootPart")
+            if root then
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            end
+        end)
     end
-    savedStartCFrame = nil
 
     if humanoid then
         humanoid.PlatformStand = false
         humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
     end
+
+    savedPivot = nil
+    savedPosition = nil
+    hoverY = nil
 
     button.Text = "FLIGHT MODE  OFF"
     button.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
@@ -95,43 +104,60 @@ local function startFlight()
     local root = character and character:FindFirstChild("HumanoidRootPart")
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
 
-    if not root or not humanoid or humanoid.Health <= 0 then
+    if not character or not root or not humanoid or humanoid.Health <= 0 then
         return
     end
 
-    -- Bersihkan controller lama sebelum mengaktifkan ulang.
-    if velocity then velocity:Destroy() velocity = nil end
-    if gyro then gyro:Destroy() gyro = nil end
-    if heartbeatConnection then
-        heartbeatConnection:Disconnect()
-        heartbeatConnection = nil
-    end
+    clearFlightObjects()
+
+    savedPivot = character:GetPivot()
+    savedPosition = root.Position
+    hoverY = savedPosition.Y + TELEPORT_HEIGHT
 
     enabled = true
-    savedStartCFrame = root.CFrame
     button.Text = "FLIGHT MODE  ON"
     button.BackgroundColor3 = Color3.fromRGB(95, 25, 25)
 
-    -- Teleport instan ke atas, bukan melompat/naik bertahap.
-    root.CFrame = root.CFrame + Vector3.new(0, TELEPORT_HEIGHT, 0)
+    -- Pindahkan seluruh model karakter, bukan hanya root part.
+    local targetPivot = savedPivot + Vector3.new(0, TELEPORT_HEIGHT, 0)
+    local ok = pcall(function()
+        character:PivotTo(targetPivot)
+    end)
+
+    if not ok then
+        enabled = false
+        savedPivot = nil
+        hoverY = nil
+        button.Text = "FLIGHT MODE  OFF"
+        button.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
+        return
+    end
+
+    root = character:FindFirstChild("HumanoidRootPart")
+    if not root then
+        stopFlight()
+        return
+    end
+
     root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
 
     humanoid:ChangeState(Enum.HumanoidStateType.Physics)
     humanoid.PlatformStand = true
 
     velocity = Instance.new("BodyVelocity")
-    velocity.Name = "GELUT_FlightHoverVelocity"
+    velocity.Name = "GELUT_FlightHoverVelocity_V2"
     velocity.MaxForce = Vector3.new(1e8, 1e8, 1e8)
-    velocity.P = 25000
+    velocity.P = 30000
     velocity.Velocity = Vector3.zero
     velocity.Parent = root
 
     gyro = Instance.new("BodyGyro")
-    gyro.Name = "GELUT_FlightHoverGyro"
+    gyro.Name = "GELUT_FlightHoverGyro_V2"
     gyro.MaxTorque = Vector3.new(1e8, 1e8, 1e8)
     gyro.P = 25000
     gyro.D = 800
-    gyro.CFrame = workspace.CurrentCamera and workspace.CurrentCamera.CFrame or root.CFrame
+    gyro.CFrame = root.CFrame
     gyro.Parent = root
 
     heartbeatConnection = RunService.Heartbeat:Connect(function()
@@ -147,13 +173,14 @@ local function startFlight()
             return
         end
 
-        -- Joystick menggerakkan karakter mendatar; sumbu Y tetap ditahan.
+        -- Gerak mendatar dari joystick; ketinggian vertikal ditahan.
         local move = currentHumanoid.MoveDirection * HORIZONTAL_SPEED
-        velocity.Velocity = Vector3.new(move.X, 0, move.Z)
+        local verticalCorrection = math.clamp((hoverY - currentRoot.Position.Y) * 8, -80, 80)
+        velocity.Velocity = Vector3.new(move.X, verticalCorrection, move.Z)
 
         local camera = workspace.CurrentCamera
         if camera then
-            gyro.CFrame = camera.CFrame
+            gyro.CFrame = CFrame.new(currentRoot.Position, currentRoot.Position + camera.CFrame.LookVector)
         end
     end)
 end
@@ -168,10 +195,17 @@ end)
 
 player.CharacterAdded:Connect(function()
     if enabled then
-        stopFlight()
+        clearFlightObjects()
+        enabled = false
+        savedPivot = nil
+        savedPosition = nil
+        hoverY = nil
+        button.Text = "FLIGHT MODE  OFF"
+        button.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
     end
 end)
 
 gui.Destroying:Connect(function()
-    stopFlight()
+    enabled = false
+    clearFlightObjects()
 end)
