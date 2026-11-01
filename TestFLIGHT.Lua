@@ -1,4 +1,4 @@
--- GELUT FLIGHT MODE V5 - 1000 STUDS + COMPACT DIAGNOSTIC (STANDALONE TEST)
+-- GELUT FLIGHT MODE V6 - 2000 STUDS + SPEED 200 (STANDALONE TEST)
 -- ON  : simpan posisi awal, lalu PivotTo target ketinggian ke atas.
 -- HOVER: tahan ketinggian sambil joystick menggerakkan karakter mendatar.
 -- OFF : PivotTo kembali ke posisi awal.
@@ -11,11 +11,11 @@ local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
-local oldGui = playerGui:FindFirstChild("GELUT_FLIGHT_TELEPORT_HOVER_V5")
+local oldGui = playerGui:FindFirstChild("GELUT_FLIGHT_TELEPORT_HOVER_V6")
 if oldGui then oldGui:Destroy() end
 
-local TELEPORT_HEIGHT = 1000 -- target uji: 1000 studs
-local HORIZONTAL_SPEED = 60 -- kecepatan gerak mendatar
+local TELEPORT_HEIGHT = 2000 -- target uji: 2000 studs
+local HORIZONTAL_SPEED = 200 -- kecepatan gerak mendatar
 
 local enabled = false
 local savedPivot = nil
@@ -26,7 +26,7 @@ local gyro = nil
 local heartbeatConnection = nil
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "GELUT_FLIGHT_TELEPORT_HOVER_V5"
+gui.Name = "GELUT_FLIGHT_TELEPORT_HOVER_V6"
 gui.ResetOnSpawn = false
 gui.DisplayOrder = 999
 gui.Parent = playerGui
@@ -161,14 +161,14 @@ local function startFlight()
     humanoid.PlatformStand = true
 
     velocity = Instance.new("BodyVelocity")
-    velocity.Name = "GELUT_FlightHoverVelocity_V5"
+    velocity.Name = "GELUT_FlightHoverVelocity_V6"
     velocity.MaxForce = Vector3.new(1e8, 1e8, 1e8)
     velocity.P = 30000
     velocity.Velocity = Vector3.zero
     velocity.Parent = root
 
     gyro = Instance.new("BodyGyro")
-    gyro.Name = "GELUT_FlightHoverGyro_V5"
+    gyro.Name = "GELUT_FlightHoverGyro_V6"
     gyro.MaxTorque = Vector3.new(1e8, 1e8, 1e8)
     gyro.P = 25000
     gyro.D = 800
