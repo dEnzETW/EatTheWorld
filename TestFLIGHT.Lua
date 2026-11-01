@@ -1,4 +1,4 @@
--- GELUT FLIGHT MODE V6 - 4000 STUDS + SPEED 400 (STANDALONE TEST)
+-- GELUT FLIGHT MODE V9 - 4000 STUDS + DROP RECOVERY (STANDALONE TEST)
 -- ON  : simpan posisi awal, lalu PivotTo target ketinggian ke atas.
 -- HOVER: tahan ketinggian sambil joystick menggerakkan karakter mendatar.
 -- OFF : PivotTo kembali ke posisi awal.
@@ -11,22 +11,25 @@ local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
-local oldGui = playerGui:FindFirstChild("GELUT_FLIGHT_TELEPORT_HOVER_V6")
+local oldGui = playerGui:FindFirstChild("GELUT_FLIGHT_TELEPORT_HOVER_V9")
 if oldGui then oldGui:Destroy() end
 
 local TELEPORT_HEIGHT = 4000 -- target uji: 4000 studs
-local HORIZONTAL_SPEED = 400 -- kecepatan gerak mendatar
+local HORIZONTAL_SPEED = 200 -- gerak mendatar lebih terkendali
 
 local enabled = false
 local savedPivot = nil
 local savedPosition = nil
 local hoverY = nil
 local velocity = nil
+local heightHold = nil
 local gyro = nil
 local heartbeatConnection = nil
+local lastRecoveryAt = 0
+local recoveryTimes = {}
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "GELUT_FLIGHT_TELEPORT_HOVER_V6"
+gui.Name = "GELUT_FLIGHT_TELEPORT_HOVER_V9"
 gui.ResetOnSpawn = false
 gui.DisplayOrder = 999
 gui.Parent = playerGui
@@ -78,6 +81,10 @@ local function clearFlightObjects()
     if velocity then
         velocity:Destroy()
         velocity = nil
+    end
+    if heightHold then
+        heightHold:Destroy()
+        heightHold = nil
     end
     if gyro then
         gyro:Destroy()
@@ -160,15 +167,25 @@ local function startFlight()
     humanoid:ChangeState(Enum.HumanoidStateType.Physics)
     humanoid.PlatformStand = true
 
+    -- Kontrol horizontal dipisah dari penahan ketinggian.
     velocity = Instance.new("BodyVelocity")
-    velocity.Name = "GELUT_FlightHoverVelocity_V6"
-    velocity.MaxForce = Vector3.new(1e8, 1e8, 1e8)
+    velocity.Name = "GELUT_FlightHorizontalVelocity_V9"
+    velocity.MaxForce = Vector3.new(1e8, 0, 1e8)
     velocity.P = 30000
     velocity.Velocity = Vector3.zero
     velocity.Parent = root
 
+    -- BodyPosition menahan sumbu Y pada target hover.
+    heightHold = Instance.new("BodyPosition")
+    heightHold.Name = "GELUT_FlightAltitudeHold_V9"
+    heightHold.MaxForce = Vector3.new(0, 2e9, 0)
+    heightHold.P = 18000
+    heightHold.D = 9000
+    heightHold.Position = Vector3.new(root.Position.X, hoverY, root.Position.Z)
+    heightHold.Parent = root
+
     gyro = Instance.new("BodyGyro")
-    gyro.Name = "GELUT_FlightHoverGyro_V6"
+    gyro.Name = "GELUT_FlightHoverGyro_V8"
     gyro.MaxTorque = Vector3.new(1e8, 1e8, 1e8)
     gyro.P = 25000
     gyro.D = 800
@@ -183,7 +200,7 @@ local function startFlight()
         local currentHumanoid = currentCharacter and currentCharacter:FindFirstChildOfClass("Humanoid")
 
         if not currentRoot or not currentHumanoid or currentHumanoid.Health <= 0
-            or not velocity or not gyro then
+            or not velocity or not heightHold or not gyro then
             stopFlight()
             return
         end
@@ -191,13 +208,42 @@ local function startFlight()
         -- Gerak mendatar dari joystick; koreksi vertikal aktif terus,
         -- termasuk saat joystick digerakkan.
         local move = currentHumanoid.MoveDirection * HORIZONTAL_SPEED
+
+        -- BodyVelocity hanya mengatur gerakan mendatar.
+        velocity.Velocity = Vector3.new(move.X, 0, move.Z)
+
+        -- Pulihkan jika perubahan ukuran/physics menjatuhkan karakter jauh
+        -- dari target. Percobaan dibatasi agar tidak berulang tanpa henti
+        -- bila server terus mengoreksi posisi lokal.
         local heightError = hoverY - currentRoot.Position.Y
-        local verticalCorrection = math.clamp(
-            (heightError * 14) - (currentRoot.AssemblyLinearVelocity.Y * 3.5),
-            -220,
-            220
+        local now = os.clock()
+        if math.abs(heightError) > 150 and (now - lastRecoveryAt) >= 1 then
+            for i = #recoveryTimes, 1, -1 do
+                if now - recoveryTimes[i] > 10 then
+                    table.remove(recoveryTimes, i)
+                end
+            end
+
+            if #recoveryTimes < 5 then
+                lastRecoveryAt = now
+                table.insert(recoveryTimes, now)
+
+                currentCharacter:PivotTo(
+                    currentCharacter:GetPivot() + Vector3.new(0, heightError, 0)
+                )
+                currentRoot.AssemblyLinearVelocity = Vector3.zero
+                currentRoot.AssemblyAngularVelocity = Vector3.zero
+            else
+                warn("[GELUT FLIGHT V9] Pemulihan dihentikan: server mungkin mengoreksi teleport.")
+            end
+        end
+
+        -- BodyPosition mempertahankan Y, sementara X/Z mengikuti karakter.
+        heightHold.Position = Vector3.new(
+            currentRoot.Position.X,
+            hoverY,
+            currentRoot.Position.Z
         )
-        velocity.Velocity = Vector3.new(move.X, verticalCorrection, move.Z)
 
         -- Indikator berada DI DALAM tombol utama agar selalu terlihat.
         updateFlightButton("ON", currentRoot.Position.Y - savedPosition.Y)
