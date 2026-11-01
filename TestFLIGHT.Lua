@@ -14,8 +14,8 @@ local playerGui = player:WaitForChild("PlayerGui")
 local oldGui = playerGui:FindFirstChild("GELUT_FLIGHT_TELEPORT_HOVER_V6")
 if oldGui then oldGui:Destroy() end
 
-local TELEPORT_HEIGHT = 3000 -- target uji: 3000 studs
-local HORIZONTAL_SPEED = 300 -- kecepatan gerak mendatar
+local TELEPORT_HEIGHT = 5000 -- target uji: 10000 studs
+local HORIZONTAL_SPEED = 400 -- kecepatan gerak mendatar
 
 local enabled = false
 local savedPivot = nil
@@ -37,7 +37,7 @@ button.Size = UDim2.fromOffset(190, 48)
 button.Position = UDim2.new(0.5, -95, 0.78, 0)
 button.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
 button.TextColor3 = Color3.fromRGB(255, 255, 255)
-button.Text = "FLIGHT MODE  OFF\\nTARGET: 500 | ACTUAL: --"
+button.Text = "FLIGHT MODE  OFF\\nTARGET: 5000 | ACTUAL: --"
 button.TextSize = 12
 button.TextWrapped = true
 button.Font = Enum.Font.GothamBold
