@@ -14,8 +14,8 @@ local playerGui = player:WaitForChild("PlayerGui")
 local oldGui = playerGui:FindFirstChild("GELUT_FLIGHT_TELEPORT_HOVER_V6")
 if oldGui then oldGui:Destroy() end
 
-local TELEPORT_HEIGHT = 2000 -- target uji: 2000 studs
-local HORIZONTAL_SPEED = 200 -- kecepatan gerak mendatar
+local TELEPORT_HEIGHT = 5000 -- target uji: 5000 studs
+local HORIZONTAL_SPEED = 500 -- kecepatan gerak mendatar
 
 local enabled = false
 local savedPivot = nil
