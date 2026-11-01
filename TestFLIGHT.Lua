@@ -15,7 +15,7 @@ if oldGui then
     oldGui:Destroy()
 end
 
-local TELEPORT_HEIGHT = 500 -- studs ke atas dari posisi awal (uji)
+local TELEPORT_HEIGHT = 5000 -- studs ke atas dari posisi awal (uji)
 local HORIZONTAL_SPEED = 60
 
 local enabled = false
