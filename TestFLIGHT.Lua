@@ -1,4 +1,4 @@
--- GELUT FLIGHT MODE V4 - VISIBLE HEIGHT DIAGNOSTIC + HOVER (STANDALONE TEST)
+-- GELUT FLIGHT MODE V5 - 1000 STUDS + COMPACT DIAGNOSTIC (STANDALONE TEST)
 -- ON  : simpan posisi awal, lalu PivotTo target ketinggian ke atas.
 -- HOVER: tahan ketinggian sambil joystick menggerakkan karakter mendatar.
 -- OFF : PivotTo kembali ke posisi awal.
@@ -11,10 +11,10 @@ local RunService = game:GetService("RunService")
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
-local oldGui = playerGui:FindFirstChild("GELUT_FLIGHT_TELEPORT_HOVER_V4")
+local oldGui = playerGui:FindFirstChild("GELUT_FLIGHT_TELEPORT_HOVER_V5")
 if oldGui then oldGui:Destroy() end
 
-local TELEPORT_HEIGHT = 500 -- ubah angka ini untuk mengatur ketinggian
+local TELEPORT_HEIGHT = 1000 -- target uji: 1000 studs
 local HORIZONTAL_SPEED = 60 -- kecepatan gerak mendatar
 
 local enabled = false
@@ -26,15 +26,15 @@ local gyro = nil
 local heartbeatConnection = nil
 
 local gui = Instance.new("ScreenGui")
-gui.Name = "GELUT_FLIGHT_TELEPORT_HOVER_V4"
+gui.Name = "GELUT_FLIGHT_TELEPORT_HOVER_V5"
 gui.ResetOnSpawn = false
 gui.DisplayOrder = 999
 gui.Parent = playerGui
 
 local button = Instance.new("TextButton")
 button.Name = "FlightToggle"
-button.Size = UDim2.fromOffset(230, 64)
-button.Position = UDim2.new(0.5, -115, 0.72, 0)
+button.Size = UDim2.fromOffset(190, 48)
+button.Position = UDim2.new(0.5, -95, 0.78, 0)
 button.BackgroundColor3 = Color3.fromRGB(35, 35, 40)
 button.TextColor3 = Color3.fromRGB(255, 255, 255)
 button.Text = "FLIGHT MODE  OFF\\nTARGET: 500 | ACTUAL: --"
@@ -161,14 +161,14 @@ local function startFlight()
     humanoid.PlatformStand = true
 
     velocity = Instance.new("BodyVelocity")
-    velocity.Name = "GELUT_FlightHoverVelocity_V4"
+    velocity.Name = "GELUT_FlightHoverVelocity_V5"
     velocity.MaxForce = Vector3.new(1e8, 1e8, 1e8)
     velocity.P = 30000
     velocity.Velocity = Vector3.zero
     velocity.Parent = root
 
     gyro = Instance.new("BodyGyro")
-    gyro.Name = "GELUT_FlightHoverGyro_V4"
+    gyro.Name = "GELUT_FlightHoverGyro_V5"
     gyro.MaxTorque = Vector3.new(1e8, 1e8, 1e8)
     gyro.P = 25000
     gyro.D = 800
@@ -193,9 +193,9 @@ local function startFlight()
         local move = currentHumanoid.MoveDirection * HORIZONTAL_SPEED
         local heightError = hoverY - currentRoot.Position.Y
         local verticalCorrection = math.clamp(
-            (heightError * 10) - (currentRoot.AssemblyLinearVelocity.Y * 2),
-            -140,
-            140
+            (heightError * 14) - (currentRoot.AssemblyLinearVelocity.Y * 3.5),
+            -220,
+            220
         )
         velocity.Velocity = Vector3.new(move.X, verticalCorrection, move.Z)
 
