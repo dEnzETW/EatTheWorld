@@ -279,22 +279,22 @@ local function doGrabTest(target)
             return
         end
 
-        local currentChar = LocalPlayer.Character
-        local events = currentChar and currentChar:FindFirstChild("Events")
-        local grabRemote = events and events:FindFirstChild("Grab")
+        local replicatedStorage = game:GetService("ReplicatedStorage")
+        local localEvents = replicatedStorage:FindFirstChild("LocalEvents")
+        local grabEvent = localEvents and localEvents:FindFirstChild("Grab")
 
-        if not grabRemote or not grabRemote:IsA("RemoteEvent") then
+        if not grabEvent or not grabEvent:IsA("BindableEvent") then
             pcall(function()
                 local c = LocalPlayer.Character
                 if c then c:PivotTo(startCFrame) end
             end)
-            setStatus("Character.Events.Grab RemoteEvent tidak ditemukan.", C.yellow)
+            setStatus("ReplicatedStorage.LocalEvents.Grab BindableEvent tidak ditemukan.", C.yellow)
             busy = false
             return
         end
 
         local fired, fireErr = pcall(function()
-            grabRemote:FireServer()
+            grabEvent:Fire()
         end)
 
         if not fired then
