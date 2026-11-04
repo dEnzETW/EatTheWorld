@@ -389,7 +389,7 @@ end
 -- Aggressive action-animation acceleration.
 -- Grab/Eat tracks in ETW are not guaranteed to expose a useful track.Name.
 -- Use Action-priority tracks instead, and catch newly played tracks as well.
-local ACTION_ANIMATION_SPEED = 12.0
+local ACTION_ANIMATION_SPEED = 8.0
 local hookedAnimationHumanoids = setmetatable({}, {__mode = "k"})
 
 local function isActionTrack(track)
@@ -928,7 +928,7 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator V3.2.5] Loaded. Eat/Grab loop active at 0.04s cadence; 12x Action-priority animation acceleration; landing stabilizer retained.")
+print("[dEnzCreator V3.2.5] Loaded. Eat/Grab loop active at 0.04s cadence; 8x Action-priority animation acceleration; landing stabilizer retained.")
 print("[dEnzCreator V3.2.5] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
 -- V3.2.5 adds a separate Hidden Maps toggle; V3.0.4 farming logic is retained.
@@ -938,6 +938,6 @@ print("[dEnzCreator V3.2.5] Bar/capacity detection loaded. Eat/Grab stay active;
 -- V3.2.5 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
 
 
--- V3.2.5: Combined title/timer header (140px), left-aligned title, 12x Action-priority animation acceleration. Remote cadence is unchanged.
+-- V3.2.5: Combined title/timer header (140px), left-aligned title, 8x Action-priority animation acceleration. Remote cadence is unchanged.
 
 -- V3.2.5: Season time starts when map food objects are detected and stops when the sell bar reaches full.
