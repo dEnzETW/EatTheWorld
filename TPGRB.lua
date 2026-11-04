@@ -1,5 +1,5 @@
 --[[
-    AUTO GRAB PLAYER - TEST V2
+    AUTO GRAB PLAYER - TEST V3.1
     - Select one player.
     - Stay behind the selected player.
     - Reposition if target movement causes a miss (client-side positioning only).
@@ -21,9 +21,9 @@ local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 local GUI_NAME = "AUTO_GRAB_PLAYER_TEST"
-local BEHIND_DISTANCE = 2.5
+local BEHIND_DISTANCE = 2.0
 local GRAB_WAIT = 1.5
-local CORRECTION_RADIUS = 6
+local CORRECTION_RADIUS = 3
 local TRACK_INTERVAL = 0.10
 
 -- Remove only this test's previous UI.
@@ -104,7 +104,7 @@ header.Parent = panel
 round(header, 12)
 
 makeLabel(
-    header, "AUTO GRAB PLAYER  •  TEST V2",
+    header, "AUTO GRAB PLAYER  •  TEST V3.1",
     UDim2.new(1, -38, 1, 0), UDim2.fromOffset(9, 0),
     9, C.white, Enum.Font.GothamBold
 )
@@ -137,6 +137,7 @@ close.TextSize = 16
 close.Font = Enum.Font.GothamBold
 close.Parent = header
 round(close, 6)
+
 close.Activated:Connect(function()
     if busy then
         setStatus("Percobaan sedang berjalan; tunggu sampai selesai.", C.yellow)
@@ -148,12 +149,14 @@ end)
 -- Drag panel from header.
 do
     local dragging, dragInput, dragStart, startPos
+
     header.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1
             or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
             startPos = panel.Position
+
             input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
                     dragging = false
@@ -161,16 +164,19 @@ do
             end)
         end
     end)
+
     header.InputChanged:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseMovement
             or input.UserInputType == Enum.UserInputType.Touch then
             dragInput = input
         end
     end)
+
     UserInputService.InputChanged:Connect(function(input)
         if dragging and (input == dragInput
             or input.UserInputType == Enum.UserInputType.Touch) then
             local delta = input.Position - dragStart
+
             panel.Position = UDim2.new(
                 startPos.X.Scale, startPos.X.Offset + delta.X,
                 startPos.Y.Scale, startPos.Y.Offset + delta.Y
@@ -211,27 +217,36 @@ round(refresh, 6)
 local function getRoot(plr)
     local char = plr and plr.Character
     if not char then return nil, nil end
+
     local hum = char:FindFirstChildOfClass("Humanoid")
     local root = char:FindFirstChild("HumanoidRootPart")
-    if not hum or hum.Health <= 0 or not root then return nil, nil end
+
+    if not hum or hum.Health <= 0 or not root then
+        return nil, nil
+    end
+
     return char, root
 end
 
 local function behindCFrame(targetRoot)
     local pos = targetRoot.Position
-        + targetRoot.CFrame.LookVector * BEHIND_DISTANCE
+        - targetRoot.CFrame.LookVector * BEHIND_DISTANCE
+
     return CFrame.lookAt(pos, targetRoot.Position)
 end
 
 local function moveBehindTarget(target)
     local _, targetRoot = getRoot(target)
     local myChar = LocalPlayer.Character
+
     if not targetRoot or not myChar then return false end
 
     local destination = behindCFrame(targetRoot)
+
     local ok = pcall(function()
         myChar:PivotTo(destination)
     end)
+
     return ok
 end
 
@@ -240,6 +255,7 @@ local function doGrabTest(target)
         setStatus("Satu percobaan masih berjalan.", C.yellow)
         return
     end
+
     if not target or target == LocalPlayer or target.Parent ~= Players then
         setStatus("Target tidak valid.", C.yellow)
         return
@@ -247,14 +263,17 @@ local function doGrabTest(target)
 
     local myChar, myRoot = getRoot(LocalPlayer)
     local targetChar, targetRoot = getRoot(target)
+
     if not myChar or not myRoot or not targetChar or not targetRoot then
         setStatus("Karakter kamu atau target belum siap.", C.yellow)
         return
     end
 
     local startCFrame = myRoot.CFrame
+
     busy = true
     attemptId += 1
+
     local thisAttempt = attemptId
 
     task.spawn(function()
@@ -274,6 +293,7 @@ local function doGrabTest(target)
         end
 
         task.wait(0.12)
+
         if not stillCurrent() then
             busy = false
             return
@@ -288,6 +308,7 @@ local function doGrabTest(target)
                 local c = LocalPlayer.Character
                 if c then c:PivotTo(startCFrame) end
             end)
+
             setStatus("ReplicatedStorage.LocalEvents.Grab BindableEvent tidak ditemukan.", C.yellow)
             busy = false
             return
@@ -302,14 +323,12 @@ local function doGrabTest(target)
                 local c = LocalPlayer.Character
                 if c then c:PivotTo(startCFrame) end
             end)
+
             setStatus("Grab gagal dipanggil: " .. tostring(fireErr), C.yellow)
             busy = false
             return
         end
 
-        -- Keep correcting behind the moving target during the 1.5s grab window.
-        -- The 6-stud threshold is only a local position correction trigger,
-        -- not a change to the server's actual Grab hitbox.
         setStatus("Grab dipanggil. Menjaga posisi belakang selama 1,5 detik...", C.yellow)
 
         local elapsed = 0
@@ -323,6 +342,7 @@ local function doGrabTest(target)
             if not latestTargetRoot then break end
 
             local movedDistance = (latestTargetRoot.Position - lastTargetPosition).Magnitude
+
             if movedDistance >= CORRECTION_RADIUS then
                 moveBehindTarget(target)
                 lastTargetPosition = latestTargetRoot.Position
@@ -331,19 +351,23 @@ local function doGrabTest(target)
 
         if stillCurrent() then
             setStatus("Waktu Grab selesai. Kembali ke posisi awal...", C.yellow)
+
             pcall(function()
                 local c = LocalPlayer.Character
                 if c then c:PivotTo(startCFrame) end
             end)
+
             task.wait(0.35)
 
             local _, myRootAfter = getRoot(LocalPlayer)
             local _, targetRootAfter = getRoot(target)
+
             if myRootAfter and targetRootAfter then
                 local distance = (myRootAfter.Position - targetRootAfter.Position).Magnitude
+
                 if distance <= CORRECTION_RADIUS then
                     setStatus(
-                        "Target berada dalam 6 studs setelah kembali. Periksa apakah ikut terbawa.",
+                        "Jarak setelah kembali kurang dari 3 studs. Periksa apakah target ikut terbawa.",
                         C.green
                     )
                 else
@@ -364,10 +388,13 @@ end
 
 local function refreshPlayers()
     for _, child in ipairs(list:GetChildren()) do
-        if child:IsA("TextButton") then child:Destroy() end
+        if child:IsA("TextButton") then
+            child:Destroy()
+        end
     end
 
     local targets = {}
+
     for _, plr in ipairs(Players:GetPlayers()) do
         if plr ~= LocalPlayer then
             table.insert(targets, plr)
@@ -393,6 +420,7 @@ local function refreshPlayers()
         row.Font = Enum.Font.GothamBold
         row.TextXAlignment = Enum.TextXAlignment.Left
         row.Parent = list
+
         round(row, 6)
 
         local pad = Instance.new("UIPadding")
@@ -413,9 +441,11 @@ local function refreshPlayers()
 end
 
 refresh.Activated:Connect(refreshPlayers)
+
 Players.PlayerAdded:Connect(function()
     task.defer(refreshPlayers)
 end)
+
 Players.PlayerRemoving:Connect(function()
     task.defer(refreshPlayers)
 end)
