@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM V3.2.2 - HIDDEN MAPS
+-- dEnzCreator ETW AUTOFARM V3.2.3 - HIDDEN MAPS
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -386,9 +386,9 @@ local function monitorNearbyFood(char, root)
     return false
 end
 
--- Conservative 3x animation test: speed up only tracks whose names clearly
+-- Controlled 5x animation test: speed up only tracks whose names clearly
 -- identify Grab or Eat. Do not multiply RemoteEvent calls or movement animations.
-local ACTION_ANIMATION_SPEED = 3.0
+local ACTION_ANIMATION_SPEED = 5.0
 local function accelerateActionAnimations(hum)
     if not hum then return end
     local ok, tracks = pcall(function() return hum:GetPlayingAnimationTracks() end)
@@ -630,7 +630,7 @@ layout.Padding = UDim.new(0, 5)
 
 local header = Instance.new("Frame")
 header.LayoutOrder = 1
-header.Size = UDim2.new(1, 0, 0, 62)
+header.Size = UDim2.new(1, 0, 0, 64)
 header.BackgroundColor3 = Color3.fromRGB(37, 39, 62)
 header.BackgroundTransparency = 0
 header.BorderSizePixel = 0
@@ -641,12 +641,12 @@ headerStroke.Color = Color3.fromRGB(125, 105, 195)
 headerStroke.Thickness = 1
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -48, 0, 22)
-title.Position = UDim2.fromOffset(5, 0)
+title.Size = UDim2.new(1, -48, 0, 23)
+title.Position = UDim2.fromOffset(6, 1)
 title.BackgroundTransparency = 1
 title.Text = "dEnzCreator"
 title.TextColor3 = Color3.new(1, 1, 1)
-title.TextSize = 12
+title.TextSize = 11
 title.Font = Enum.Font.GothamBold
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = header
@@ -675,17 +675,17 @@ Instance.new("UICorner", close).CornerRadius = UDim.new(1, 0)
 
 local runtimeBlock = Instance.new("TextLabel")
 runtimeBlock.Name = "RuntimeBlock"
-runtimeBlock.Size = UDim2.new(1, -10, 0, 34)
-runtimeBlock.Position = UDim2.fromOffset(5, 25)
+runtimeBlock.Size = UDim2.new(1, -12, 0, 34)
+runtimeBlock.Position = UDim2.fromOffset(6, 27)
 runtimeBlock.BackgroundTransparency = 1
 runtimeBlock.BorderSizePixel = 0
 runtimeBlock.Text = "Runtime: 0m 0s\nSeason time: 0m 0s"
 runtimeBlock.TextColor3 = Color3.fromRGB(240, 243, 248)
-runtimeBlock.TextSize = 9
+runtimeBlock.TextSize = 8
 runtimeBlock.Font = Enum.Font.GothamMedium
-runtimeBlock.TextXAlignment = Enum.TextXAlignment.Center
+runtimeBlock.TextXAlignment = Enum.TextXAlignment.Left
 runtimeBlock.TextYAlignment = Enum.TextYAlignment.Center
-runtimeBlock.Parent = header
+-- Important: timer label is parented directly to header and has no background of its own.\nruntimeBlock.Parent = header
 
 local function makeToggle(label, order, color, initial, callback)
     local b = Instance.new("TextButton")
@@ -906,4 +906,4 @@ print("[dEnzCreator V3.2.1] Bar/capacity detection loaded. Eat/Grab stay active;
 -- V3.2.1 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
 
 
--- V3.2.2: Combined title/timer header (140px), left-aligned title, 3x targeted Grab/Eat animation-track speed test. Remote cadence is unchanged.
+-- V3.2.3: Combined title/timer header (140px), left-aligned title, 3x targeted Grab/Eat animation-track speed test. Remote cadence is unchanged.
