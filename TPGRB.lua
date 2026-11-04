@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM V3.2.3 - HIDDEN MAPS
+-- dEnzCreator ETW AUTOFARM V3.2.4 - HIDDEN MAPS
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -386,18 +386,48 @@ local function monitorNearbyFood(char, root)
     return false
 end
 
--- Controlled 5x animation test: speed up only tracks whose names clearly
--- identify Grab or Eat. Do not multiply RemoteEvent calls or movement animations.
-local ACTION_ANIMATION_SPEED = 5.0
+-- Aggressive action-animation acceleration.
+-- Grab/Eat tracks in ETW are not guaranteed to expose a useful track.Name.
+-- Use Action-priority tracks instead, and catch newly played tracks as well.
+local ACTION_ANIMATION_SPEED = 12.0
+local hookedAnimationHumanoids = setmetatable({}, {__mode = "k"})
+
+local function isActionTrack(track)
+    local ok, priority = pcall(function() return track.Priority end)
+    if not ok or not priority then return false end
+    return priority.Value >= Enum.AnimationPriority.Action.Value
+end
+
+local function speedUpTrack(track)
+    if not track or not isActionTrack(track) then return end
+    pcall(function()
+        track:AdjustSpeed(ACTION_ANIMATION_SPEED)
+    end)
+end
+
 local function accelerateActionAnimations(hum)
     if not hum then return end
-    local ok, tracks = pcall(function() return hum:GetPlayingAnimationTracks() end)
-    if not ok or type(tracks) ~= "table" then return end
-    for _, track in ipairs(tracks) do
-        local trackName = string.lower(tostring(track.Name or ""))
-        if trackName:find("grab", 1, true) or trackName:find("eat", 1, true) then
-            pcall(function() track:AdjustSpeed(ACTION_ANIMATION_SPEED) end)
+
+    -- Apply to tracks that are already playing.
+    local ok, tracks = pcall(function()
+        return hum:GetPlayingAnimationTracks()
+    end)
+    if ok and tracks then
+        for _, track in ipairs(tracks) do
+            speedUpTrack(track)
         end
+    end
+
+    -- Apply immediately whenever a new action animation starts.
+    if not hookedAnimationHumanoids[hum] then
+        hookedAnimationHumanoids[hum] = true
+        pcall(function()
+            hum.AnimationPlayed:Connect(function(track)
+                speedUpTrack(track)
+                -- Re-apply shortly after Play in case the game resets its speed.
+                task.defer(function() speedUpTrack(track) end)
+            end)
+        end)
     end
 end
 
@@ -417,6 +447,7 @@ local function farmStep()
         if foodNearby and cycleStartedAt == nil then
             cycleStartedAt = os.clock()
             completedCycleSeconds = 0
+            print("[dEnzCreator V3.2.4] Season time started: map ready + food detected.")
         end
         fire(events:FindFirstChild("Grab"))
         local eatEvent = events:FindFirstChild("Eat")
@@ -442,6 +473,11 @@ local function farmStep()
     end
 
     if full then
+        if cycleStartedAt ~= nil then
+            completedCycleSeconds = math.max(0, os.clock() - cycleStartedAt)
+            cycleStartedAt = nil
+            print("[dEnzCreator V3.2.4] Season time stopped: sell bar detected full.")
+        end
         if not wasFull then
             wasFull = true
             skipSentForCycle = false
@@ -464,10 +500,6 @@ local function farmStep()
             or sizeDrop or barDrop
 
         if sold then
-            if cycleStartedAt ~= nil then
-                completedCycleSeconds = math.max(0, os.clock() - cycleStartedAt)
-                cycleStartedAt = nil
-            end
             print("[dEnzCreator V3.2.1] Sale/reset detected; requesting AutoSkip.")
             if not skipSentForCycle then
                 skipSentForCycle = requestSkip()
@@ -906,4 +938,5 @@ print("[dEnzCreator V3.2.1] Bar/capacity detection loaded. Eat/Grab stay active;
 -- V3.2.1 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
 
 
--- V3.2.3: Combined title/timer header (140px), left-aligned title, 3x targeted Grab/Eat animation-track speed test. Remote cadence is unchanged.
+-- V3.2.4: Combined title/timer header (140px), left-aligned title, 12x Action-priority animation acceleration. Remote cadence is unchanged.
+\n\n-- V3.2.4: Season time starts when map food objects are detected and stops when the sell bar reaches full.\n
