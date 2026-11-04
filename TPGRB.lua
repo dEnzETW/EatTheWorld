@@ -1,17 +1,10 @@
 --[[
-    AUTO GRAB PLAYER - TEST V3.1
-    - Select one player.
+    AUTO GRAB PLAYER - TEST V3.2
+    - Adaptive spacing based on character bounding-box dimensions.
     - Stay behind the selected player.
-    - Reposition if target movement causes a miss (client-side positioning only).
-    - Fire Character.Events.Grab ONCE.
-    - Hold the attempt for 1.5 seconds.
-    - Return to the saved starting position.
-    - No auto Eat, Throw, Candy scan, coin scan, or object targeting.
-
-    IMPORTANT:
-    The 6-stud value is a client-side correction/proximity threshold.
-    It does NOT enlarge the game's server-side Grab hitbox/range.
-    Successful carrying must be confirmed in-game.
+    - Fire Grab ONCE.
+    - Track target movement for 1.5 seconds.
+    - Return to saved starting position.
 ]]
 
 local Players = game:GetService("Players")
@@ -21,12 +14,13 @@ local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 local GUI_NAME = "AUTO_GRAB_PLAYER_TEST"
-local BEHIND_DISTANCE = 2.0
+local MIN_BEHIND_DISTANCE = 2.5
+local MAX_BEHIND_DISTANCE = 7.0
+local EXTRA_GAP = 0.8
 local GRAB_WAIT = 1.5
-local CORRECTION_RADIUS = 3
+local POSITION_TOLERANCE = 1.25
 local TRACK_INTERVAL = 0.10
 
--- Remove only this test's previous UI.
 local oldGui
 pcall(function()
     if gethui then oldGui = gethui():FindFirstChild(GUI_NAME) end
@@ -104,7 +98,7 @@ header.Parent = panel
 round(header, 12)
 
 makeLabel(
-    header, "AUTO GRAB PLAYER  •  TEST V3.1",
+    header, "AUTO GRAB PLAYER • TEST V3.2",
     UDim2.new(1, -38, 1, 0), UDim2.fromOffset(9, 0),
     9, C.white, Enum.Font.GothamBold
 )
@@ -228,20 +222,53 @@ local function getRoot(plr)
     return char, root
 end
 
-local function behindCFrame(targetRoot)
+-- Estimate spacing from both character bounding-box depths.
+local function getAdaptiveBehindDistance(targetChar, myChar)
+    local targetDepth = 2
+    local myDepth = 2
+
+    pcall(function()
+        local _, size = targetChar:GetBoundingBox()
+        targetDepth = size.Z
+    end)
+
+    pcall(function()
+        local _, size = myChar:GetBoundingBox()
+        myDepth = size.Z
+    end)
+
+    local distance = (targetDepth * 0.5)
+        + (myDepth * 0.5) + EXTRA_GAP
+
+    return math.clamp(
+        distance,
+        MIN_BEHIND_DISTANCE,
+        MAX_BEHIND_DISTANCE
+    )
+end
+
+local function behindCFrame(targetChar, targetRoot, myChar)
+    local distance = getAdaptiveBehindDistance(targetChar, myChar)
+
     local pos = targetRoot.Position
-        - targetRoot.CFrame.LookVector * BEHIND_DISTANCE
+        - targetRoot.CFrame.LookVector * distance
 
     return CFrame.lookAt(pos, targetRoot.Position)
 end
 
 local function moveBehindTarget(target)
-    local _, targetRoot = getRoot(target)
+    local targetChar, targetRoot = getRoot(target)
     local myChar = LocalPlayer.Character
 
-    if not targetRoot or not myChar then return false end
+    if not targetRoot or not targetChar or not myChar then
+        return false
+    end
 
-    local destination = behindCFrame(targetRoot)
+    local destination = behindCFrame(
+        targetChar,
+        targetRoot,
+        myChar
+    )
 
     local ok = pcall(function()
         myChar:PivotTo(destination)
@@ -256,7 +283,8 @@ local function doGrabTest(target)
         return
     end
 
-    if not target or target == LocalPlayer or target.Parent ~= Players then
+    if not target or target == LocalPlayer
+        or target.Parent ~= Players then
         setStatus("Target tidak valid.", C.yellow)
         return
     end
@@ -264,7 +292,8 @@ local function doGrabTest(target)
     local myChar, myRoot = getRoot(LocalPlayer)
     local targetChar, targetRoot = getRoot(target)
 
-    if not myChar or not myRoot or not targetChar or not targetRoot then
+    if not myChar or not myRoot
+        or not targetChar or not targetRoot then
         setStatus("Karakter kamu atau target belum siap.", C.yellow)
         return
     end
@@ -284,7 +313,10 @@ local function doGrabTest(target)
                 and target.Parent == Players
         end
 
-        setStatus("Mendekati belakang " .. target.DisplayName .. "...", C.yellow)
+        setStatus(
+            "Mendekati belakang " .. target.DisplayName .. "...",
+            C.yellow
+        )
 
         if not moveBehindTarget(target) then
             setStatus("Gagal berpindah ke belakang target.", C.yellow)
@@ -301,15 +333,22 @@ local function doGrabTest(target)
 
         local replicatedStorage = game:GetService("ReplicatedStorage")
         local localEvents = replicatedStorage:FindFirstChild("LocalEvents")
-        local grabEvent = localEvents and localEvents:FindFirstChild("Grab")
+        local grabEvent = localEvents
+            and localEvents:FindFirstChild("Grab")
 
-        if not grabEvent or not grabEvent:IsA("BindableEvent") then
+        if not grabEvent
+            or not grabEvent:IsA("BindableEvent") then
+
             pcall(function()
                 local c = LocalPlayer.Character
                 if c then c:PivotTo(startCFrame) end
             end)
 
-            setStatus("ReplicatedStorage.LocalEvents.Grab BindableEvent tidak ditemukan.", C.yellow)
+            setStatus(
+                "ReplicatedStorage.LocalEvents.Grab BindableEvent tidak ditemukan.",
+                C.yellow
+            )
+
             busy = false
             return
         end
@@ -324,33 +363,55 @@ local function doGrabTest(target)
                 if c then c:PivotTo(startCFrame) end
             end)
 
-            setStatus("Grab gagal dipanggil: " .. tostring(fireErr), C.yellow)
+            setStatus(
+                "Grab gagal dipanggil: " .. tostring(fireErr),
+                C.yellow
+            )
+
             busy = false
             return
         end
 
-        setStatus("Grab dipanggil. Menjaga posisi belakang selama 1,5 detik...", C.yellow)
+        setStatus(
+            "Grab dipanggil. Menjaga posisi belakang selama 1,5 detik...",
+            C.yellow
+        )
 
         local elapsed = 0
-        local lastTargetPosition = targetRoot.Position
 
         while elapsed < GRAB_WAIT and stillCurrent() do
             task.wait(TRACK_INTERVAL)
             elapsed += TRACK_INTERVAL
 
-            local _, latestTargetRoot = getRoot(target)
-            if not latestTargetRoot then break end
+            local latestTargetChar, latestTargetRoot = getRoot(target)
+            local latestMyChar, latestMyRoot = getRoot(LocalPlayer)
 
-            local movedDistance = (latestTargetRoot.Position - lastTargetPosition).Magnitude
+            if not latestTargetRoot or not latestMyRoot then
+                break
+            end
 
-            if movedDistance >= CORRECTION_RADIUS then
-                moveBehindTarget(target)
-                lastTargetPosition = latestTargetRoot.Position
+            local desired = behindCFrame(
+                latestTargetChar,
+                latestTargetRoot,
+                latestMyChar
+            )
+
+            local offset = (
+                latestMyRoot.Position - desired.Position
+            ).Magnitude
+
+            if offset > POSITION_TOLERANCE then
+                pcall(function()
+                    latestMyChar:PivotTo(desired)
+                end)
             end
         end
 
         if stillCurrent() then
-            setStatus("Waktu Grab selesai. Kembali ke posisi awal...", C.yellow)
+            setStatus(
+                "Waktu Grab selesai. Kembali ke posisi awal...",
+                C.yellow
+            )
 
             pcall(function()
                 local c = LocalPlayer.Character
@@ -363,11 +424,13 @@ local function doGrabTest(target)
             local _, targetRootAfter = getRoot(target)
 
             if myRootAfter and targetRootAfter then
-                local distance = (myRootAfter.Position - targetRootAfter.Position).Magnitude
+                local distance = (
+                    myRootAfter.Position - targetRootAfter.Position
+                ).Magnitude
 
-                if distance <= CORRECTION_RADIUS then
+                if distance <= POSITION_TOLERANCE then
                     setStatus(
-                        "Jarak setelah kembali kurang dari 3 studs. Periksa apakah target ikut terbawa.",
+                        "Jarak setelah kembali dekat. Periksa apakah target ikut terbawa.",
                         C.green
                     )
                 else
@@ -378,7 +441,10 @@ local function doGrabTest(target)
                     )
                 end
             else
-                setStatus("Grab dipanggil; status target belum bisa diperiksa.", C.yellow)
+                setStatus(
+                    "Grab dipanggil; status target belum bisa diperiksa.",
+                    C.yellow
+                )
             end
         end
 
@@ -436,7 +502,9 @@ local function refreshPlayers()
     if #targets == 0 then
         setStatus("Belum ada player lain di server.")
     else
-        setStatus("Ketuk nama player. Satu klik = satu percobaan Grab.")
+        setStatus(
+            "Ketuk nama player. Satu klik = satu percobaan Grab."
+        )
     end
 end
 
