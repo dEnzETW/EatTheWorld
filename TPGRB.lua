@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM V3.2.4 - HIDDEN MAPS
+-- dEnzCreator ETW AUTOFARM V3.2.5 - HIDDEN MAPS
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -112,7 +112,7 @@ local function farmAnchor()
         lastMap = mapName
         pendingLandingMap = mapName
         lastLandingAttempt = 0
-        print("[dEnzCreator V3.2.1] Map changed; searching for floor:", mapName)
+        print("[dEnzCreator V3.2.5] Map changed; searching for floor:", mapName)
     end
 
     if not pendingLandingMap then
@@ -152,7 +152,7 @@ local function farmAnchor()
         hum:ChangeState(Enum.HumanoidStateType.GettingUp)
     end)
 
-    print("[dEnzCreator V3.2.1] Landed on map floor:", pendingLandingMap,
+    print("[dEnzCreator V3.2.5] Landed on map floor:", pendingLandingMap,
         "| X=0 Y=", targetY, "Z=", z)
     pendingLandingMap = nil
     return true
@@ -172,7 +172,7 @@ local function requestSkip()
     local folder = ReplicatedStorage:FindFirstChild("Events")
     local remote = folder and folder:FindFirstChild("SetServerSettings")
     if not remote or not remote:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.2.1] SetServerSettings RemoteEvent not found.")
+        warn("[dEnzCreator V3.2.5] SetServerSettings RemoteEvent not found.")
         return false
     end
 
@@ -182,11 +182,11 @@ local function requestSkip()
         remote:FireServer(unpack(args))
     end)
     if ok then
-        print("[dEnzCreator V3.2.1] AutoSkip request sent (timer not paused).")
+        print("[dEnzCreator V3.2.5] AutoSkip request sent (timer not paused).")
         return true
     end
 
-    warn("[dEnzCreator V3.2.1] AutoSkip error:", err)
+    warn("[dEnzCreator V3.2.5] AutoSkip error:", err)
     return false
 end
 
@@ -222,7 +222,7 @@ local function monitorGrabEatAvailability()
     end
 
     if not missingActionSkipSent and os.clock() - missingActionSince >= 3.0 then
-        warn("[dEnzCreator V3.2.1] Grab/Eat missing on", mapName,
+        warn("[dEnzCreator V3.2.5] Grab/Eat missing on", mapName,
             "- requesting automatic map skip.")
         missingActionSkipSent = true
         requestSkip()
@@ -239,7 +239,7 @@ local function switchModeIfEnabled(mapName)
         local mode = CFG.SmallMaps[key] and "Mega" or "Normal"
         if pcall(function() remote:FireServer(mode) end) then
             lastMode = key
-            print("[dEnzCreator V3.2.1] RequestTeleport:", mode, mapName)
+            print("[dEnzCreator V3.2.5] RequestTeleport:", mode, mapName)
         end
     end
 end
@@ -315,11 +315,11 @@ end
 local function sendAutoSell(events)
     local sell = events and events:FindFirstChild("Sell")
     if not sell then
-        warn("[dEnzCreator V3.2.1] Character.Events.Sell not found.")
+        warn("[dEnzCreator V3.2.5] Character.Events.Sell not found.")
         return false
     end
     if not sell:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.2.1] Sell exists but is not a RemoteEvent:", sell.ClassName)
+        warn("[dEnzCreator V3.2.5] Sell exists but is not a RemoteEvent:", sell.ClassName)
         return false
     end
 
@@ -327,11 +327,11 @@ local function sendAutoSell(events)
         sell:FireServer()
     end)
     if not ok then
-        warn("[dEnzCreator V3.2.1] AutoSell error:", err)
+        warn("[dEnzCreator V3.2.5] AutoSell error:", err)
         return false
     end
 
-    print("[dEnzCreator V3.2.1] AutoSell request sent.")
+    print("[dEnzCreator V3.2.5] AutoSell request sent.")
     return true
 end
 
@@ -447,7 +447,7 @@ local function farmStep()
         if foodNearby and cycleStartedAt == nil then
             cycleStartedAt = os.clock()
             completedCycleSeconds = 0
-            print("[dEnzCreator V3.2.4] Season time started: map ready + food detected.")
+            print("[dEnzCreator V3.2.5] Season time started: map ready + food detected.")
         end
         fire(events:FindFirstChild("Grab"))
         local eatEvent = events:FindFirstChild("Eat")
@@ -476,13 +476,13 @@ local function farmStep()
         if cycleStartedAt ~= nil then
             completedCycleSeconds = math.max(0, os.clock() - cycleStartedAt)
             cycleStartedAt = nil
-            print("[dEnzCreator V3.2.4] Season time stopped: sell bar detected full.")
+            print("[dEnzCreator V3.2.5] Season time stopped: sell bar detected full.")
         end
         if not wasFull then
             wasFull = true
             skipSentForCycle = false
             lastSellAttempt = 0
-            print("[dEnzCreator V3.2.1] FULL detected | Size:", size,
+            print("[dEnzCreator V3.2.5] FULL detected | Size:", size,
                 "| Live MaxSize:", maxSize, "| Bar:", barProgress)
         end
         -- Retry at a measured interval if the server has not processed a sale.
@@ -500,13 +500,13 @@ local function farmStep()
             or sizeDrop or barDrop
 
         if sold then
-            print("[dEnzCreator V3.2.1] Sale/reset detected; requesting AutoSkip.")
+            print("[dEnzCreator V3.2.5] Sale/reset detected; requesting AutoSkip.")
             if not skipSentForCycle then
                 skipSentForCycle = requestSkip()
             end
             wasFull = false
             lastSellAttempt = 0
-            print("[dEnzCreator V3.2.1] AutoSell cycle re-armed.")
+            print("[dEnzCreator V3.2.5] AutoSell cycle re-armed.")
         end
     end
 
@@ -595,7 +595,7 @@ end
 local function applyHiddenMap()
     local mapRoot = Workspace:FindFirstChild("Map")
     if not mapRoot then
-        warn("[dEnzCreator V3.2.1] Workspace.Map not found; Hidden Maps will retry.")
+        warn("[dEnzCreator V3.2.5] Workspace.Map not found; Hidden Maps will retry.")
         return false
     end
 
@@ -614,7 +614,7 @@ local function applyHiddenMap()
         end
     end))
 
-    print("[dEnzCreator V3.2.1] Hidden Maps ON. Food/chunks and collision are preserved.")
+    print("[dEnzCreator V3.2.5] Hidden Maps ON. Food/chunks and collision are preserved.")
     return true
 end
 
@@ -627,7 +627,7 @@ local function setHiddenMaps(enabled)
     else
         restoreHiddenMap()
         hiddenMapsEnabled = false
-        print("[dEnzCreator V3.2.1] Hidden Maps OFF. Original local visuals restored.")
+        print("[dEnzCreator V3.2.5] Hidden Maps OFF. Original local visuals restored.")
     end
 end
 
@@ -928,15 +928,16 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator V3.2.1] Loaded. Eat/Grab loop active at 0.04s cadence; normal game animations; landing stabilizer retained.")
-print("[dEnzCreator V3.2.1] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
+print("[dEnzCreator V3.2.5] Loaded. Eat/Grab loop active at 0.04s cadence; 12x Action-priority animation acceleration; landing stabilizer retained.")
+print("[dEnzCreator V3.2.5] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
--- V3.2.1 adds a separate Hidden Maps toggle; V3.0.4 farming logic is retained.
+-- V3.2.5 adds a separate Hidden Maps toggle; V3.0.4 farming logic is retained.
 
--- V3.2.1: Central Robloxia farm Z set to 700 studs for retest; missing Grab/Eat watchdog requests map skip.
+-- V3.2.5: Central Robloxia farm Z set to 700 studs for retest; missing Grab/Eat watchdog requests map skip.
 
--- V3.2.1 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
+-- V3.2.5 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
 
 
--- V3.2.4: Combined title/timer header (140px), left-aligned title, 12x Action-priority animation acceleration. Remote cadence is unchanged.
-\n\n-- V3.2.4: Season time starts when map food objects are detected and stops when the sell bar reaches full.\n
+-- V3.2.5: Combined title/timer header (140px), left-aligned title, 12x Action-priority animation acceleration. Remote cadence is unchanged.
+
+-- V3.2.5: Season time starts when map food objects are detected and stops when the sell bar reaches full.
