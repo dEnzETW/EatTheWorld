@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM V3.1.5 - HIDDEN MAPS
+-- dEnzCreator ETW AUTOFARM V3.1.8 - HIDDEN MAPS
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -50,6 +50,8 @@ local completedCycleSeconds = 0
 local lastNearbyFoodAt = nil
 local noFoodSkipSentForMap = false
 local noFoodMapKey = ""
+local MAP_LOAD_GRACE_SECONDS = 13
+local mapLoadGraceUntil = os.clock() + MAP_LOAD_GRACE_SECONDS
 local lastFoodScanAt = 0
 local cachedFoodNearby = false
 local lastMissingActionMap = ""
@@ -111,7 +113,7 @@ local function farmAnchor()
         lastMap = mapName
         pendingLandingMap = mapName
         lastLandingAttempt = 0
-        print("[dEnzCreator V3.1.5] Map changed; searching for floor:", mapName)
+        print("[dEnzCreator V3.1.8] Map changed; searching for floor:", mapName)
     end
 
     if not pendingLandingMap then
@@ -151,7 +153,7 @@ local function farmAnchor()
         hum:ChangeState(Enum.HumanoidStateType.GettingUp)
     end)
 
-    print("[dEnzCreator V3.1.5] Landed on map floor:", pendingLandingMap,
+    print("[dEnzCreator V3.1.8] Landed on map floor:", pendingLandingMap,
         "| X=0 Y=", targetY, "Z=", z)
     pendingLandingMap = nil
     return true
@@ -171,7 +173,7 @@ local function requestSkip()
     local folder = ReplicatedStorage:FindFirstChild("Events")
     local remote = folder and folder:FindFirstChild("SetServerSettings")
     if not remote or not remote:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.1.5] SetServerSettings RemoteEvent not found.")
+        warn("[dEnzCreator V3.1.8] SetServerSettings RemoteEvent not found.")
         return false
     end
 
@@ -181,11 +183,11 @@ local function requestSkip()
         remote:FireServer(unpack(args))
     end)
     if ok then
-        print("[dEnzCreator V3.1.5] AutoSkip request sent (timer not paused).")
+        print("[dEnzCreator V3.1.8] AutoSkip request sent (timer not paused).")
         return true
     end
 
-    warn("[dEnzCreator V3.1.5] AutoSkip error:", err)
+    warn("[dEnzCreator V3.1.8] AutoSkip error:", err)
     return false
 end
 
@@ -221,7 +223,7 @@ local function monitorGrabEatAvailability()
     end
 
     if not missingActionSkipSent and os.clock() - missingActionSince >= 3.0 then
-        warn("[dEnzCreator V3.1.5] Grab/Eat missing on", mapName,
+        warn("[dEnzCreator V3.1.8] Grab/Eat missing on", mapName,
             "- requesting automatic map skip.")
         missingActionSkipSent = true
         requestSkip()
@@ -238,7 +240,7 @@ local function switchModeIfEnabled(mapName)
         local mode = CFG.SmallMaps[key] and "Mega" or "Normal"
         if pcall(function() remote:FireServer(mode) end) then
             lastMode = key
-            print("[dEnzCreator V3.1.5] RequestTeleport:", mode, mapName)
+            print("[dEnzCreator V3.1.8] RequestTeleport:", mode, mapName)
         end
     end
 end
@@ -314,11 +316,11 @@ end
 local function sendAutoSell(events)
     local sell = events and events:FindFirstChild("Sell")
     if not sell then
-        warn("[dEnzCreator V3.1.5] Character.Events.Sell not found.")
+        warn("[dEnzCreator V3.1.8] Character.Events.Sell not found.")
         return false
     end
     if not sell:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.1.5] Sell exists but is not a RemoteEvent:", sell.ClassName)
+        warn("[dEnzCreator V3.1.8] Sell exists but is not a RemoteEvent:", sell.ClassName)
         return false
     end
 
@@ -326,11 +328,11 @@ local function sendAutoSell(events)
         sell:FireServer()
     end)
     if not ok then
-        warn("[dEnzCreator V3.1.5] AutoSell error:", err)
+        warn("[dEnzCreator V3.1.8] AutoSell error:", err)
         return false
     end
 
-    print("[dEnzCreator V3.1.5] AutoSell request sent.")
+    print("[dEnzCreator V3.1.8] AutoSell request sent.")
     return true
 end
 
@@ -360,7 +362,7 @@ end
 -- Detect collectible food/chunks close to the character.
 -- The radius is deliberately generous for large maps and uneven terrain.
 local NO_FOOD_RADIUS = 100
-local NO_FOOD_CONFIRM_SECONDS = 3
+local NO_FOOD_CONFIRM_SECONDS = nil -- disabled temporarily
 
 local function findNearbyFood(char, root)
     local chunks = Workspace:FindFirstChild("Chunks")
@@ -386,16 +388,22 @@ local function monitorNearbyFood(char, root)
     local _, key = getMapName()
     if key ~= noFoodMapKey then
         noFoodMapKey = key
-        lastNearbyFoodAt = os.clock()
+        lastNearbyFoodAt = nil
         noFoodSkipSentForMap = false
         cachedFoodNearby = false
         lastFoodScanAt = 0
+        mapLoadGraceUntil = os.clock() + MAP_LOAD_GRACE_SECONDS
+    end
+
+    -- Do not interpret an empty Chunks folder during map loading as an empty map.
+    if os.clock() < mapLoadGraceUntil then
+        cachedFoodNearby = false
+        return false
     end
 
     if findNearbyFood(char, root) then
         cachedFoodNearby = true
         lastNearbyFoodAt = os.clock()
-        noFoodSkipSentForMap = false
         return true
     end
     cachedFoodNearby = false
@@ -405,13 +413,6 @@ local function monitorNearbyFood(char, root)
         return false
     end
 
-    if not noFoodSkipSentForMap
-        and os.clock() - lastNearbyFoodAt >= NO_FOOD_CONFIRM_SECONDS then
-        noFoodSkipSentForMap = true
-        warn("[dEnzCreator V3.1.5] No food/chunks near character for "
-            .. NO_FOOD_CONFIRM_SECONDS .. "s; requesting map skip.")
-        requestSkip()
-    end
     return false
 end
 
@@ -460,7 +461,7 @@ local function farmStep()
             wasFull = true
             skipSentForCycle = false
             lastSellAttempt = 0
-            print("[dEnzCreator V3.1.5] FULL detected | Size:", size,
+            print("[dEnzCreator V3.1.8] FULL detected | Size:", size,
                 "| Live MaxSize:", maxSize, "| Bar:", barProgress)
         end
         -- Retry at a measured interval if the server has not processed a sale.
@@ -482,13 +483,13 @@ local function farmStep()
                 completedCycleSeconds = math.max(0, os.clock() - cycleStartedAt)
                 cycleStartedAt = nil
             end
-            print("[dEnzCreator V3.1.5] Sale/reset detected; requesting AutoSkip.")
+            print("[dEnzCreator V3.1.8] Sale/reset detected; requesting AutoSkip.")
             if not skipSentForCycle then
                 skipSentForCycle = requestSkip()
             end
             wasFull = false
             lastSellAttempt = 0
-            print("[dEnzCreator V3.1.5] AutoSell cycle re-armed.")
+            print("[dEnzCreator V3.1.8] AutoSell cycle re-armed.")
         end
     end
 
@@ -577,7 +578,7 @@ end
 local function applyHiddenMap()
     local mapRoot = Workspace:FindFirstChild("Map")
     if not mapRoot then
-        warn("[dEnzCreator V3.1.5] Workspace.Map not found; Hidden Maps will retry.")
+        warn("[dEnzCreator V3.1.8] Workspace.Map not found; Hidden Maps will retry.")
         return false
     end
 
@@ -596,7 +597,7 @@ local function applyHiddenMap()
         end
     end))
 
-    print("[dEnzCreator V3.1.5] Hidden Maps ON. Food/chunks and collision are preserved.")
+    print("[dEnzCreator V3.1.8] Hidden Maps ON. Food/chunks and collision are preserved.")
     return true
 end
 
@@ -609,7 +610,7 @@ local function setHiddenMaps(enabled)
     else
         restoreHiddenMap()
         hiddenMapsEnabled = false
-        print("[dEnzCreator V3.1.5] Hidden Maps OFF. Original local visuals restored.")
+        print("[dEnzCreator V3.1.8] Hidden Maps OFF. Original local visuals restored.")
     end
 end
 
@@ -624,12 +625,12 @@ frame.Name = "Main"
 frame.Size = UDim2.fromOffset(140, 0)
 frame.AutomaticSize = Enum.AutomaticSize.Y
 frame.Position = UDim2.new(0, 12, 0.42, 0)
-frame.BackgroundColor3 = Color3.fromRGB(18, 20, 25)
+frame.BackgroundColor3 = Color3.fromRGB(20, 22, 38)
 frame.BorderSizePixel = 0
 frame.Parent = gui
 Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
 local frameStroke = Instance.new("UIStroke", frame)
-frameStroke.Color = Color3.fromRGB(75, 85, 105)
+frameStroke.Color = Color3.fromRGB(104, 93, 160)
 frameStroke.Thickness = 1
 
 local padding = Instance.new("UIPadding", frame)
@@ -665,7 +666,7 @@ minimize.Text = "–"
 minimize.TextSize = 16
 minimize.Font = Enum.Font.GothamBold
 minimize.TextColor3 = Color3.new(1, 1, 1)
-minimize.BackgroundColor3 = Color3.fromRGB(42, 46, 55)
+minimize.BackgroundColor3 = Color3.fromRGB(49, 48, 76)
 minimize.Parent = header
 Instance.new("UICorner", minimize).CornerRadius = UDim.new(1, 0)
 
@@ -676,7 +677,7 @@ close.Text = "×"
 close.TextSize = 16
 close.Font = Enum.Font.GothamBold
 close.TextColor3 = Color3.new(1, 1, 1)
-close.BackgroundColor3 = Color3.fromRGB(42, 46, 55)
+close.BackgroundColor3 = Color3.fromRGB(49, 48, 76)
 close.Parent = header
 Instance.new("UICorner", close).CornerRadius = UDim.new(1, 0)
 
@@ -684,15 +685,23 @@ local runtimeBlock = Instance.new("TextLabel")
 runtimeBlock.Name = "RuntimeBlock"
 runtimeBlock.LayoutOrder = 2
 runtimeBlock.Size = UDim2.new(1, 0, 0, 42)
-runtimeBlock.BackgroundColor3 = Color3.fromRGB(35, 39, 49)
+runtimeBlock.BackgroundColor3 = Color3.fromRGB(37, 39, 62)
 runtimeBlock.BorderSizePixel = 0
 runtimeBlock.Text = "Runtime: 0m 0s\nActual time: 0m 0s"
 runtimeBlock.TextColor3 = Color3.fromRGB(240, 243, 248)
 runtimeBlock.TextSize = 9
 runtimeBlock.Font = Enum.Font.GothamMedium
 runtimeBlock.TextXAlignment = Enum.TextXAlignment.Left
-runtimeBlock.Parent = frame
-Instance.new("UICorner", runtimeBlock).CornerRadius = UDim.new(0, 7)
+runtimeBlock.Parent = gui
+runtimeBlock.AnchorPoint = Vector2.new(1, 0)
+runtimeBlock.Position = UDim2.new(1, -12, 0, 12)
+runtimeBlock.Size = UDim2.fromOffset(184, 46)
+runtimeBlock.BackgroundColor3 = Color3.fromRGB(24, 26, 45)
+runtimeBlock.TextSize = 10
+local statusStroke = Instance.new("UIStroke", runtimeBlock)
+statusStroke.Color = Color3.fromRGB(125, 105, 195)
+statusStroke.Thickness = 1
+Instance.new("UICorner", runtimeBlock).CornerRadius = UDim.new(0, 9)
 local runtimePad = Instance.new("UIPadding", runtimeBlock)
 runtimePad.PaddingLeft = UDim.new(0, 5)
 
@@ -700,7 +709,7 @@ local function makeToggle(label, order, color, initial, callback)
     local b = Instance.new("TextButton")
     b.LayoutOrder = order
     b.Size = UDim2.new(1, 0, 0, 30)
-    b.BackgroundColor3 = initial and color or Color3.fromRGB(65, 48, 48)
+    b.BackgroundColor3 = initial and color or Color3.fromRGB(54, 52, 76)
     b.BorderSizePixel = 0
     b.Text = label .. (initial and ": ON" or ": OFF")
     b.TextColor3 = Color3.new(1, 1, 1)
@@ -713,18 +722,18 @@ local function makeToggle(label, order, color, initial, callback)
     b.Activated:Connect(function()
         enabled = not enabled
         b.Text = label .. (enabled and ": ON" or ": OFF")
-        b.BackgroundColor3 = enabled and color or Color3.fromRGB(65, 48, 48)
+        b.BackgroundColor3 = enabled and color or Color3.fromRGB(54, 52, 76)
         callback(enabled)
     end)
     return b
 end
 
-makeToggle("AUTOFARM", 3, Color3.fromRGB(24, 125, 75), CFG.Farm, function(on)
+makeToggle("AUTOFARM", 3, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
     CFG.Farm = on
     print("[dEnzCreator] AutoFarm", on and "ON" or "OFF")
 end)
 
-makeToggle("HIDDEN MAPS", 4, Color3.fromRGB(30, 90, 135), hiddenMapsEnabled, function(on)
+makeToggle("HIDDEN MAPS", 4, Color3.fromRGB(65, 105, 190), hiddenMapsEnabled, function(on)
     setHiddenMaps(on)
 end)
 
@@ -758,7 +767,7 @@ local function claimRewardsStep()
     end
 end
 
-makeToggle("AUTO CLAIM REWARDS", 5, Color3.fromRGB(105, 48, 135), false, function(on)
+makeToggle("AUTO CLAIM REWARDS", 5, Color3.fromRGB(133, 89, 195), false, function(on)
     autoClaimEnabled = on
 end)
 
@@ -920,11 +929,11 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator V3.1.5] Loaded. Eat/Grab=0.04s; action animations boosted to 5x; landing stabilizer retained.")
-print("[dEnzCreator V3.1.5] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
+print("[dEnzCreator V3.1.8] Loaded. Eat/Grab=0.04s; action animations boosted to 5x; landing stabilizer retained.")
+print("[dEnzCreator V3.1.8] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
--- V3.1.5 adds a separate Hidden Maps toggle; V3.0.4 farming logic is retained.
+-- V3.1.8 adds a separate Hidden Maps toggle; V3.0.4 farming logic is retained.
 
--- V3.1.5: Central Robloxia farm Z set to 700 studs for retest; missing Grab/Eat watchdog requests map skip.
+-- V3.1.8: Central Robloxia farm Z set to 700 studs for retest; missing Grab/Eat watchdog requests map skip.
 
--- V3.1.5 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
+-- V3.1.8 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
