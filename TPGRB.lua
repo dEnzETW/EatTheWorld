@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM V3.1.9 - HIDDEN MAPS
+-- dEnzCreator ETW AUTOFARM V3.2.1 - HIDDEN MAPS
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -42,7 +42,6 @@ local lastSize = nil
 local lastBarProgress = nil
 local pendingLandingMap = nil
 local lastLandingAttempt = 0
-local lastAnimationBoost = 0
 local missingActionSince = nil
 local missingActionSkipSent = false
 local cycleStartedAt = nil
@@ -50,12 +49,9 @@ local completedCycleSeconds = 0
 local lastNearbyFoodAt = nil
 local noFoodSkipSentForMap = false
 local noFoodMapKey = ""
-local MAP_LOAD_GRACE_SECONDS = 13
-local mapLoadGraceUntil = os.clock() + MAP_LOAD_GRACE_SECONDS
 local lastFoodScanAt = 0
 local cachedFoodNearby = false
 local lastMissingActionMap = ""
-local ACTION_ANIMATION_SPEED = 5.0
 local hiddenMapsEnabled = false
 local hiddenMapOriginals = {}
 local hiddenMapConnections = {}
@@ -103,8 +99,11 @@ local function farmAnchor()
     if not char then return false end
 
     local mapName, key = getMapName()
-    local z = key == "central robloxia" and CFG.CentralRobloxiaZ
-        or (key == "studville" and CFG.StudvilleZ or CFG.DefaultZ)
+    local isCentral = key == "central robloxia" or key == "robloxia tengah"
+        or key == "central robloxia map"
+    local isStudville = key == "studville"
+    local z = isCentral and CFG.CentralRobloxiaZ
+        or (isStudville and CFG.StudvilleZ or CFG.DefaultZ)
     local mapChanged = mapName ~= lastMap
 
     -- Do not continuously overwrite the character CFrame every Heartbeat.
@@ -113,7 +112,7 @@ local function farmAnchor()
         lastMap = mapName
         pendingLandingMap = mapName
         lastLandingAttempt = 0
-        print("[dEnzCreator V3.1.9] Map changed; searching for floor:", mapName)
+        print("[dEnzCreator V3.2.1] Map changed; searching for floor:", mapName)
     end
 
     if not pendingLandingMap then
@@ -153,7 +152,7 @@ local function farmAnchor()
         hum:ChangeState(Enum.HumanoidStateType.GettingUp)
     end)
 
-    print("[dEnzCreator V3.1.9] Landed on map floor:", pendingLandingMap,
+    print("[dEnzCreator V3.2.1] Landed on map floor:", pendingLandingMap,
         "| X=0 Y=", targetY, "Z=", z)
     pendingLandingMap = nil
     return true
@@ -173,7 +172,7 @@ local function requestSkip()
     local folder = ReplicatedStorage:FindFirstChild("Events")
     local remote = folder and folder:FindFirstChild("SetServerSettings")
     if not remote or not remote:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.1.9] SetServerSettings RemoteEvent not found.")
+        warn("[dEnzCreator V3.2.1] SetServerSettings RemoteEvent not found.")
         return false
     end
 
@@ -183,11 +182,11 @@ local function requestSkip()
         remote:FireServer(unpack(args))
     end)
     if ok then
-        print("[dEnzCreator V3.1.9] AutoSkip request sent (timer not paused).")
+        print("[dEnzCreator V3.2.1] AutoSkip request sent (timer not paused).")
         return true
     end
 
-    warn("[dEnzCreator V3.1.9] AutoSkip error:", err)
+    warn("[dEnzCreator V3.2.1] AutoSkip error:", err)
     return false
 end
 
@@ -223,7 +222,7 @@ local function monitorGrabEatAvailability()
     end
 
     if not missingActionSkipSent and os.clock() - missingActionSince >= 3.0 then
-        warn("[dEnzCreator V3.1.9] Grab/Eat missing on", mapName,
+        warn("[dEnzCreator V3.2.1] Grab/Eat missing on", mapName,
             "- requesting automatic map skip.")
         missingActionSkipSent = true
         requestSkip()
@@ -240,7 +239,7 @@ local function switchModeIfEnabled(mapName)
         local mode = CFG.SmallMaps[key] and "Mega" or "Normal"
         if pcall(function() remote:FireServer(mode) end) then
             lastMode = key
-            print("[dEnzCreator V3.1.9] RequestTeleport:", mode, mapName)
+            print("[dEnzCreator V3.2.1] RequestTeleport:", mode, mapName)
         end
     end
 end
@@ -316,11 +315,11 @@ end
 local function sendAutoSell(events)
     local sell = events and events:FindFirstChild("Sell")
     if not sell then
-        warn("[dEnzCreator V3.1.9] Character.Events.Sell not found.")
+        warn("[dEnzCreator V3.2.1] Character.Events.Sell not found.")
         return false
     end
     if not sell:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.1.9] Sell exists but is not a RemoteEvent:", sell.ClassName)
+        warn("[dEnzCreator V3.2.1] Sell exists but is not a RemoteEvent:", sell.ClassName)
         return false
     end
 
@@ -328,39 +327,17 @@ local function sendAutoSell(events)
         sell:FireServer()
     end)
     if not ok then
-        warn("[dEnzCreator V3.1.9] AutoSell error:", err)
+        warn("[dEnzCreator V3.2.1] AutoSell error:", err)
         return false
     end
 
-    print("[dEnzCreator V3.1.9] AutoSell request sent.")
+    print("[dEnzCreator V3.2.1] AutoSell request sent.")
     return true
 end
 
--- Speed up action-priority animations (eating/bending/standing actions)
--- without accelerating normal idle, walk, or run locomotion animations.
-local function speedUpActionAnimations(char)
-    if os.clock() - lastAnimationBoost < 0.10 then return end
-    lastAnimationBoost = os.clock()
-
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    local animator = hum and hum:FindFirstChildOfClass("Animator")
-    if not animator then return end
-
-    for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-        local priority = track.Priority
-        if priority == Enum.AnimationPriority.Action
-            or priority == Enum.AnimationPriority.Action2
-            or priority == Enum.AnimationPriority.Action3
-            or priority == Enum.AnimationPriority.Action4 then
-            pcall(function()
-                track:AdjustSpeed(ACTION_ANIMATION_SPEED)
-            end)
-        end
-    end
-end
-
--- Detect collectible food/chunks close to the character.
--- The radius is deliberately generous for large maps and uneven terrain.
+-- Detect collectible food/chunks close to the character from live Workspace.Chunks state.
+-- No fixed 13-second loading delay: map readiness is inferred from live instances.
+-- The Grab/Eat loop is not gated by this detector and continues during transitions.
 local NO_FOOD_RADIUS = 100
 local NO_FOOD_CONFIRM_SECONDS = nil -- disabled temporarily
 
@@ -392,13 +369,6 @@ local function monitorNearbyFood(char, root)
         noFoodSkipSentForMap = false
         cachedFoodNearby = false
         lastFoodScanAt = 0
-        mapLoadGraceUntil = os.clock() + MAP_LOAD_GRACE_SECONDS
-    end
-
-    -- Do not interpret an empty Chunks folder during map loading as an empty map.
-    if os.clock() < mapLoadGraceUntil then
-        cachedFoodNearby = false
-        return false
     end
 
     if findNearbyFood(char, root) then
@@ -421,7 +391,6 @@ local function farmStep()
     if not char then return end
 
     farmAnchor()
-    speedUpActionAnimations(char)
 
     local foodNearby = monitorNearbyFood(char, root)
 
@@ -461,7 +430,7 @@ local function farmStep()
             wasFull = true
             skipSentForCycle = false
             lastSellAttempt = 0
-            print("[dEnzCreator V3.1.9] FULL detected | Size:", size,
+            print("[dEnzCreator V3.2.1] FULL detected | Size:", size,
                 "| Live MaxSize:", maxSize, "| Bar:", barProgress)
         end
         -- Retry at a measured interval if the server has not processed a sale.
@@ -483,13 +452,13 @@ local function farmStep()
                 completedCycleSeconds = math.max(0, os.clock() - cycleStartedAt)
                 cycleStartedAt = nil
             end
-            print("[dEnzCreator V3.1.9] Sale/reset detected; requesting AutoSkip.")
+            print("[dEnzCreator V3.2.1] Sale/reset detected; requesting AutoSkip.")
             if not skipSentForCycle then
                 skipSentForCycle = requestSkip()
             end
             wasFull = false
             lastSellAttempt = 0
-            print("[dEnzCreator V3.1.9] AutoSell cycle re-armed.")
+            print("[dEnzCreator V3.2.1] AutoSell cycle re-armed.")
         end
     end
 
@@ -578,7 +547,7 @@ end
 local function applyHiddenMap()
     local mapRoot = Workspace:FindFirstChild("Map")
     if not mapRoot then
-        warn("[dEnzCreator V3.1.9] Workspace.Map not found; Hidden Maps will retry.")
+        warn("[dEnzCreator V3.2.1] Workspace.Map not found; Hidden Maps will retry.")
         return false
     end
 
@@ -597,7 +566,7 @@ local function applyHiddenMap()
         end
     end))
 
-    print("[dEnzCreator V3.1.9] Hidden Maps ON. Food/chunks and collision are preserved.")
+    print("[dEnzCreator V3.2.1] Hidden Maps ON. Food/chunks and collision are preserved.")
     return true
 end
 
@@ -610,7 +579,7 @@ local function setHiddenMaps(enabled)
     else
         restoreHiddenMap()
         hiddenMapsEnabled = false
-        print("[dEnzCreator V3.1.9] Hidden Maps OFF. Original local visuals restored.")
+        print("[dEnzCreator V3.2.1] Hidden Maps OFF. Original local visuals restored.")
     end
 end
 
@@ -650,13 +619,13 @@ header.BackgroundTransparency = 1
 header.Parent = frame
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -42, 1, 0)
+title.Size = UDim2.new(1, 0, 1, 0)
 title.BackgroundTransparency = 1
 title.Text = "dEnzCreator"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.TextSize = 12
 title.Font = Enum.Font.GothamBold
-title.TextXAlignment = Enum.TextXAlignment.Left
+title.TextXAlignment = Enum.TextXAlignment.Center
 title.Parent = header
 
 local minimize = Instance.new("TextButton")
@@ -684,26 +653,20 @@ Instance.new("UICorner", close).CornerRadius = UDim.new(1, 0)
 local runtimeBlock = Instance.new("TextLabel")
 runtimeBlock.Name = "RuntimeBlock"
 runtimeBlock.LayoutOrder = 2
-runtimeBlock.Size = UDim2.new(1, 0, 0, 42)
+runtimeBlock.Size = UDim2.new(1, 0, 0, 38)
 runtimeBlock.BackgroundColor3 = Color3.fromRGB(37, 39, 62)
 runtimeBlock.BorderSizePixel = 0
-runtimeBlock.Text = "Runtime: 0m 0s\nActual time: 0m 0s"
+runtimeBlock.Text = "Runtime: 0m 0s\\nSeason time: 0m 0s"
 runtimeBlock.TextColor3 = Color3.fromRGB(240, 243, 248)
 runtimeBlock.TextSize = 9
 runtimeBlock.Font = Enum.Font.GothamMedium
-runtimeBlock.TextXAlignment = Enum.TextXAlignment.Left
-runtimeBlock.Parent = gui
-runtimeBlock.AnchorPoint = Vector2.new(1, 0)
-runtimeBlock.Position = UDim2.new(1, -12, 0, 12)
-runtimeBlock.Size = UDim2.fromOffset(184, 46)
-runtimeBlock.BackgroundColor3 = Color3.fromRGB(24, 26, 45)
-runtimeBlock.TextSize = 10
-local statusStroke = Instance.new("UIStroke", runtimeBlock)
-statusStroke.Color = Color3.fromRGB(125, 105, 195)
-statusStroke.Thickness = 1
-Instance.new("UICorner", runtimeBlock).CornerRadius = UDim.new(0, 9)
-local runtimePad = Instance.new("UIPadding", runtimeBlock)
-runtimePad.PaddingLeft = UDim.new(0, 5)
+runtimeBlock.TextXAlignment = Enum.TextXAlignment.Center
+runtimeBlock.TextYAlignment = Enum.TextYAlignment.Center
+runtimeBlock.Parent = frame
+Instance.new("UICorner", runtimeBlock).CornerRadius = UDim.new(0, 7)
+local runtimeStroke = Instance.new("UIStroke", runtimeBlock)
+runtimeStroke.Color = Color3.fromRGB(125, 105, 195)
+runtimeStroke.Thickness = 1
 
 local function makeToggle(label, order, color, initial, callback)
     local b = Instance.new("TextButton")
@@ -855,7 +818,7 @@ local function updateRuntimeMonitor()
     -- os.time() measures real elapsed wall time, not CPU time or map duration.
     local now = os.clock()
     runtimeBlock.Text = string.format(
-        "Runtime: %s\nActual time: %s",
+        "Runtime: %s\nSeason time: %s",
         formatDuration(now - scriptStartedAt),
         formatDuration(cycleStartedAt and (now - cycleStartedAt) or completedCycleSeconds)
     )
@@ -913,11 +876,11 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator V3.1.9] Loaded. Eat/Grab=0.04s; action animations boosted to 5x; landing stabilizer retained.")
-print("[dEnzCreator V3.1.9] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
+print("[dEnzCreator V3.2.1] Loaded. Eat/Grab loop active at 0.04s cadence; normal game animations; landing stabilizer retained.")
+print("[dEnzCreator V3.2.1] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
--- V3.1.9 adds a separate Hidden Maps toggle; V3.0.4 farming logic is retained.
+-- V3.2.1 adds a separate Hidden Maps toggle; V3.0.4 farming logic is retained.
 
--- V3.1.9: Central Robloxia farm Z set to 700 studs for retest; missing Grab/Eat watchdog requests map skip.
+-- V3.2.1: Central Robloxia farm Z set to 700 studs for retest; missing Grab/Eat watchdog requests map skip.
 
--- V3.1.9 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
+-- V3.2.1 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
