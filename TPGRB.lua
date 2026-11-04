@@ -1,4 +1,4 @@
--- ETW AUTOFARM V3.1.0 - HIDDEN MAPS
+-- dEnzCreator ETW AUTOFARM V3.1.1 - HIDDEN MAPS
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -104,7 +104,7 @@ local function farmAnchor()
         lastMap = mapName
         pendingLandingMap = mapName
         lastLandingAttempt = 0
-        print("[ETW V3.1.0] Map changed; searching for floor:", mapName)
+        print("[dEnzCreator V3.1.1] Map changed; searching for floor:", mapName)
     end
 
     if not pendingLandingMap then
@@ -144,7 +144,7 @@ local function farmAnchor()
         hum:ChangeState(Enum.HumanoidStateType.GettingUp)
     end)
 
-    print("[ETW V3.1.0] Landed on map floor:", pendingLandingMap,
+    print("[dEnzCreator V3.1.1] Landed on map floor:", pendingLandingMap,
         "| X=0 Y=", targetY, "Z=", z)
     pendingLandingMap = nil
     return true
@@ -164,7 +164,7 @@ local function requestSkip()
     local folder = ReplicatedStorage:FindFirstChild("Events")
     local remote = folder and folder:FindFirstChild("SetServerSettings")
     if not remote or not remote:IsA("RemoteEvent") then
-        warn("[ETW V3.1.0] SetServerSettings RemoteEvent not found.")
+        warn("[dEnzCreator V3.1.1] SetServerSettings RemoteEvent not found.")
         return false
     end
 
@@ -174,11 +174,11 @@ local function requestSkip()
         remote:FireServer(unpack(args))
     end)
     if ok then
-        print("[ETW V3.1.0] AutoSkip request sent (timer not paused).")
+        print("[dEnzCreator V3.1.1] AutoSkip request sent (timer not paused).")
         return true
     end
 
-    warn("[ETW V3.1.0] AutoSkip error:", err)
+    warn("[dEnzCreator V3.1.1] AutoSkip error:", err)
     return false
 end
 
@@ -214,7 +214,7 @@ local function monitorGrabEatAvailability()
     end
 
     if not missingActionSkipSent and os.clock() - missingActionSince >= 3.0 then
-        warn("[ETW V3.1.0] Grab/Eat missing on", mapName,
+        warn("[dEnzCreator V3.1.1] Grab/Eat missing on", mapName,
             "- requesting automatic map skip.")
         missingActionSkipSent = true
         requestSkip()
@@ -231,7 +231,7 @@ local function switchModeIfEnabled(mapName)
         local mode = CFG.SmallMaps[key] and "Mega" or "Normal"
         if pcall(function() remote:FireServer(mode) end) then
             lastMode = key
-            print("[ETW V3.1.0] RequestTeleport:", mode, mapName)
+            print("[dEnzCreator V3.1.1] RequestTeleport:", mode, mapName)
         end
     end
 end
@@ -307,11 +307,11 @@ end
 local function sendAutoSell(events)
     local sell = events and events:FindFirstChild("Sell")
     if not sell then
-        warn("[ETW V3.1.0] Character.Events.Sell not found.")
+        warn("[dEnzCreator V3.1.1] Character.Events.Sell not found.")
         return false
     end
     if not sell:IsA("RemoteEvent") then
-        warn("[ETW V3.1.0] Sell exists but is not a RemoteEvent:", sell.ClassName)
+        warn("[dEnzCreator V3.1.1] Sell exists but is not a RemoteEvent:", sell.ClassName)
         return false
     end
 
@@ -319,11 +319,11 @@ local function sendAutoSell(events)
         sell:FireServer()
     end)
     if not ok then
-        warn("[ETW V3.1.0] AutoSell error:", err)
+        warn("[dEnzCreator V3.1.1] AutoSell error:", err)
         return false
     end
 
-    print("[ETW V3.1.0] AutoSell request sent.")
+    print("[dEnzCreator V3.1.1] AutoSell request sent.")
     return true
 end
 
@@ -389,7 +389,7 @@ local function farmStep()
             wasFull = true
             skipSentForCycle = false
             lastSellAttempt = 0
-            print("[ETW V3.1.0] FULL detected | Size:", size,
+            print("[dEnzCreator V3.1.1] FULL detected | Size:", size,
                 "| Live MaxSize:", maxSize, "| Bar:", barProgress)
         end
         -- Retry at a measured interval if the server has not processed a sale.
@@ -407,13 +407,13 @@ local function farmStep()
             or sizeDrop or barDrop
 
         if sold then
-            print("[ETW V3.1.0] Sale/reset detected; requesting AutoSkip.")
+            print("[dEnzCreator V3.1.1] Sale/reset detected; requesting AutoSkip.")
             if not skipSentForCycle then
                 skipSentForCycle = requestSkip()
             end
             wasFull = false
             lastSellAttempt = 0
-            print("[ETW V3.1.0] AutoSell cycle re-armed.")
+            print("[dEnzCreator V3.1.1] AutoSell cycle re-armed.")
         end
     end
 
@@ -502,7 +502,7 @@ end
 local function applyHiddenMap()
     local mapRoot = Workspace:FindFirstChild("Map")
     if not mapRoot then
-        warn("[ETW V3.1.0] Workspace.Map not found; Hidden Maps will retry.")
+        warn("[dEnzCreator V3.1.1] Workspace.Map not found; Hidden Maps will retry.")
         return false
     end
 
@@ -521,7 +521,7 @@ local function applyHiddenMap()
         end
     end))
 
-    print("[ETW V3.1.0] Hidden Maps ON. Food/chunks and collision are preserved.")
+    print("[dEnzCreator V3.1.1] Hidden Maps ON. Food/chunks and collision are preserved.")
     return true
 end
 
@@ -534,86 +534,176 @@ local function setHiddenMaps(enabled)
     else
         restoreHiddenMap()
         hiddenMapsEnabled = false
-        print("[ETW V3.1.0] Hidden Maps OFF. Original local visuals restored.")
+        print("[dEnzCreator V3.1.1] Hidden Maps OFF. Original local visuals restored.")
     end
 end
 
--- Small draggable mobile panel.
+-- dEnzCreator compact mobile panel (140 px wide).
 local gui = Instance.new("ScreenGui")
-gui.Name = "ETW_AUTOFARM_RUNTIME"
+gui.Name = "dEnzCreator_ETW"
 gui.ResetOnSpawn = false
 gui.Parent = player:WaitForChild("PlayerGui")
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.fromOffset(220, 220)
+frame.Name = "Main"
+frame.Size = UDim2.fromOffset(140, 0)
+frame.AutomaticSize = Enum.AutomaticSize.Y
 frame.Position = UDim2.new(0, 12, 0.42, 0)
-frame.BackgroundColor3 = Color3.fromRGB(18, 22, 28)
+frame.BackgroundColor3 = Color3.fromRGB(18, 20, 25)
 frame.BorderSizePixel = 0
 frame.Parent = gui
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 9)
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+local frameStroke = Instance.new("UIStroke", frame)
+frameStroke.Color = Color3.fromRGB(75, 85, 105)
+frameStroke.Thickness = 1
+
+local padding = Instance.new("UIPadding", frame)
+padding.PaddingTop = UDim.new(0, 6)
+padding.PaddingBottom = UDim.new(0, 7)
+padding.PaddingLeft = UDim.new(0, 6)
+padding.PaddingRight = UDim.new(0, 6)
+
+local layout = Instance.new("UIListLayout", frame)
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Padding = UDim.new(0, 5)
+
+local header = Instance.new("Frame")
+header.LayoutOrder = 1
+header.Size = UDim2.new(1, 0, 0, 22)
+header.BackgroundTransparency = 1
+header.Parent = frame
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -12, 0, 22)
-title.Position = UDim2.fromOffset(6, 3)
+title.Size = UDim2.new(1, -42, 1, 0)
 title.BackgroundTransparency = 1
-title.Text = "ETW AUTOFARM V3.1.0"
+title.Text = "dEnzCreator"
 title.TextColor3 = Color3.new(1, 1, 1)
-title.TextSize = 11
+title.TextSize = 12
 title.Font = Enum.Font.GothamBold
-title.Parent = frame
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = header
 
-local button = Instance.new("TextButton")
-button.Size = UDim2.new(1, -12, 0, 32)
-button.Position = UDim2.fromOffset(6, 29)
-button.BackgroundColor3 = Color3.fromRGB(75, 45, 45)
-button.BorderSizePixel = 0
-button.Text = "AUTOFARM: OFF"
-button.TextColor3 = Color3.new(1, 1, 1)
-button.TextSize = 12
-button.Font = Enum.Font.GothamSemibold
-button.Parent = frame
-Instance.new("UICorner", button).CornerRadius = UDim.new(0, 7)
+local minimize = Instance.new("TextButton")
+minimize.Size = UDim2.fromOffset(20, 20)
+minimize.Position = UDim2.new(1, -40, 0, 1)
+minimize.Text = "–"
+minimize.TextSize = 16
+minimize.Font = Enum.Font.GothamBold
+minimize.TextColor3 = Color3.new(1, 1, 1)
+minimize.BackgroundColor3 = Color3.fromRGB(42, 46, 55)
+minimize.Parent = header
+Instance.new("UICorner", minimize).CornerRadius = UDim.new(1, 0)
 
-button.Activated:Connect(function()
-    CFG.Farm = not CFG.Farm
-    button.Text = CFG.Farm and "AUTOFARM: ON" or "AUTOFARM: OFF"
-    button.BackgroundColor3 = CFG.Farm and Color3.fromRGB(35, 105, 70) or Color3.fromRGB(75, 45, 45)
-    print("[ETW V3.1.0] AutoFarm", CFG.Farm and "ON" or "OFF")
+local close = Instance.new("TextButton")
+close.Size = UDim2.fromOffset(20, 20)
+close.Position = UDim2.new(1, -20, 0, 1)
+close.Text = "×"
+close.TextSize = 16
+close.Font = Enum.Font.GothamBold
+close.TextColor3 = Color3.new(1, 1, 1)
+close.BackgroundColor3 = Color3.fromRGB(42, 46, 55)
+close.Parent = header
+Instance.new("UICorner", close).CornerRadius = UDim.new(1, 0)
+
+local runtimeBlock = Instance.new("TextLabel")
+runtimeBlock.Name = "RuntimeBlock"
+runtimeBlock.LayoutOrder = 2
+runtimeBlock.Size = UDim2.new(1, 0, 0, 42)
+runtimeBlock.BackgroundColor3 = Color3.fromRGB(35, 39, 49)
+runtimeBlock.BorderSizePixel = 0
+runtimeBlock.Text = "Runtime: 0m 0s\nActual time: 0m 0s"
+runtimeBlock.TextColor3 = Color3.fromRGB(240, 243, 248)
+runtimeBlock.TextSize = 9
+runtimeBlock.Font = Enum.Font.GothamMedium
+runtimeBlock.TextXAlignment = Enum.TextXAlignment.Left
+runtimeBlock.Parent = frame
+Instance.new("UICorner", runtimeBlock).CornerRadius = UDim.new(0, 7)
+local runtimePad = Instance.new("UIPadding", runtimeBlock)
+runtimePad.PaddingLeft = UDim.new(0, 5)
+
+local function makeToggle(label, order, color, initial, callback)
+    local b = Instance.new("TextButton")
+    b.LayoutOrder = order
+    b.Size = UDim2.new(1, 0, 0, 30)
+    b.BackgroundColor3 = initial and color or Color3.fromRGB(65, 48, 48)
+    b.BorderSizePixel = 0
+    b.Text = label .. (initial and ": ON" or ": OFF")
+    b.TextColor3 = Color3.new(1, 1, 1)
+    b.TextSize = 9
+    b.Font = Enum.Font.GothamSemibold
+    b.TextWrapped = true
+    b.Parent = frame
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 7)
+    local enabled = initial
+    b.Activated:Connect(function()
+        enabled = not enabled
+        b.Text = label .. (enabled and ": ON" or ": OFF")
+        b.BackgroundColor3 = enabled and color or Color3.fromRGB(65, 48, 48)
+        callback(enabled)
+    end)
+    return b
+end
+
+makeToggle("AUTOFARM", 3, Color3.fromRGB(24, 125, 75), CFG.Farm, function(on)
+    CFG.Farm = on
+    print("[dEnzCreator] AutoFarm", on and "ON" or "OFF")
 end)
 
-local hiddenButton = Instance.new("TextButton")
-hiddenButton.Size = UDim2.new(1, -12, 0, 32)
-hiddenButton.Position = UDim2.fromOffset(6, 66)
-hiddenButton.BackgroundColor3 = Color3.fromRGB(75, 45, 45)
-hiddenButton.BorderSizePixel = 0
-hiddenButton.Text = "HIDDEN MAPS: OFF"
-hiddenButton.TextColor3 = Color3.new(1, 1, 1)
-hiddenButton.TextSize = 12
-hiddenButton.Font = Enum.Font.GothamSemibold
-hiddenButton.Parent = frame
-Instance.new("UICorner", hiddenButton).CornerRadius = UDim.new(0, 7)
-
-hiddenButton.Activated:Connect(function()
-    setHiddenMaps(not hiddenMapsEnabled)
-    hiddenButton.Text = hiddenMapsEnabled and "HIDDEN MAPS: ON" or "HIDDEN MAPS: OFF"
-    hiddenButton.BackgroundColor3 = hiddenMapsEnabled
-        and Color3.fromRGB(35, 85, 105) or Color3.fromRGB(75, 45, 45)
+makeToggle("HIDDEN MAPS", 4, Color3.fromRGB(30, 90, 135), hiddenMapsEnabled, function(on)
+    setHiddenMaps(on)
 end)
 
+local autoClaimEnabled = false
+local lastRewardClaim = 0
+local lastSpinRequest = 0
+local function claimRewardsStep()
+    if not autoClaimEnabled or os.clock() - lastRewardClaim < 1 then return end
+    lastRewardClaim = os.clock()
 
--- Runtime monitor: only reports values that can be read locally.
-local monitor = Instance.new("TextLabel")
-monitor.Size = UDim2.new(1, -14, 0, 104)
-monitor.Position = UDim2.fromOffset(8, 105)
-monitor.BackgroundTransparency = 1
-monitor.TextColor3 = Color3.fromRGB(235, 240, 245)
-monitor.TextXAlignment = Enum.TextXAlignment.Left
-monitor.TextYAlignment = Enum.TextYAlignment.Top
-monitor.TextSize = 11
-monitor.Font = Enum.Font.GothamMedium
-monitor.TextWrapped = false
-monitor.Text = "Runtime: 0h 0m 0s\nActual time: 0m 0s\nApprox. remaining: --\ndayEarn: --\nnumChunks: --"
-monitor.Parent = frame
+    local events = ReplicatedStorage:FindFirstChild("Events")
+    if not events then return end
+
+    local timedRewards = player:FindFirstChild("TimedRewards")
+    local rewardEvent = events:FindFirstChild("RewardEvent")
+    if timedRewards and rewardEvent then
+        for _, reward in ipairs(timedRewards:GetChildren()) do
+            local value
+            pcall(function() value = tonumber(reward.Value) end)
+            if value and value > 0 then
+                pcall(function() rewardEvent:FireServer(reward) end)
+            end
+        end
+    end
+
+    -- Spin request is throttled separately to avoid rapid remote firing.
+    local spinEvent = events:FindFirstChild("SpinEvent")
+    if spinEvent and os.clock() - lastSpinRequest >= 10 then
+        lastSpinRequest = os.clock()
+        pcall(function() spinEvent:FireServer() end)
+    end
+end
+
+makeToggle("AUTO CLAIM REWARDS", 5, Color3.fromRGB(105, 48, 135), false, function(on)
+    autoClaimEnabled = on
+end)
+
+local minimized = false
+local hiddenItems = {}
+minimize.Activated:Connect(function()
+    minimized = not minimized
+    for _, child in ipairs(frame:GetChildren()) do
+        if child ~= header and child:IsA("GuiObject") then
+            child.Visible = not minimized
+        end
+    end
+    minimize.Text = minimized and "+" or "–"
+end)
+close.Activated:Connect(function()
+    running, CFG.Farm = false, false
+    autoClaimEnabled = false
+    setHiddenMaps(false)
+    gui:Destroy()
+end)
 
 local scriptStartedAt = os.clock()
 local mapStartedAt = os.clock()
@@ -688,23 +778,10 @@ local function updateRuntimeMonitor()
         mapStartedAt = os.clock()
     end
 
-    local cash = findCashValue()
-    if startingCash == nil and cash ~= nil then
-        startingCash = cash
-    end
-    local earned = (cash ~= nil and startingCash ~= nil)
-        and math.max(0, cash - startingCash) or nil
-
-    local chunkCount = countChunks()
-    local remaining = readMapCountdown()
-
     monitor.Text = string.format(
-        "Runtime: %s\nActual time: %s\nApprox. remaining: %s\ndayEarn: %s\nnumChunks: %s",
+        "Runtime: %s\nActual time: %s",
         formatDuration(os.clock() - scriptStartedAt),
-        formatDuration(os.clock() - mapStartedAt),
-        remaining and formatDuration(remaining) or "--",
-        earned and tostring(math.floor(earned)) or "--",
-        chunkCount and tostring(chunkCount) or "--"
+        formatDuration(os.clock() - mapStartedAt)
     )
 end
 
@@ -744,6 +821,7 @@ end)
 local connection = RunService.Heartbeat:Connect(function()
     if not running then return end
     pcall(updateRuntimeMonitor)
+    pcall(claimRewardsStep)
     if CFG.Farm then
         pcall(monitorGrabEatAvailability)
         pcall(farmStep)
@@ -752,16 +830,17 @@ end)
 gui.AncestryChanged:Connect(function(_, parent)
     if parent == nil then
         running, CFG.Farm = false, false
+        autoClaimEnabled = false
         setHiddenMaps(false)
         connection:Disconnect()
     end
 end)
 
-print("[ETW V3.1.0] Loaded. Eat/Grab=0.04s; action animations boosted to 5x; landing stabilizer retained.")
-print("[ETW V3.1.0] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
+print("[dEnzCreator V3.1.1] Loaded. Eat/Grab=0.04s; action animations boosted to 5x; landing stabilizer retained.")
+print("[dEnzCreator V3.1.1] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
--- V3.1.0 adds a separate Hidden Maps toggle; V3.0.4 farming logic is retained.
+-- V3.1.1 adds a separate Hidden Maps toggle; V3.0.4 farming logic is retained.
 
--- V3.1.0: Central Robloxia farm Z set to 700 studs for retest; missing Grab/Eat watchdog requests map skip.
+-- V3.1.1: Central Robloxia farm Z set to 700 studs for retest; missing Grab/Eat watchdog requests map skip.
 
--- V3.1.0 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
+-- V3.1.1 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
