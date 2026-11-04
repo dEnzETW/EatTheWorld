@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM V3.1.8 - HIDDEN MAPS
+-- dEnzCreator ETW AUTOFARM V3.1.9 - HIDDEN MAPS
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -113,7 +113,7 @@ local function farmAnchor()
         lastMap = mapName
         pendingLandingMap = mapName
         lastLandingAttempt = 0
-        print("[dEnzCreator V3.1.8] Map changed; searching for floor:", mapName)
+        print("[dEnzCreator V3.1.9] Map changed; searching for floor:", mapName)
     end
 
     if not pendingLandingMap then
@@ -153,7 +153,7 @@ local function farmAnchor()
         hum:ChangeState(Enum.HumanoidStateType.GettingUp)
     end)
 
-    print("[dEnzCreator V3.1.8] Landed on map floor:", pendingLandingMap,
+    print("[dEnzCreator V3.1.9] Landed on map floor:", pendingLandingMap,
         "| X=0 Y=", targetY, "Z=", z)
     pendingLandingMap = nil
     return true
@@ -173,7 +173,7 @@ local function requestSkip()
     local folder = ReplicatedStorage:FindFirstChild("Events")
     local remote = folder and folder:FindFirstChild("SetServerSettings")
     if not remote or not remote:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.1.8] SetServerSettings RemoteEvent not found.")
+        warn("[dEnzCreator V3.1.9] SetServerSettings RemoteEvent not found.")
         return false
     end
 
@@ -183,11 +183,11 @@ local function requestSkip()
         remote:FireServer(unpack(args))
     end)
     if ok then
-        print("[dEnzCreator V3.1.8] AutoSkip request sent (timer not paused).")
+        print("[dEnzCreator V3.1.9] AutoSkip request sent (timer not paused).")
         return true
     end
 
-    warn("[dEnzCreator V3.1.8] AutoSkip error:", err)
+    warn("[dEnzCreator V3.1.9] AutoSkip error:", err)
     return false
 end
 
@@ -223,7 +223,7 @@ local function monitorGrabEatAvailability()
     end
 
     if not missingActionSkipSent and os.clock() - missingActionSince >= 3.0 then
-        warn("[dEnzCreator V3.1.8] Grab/Eat missing on", mapName,
+        warn("[dEnzCreator V3.1.9] Grab/Eat missing on", mapName,
             "- requesting automatic map skip.")
         missingActionSkipSent = true
         requestSkip()
@@ -240,7 +240,7 @@ local function switchModeIfEnabled(mapName)
         local mode = CFG.SmallMaps[key] and "Mega" or "Normal"
         if pcall(function() remote:FireServer(mode) end) then
             lastMode = key
-            print("[dEnzCreator V3.1.8] RequestTeleport:", mode, mapName)
+            print("[dEnzCreator V3.1.9] RequestTeleport:", mode, mapName)
         end
     end
 end
@@ -316,11 +316,11 @@ end
 local function sendAutoSell(events)
     local sell = events and events:FindFirstChild("Sell")
     if not sell then
-        warn("[dEnzCreator V3.1.8] Character.Events.Sell not found.")
+        warn("[dEnzCreator V3.1.9] Character.Events.Sell not found.")
         return false
     end
     if not sell:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.1.8] Sell exists but is not a RemoteEvent:", sell.ClassName)
+        warn("[dEnzCreator V3.1.9] Sell exists but is not a RemoteEvent:", sell.ClassName)
         return false
     end
 
@@ -328,11 +328,11 @@ local function sendAutoSell(events)
         sell:FireServer()
     end)
     if not ok then
-        warn("[dEnzCreator V3.1.8] AutoSell error:", err)
+        warn("[dEnzCreator V3.1.9] AutoSell error:", err)
         return false
     end
 
-    print("[dEnzCreator V3.1.8] AutoSell request sent.")
+    print("[dEnzCreator V3.1.9] AutoSell request sent.")
     return true
 end
 
@@ -461,7 +461,7 @@ local function farmStep()
             wasFull = true
             skipSentForCycle = false
             lastSellAttempt = 0
-            print("[dEnzCreator V3.1.8] FULL detected | Size:", size,
+            print("[dEnzCreator V3.1.9] FULL detected | Size:", size,
                 "| Live MaxSize:", maxSize, "| Bar:", barProgress)
         end
         -- Retry at a measured interval if the server has not processed a sale.
@@ -483,13 +483,13 @@ local function farmStep()
                 completedCycleSeconds = math.max(0, os.clock() - cycleStartedAt)
                 cycleStartedAt = nil
             end
-            print("[dEnzCreator V3.1.8] Sale/reset detected; requesting AutoSkip.")
+            print("[dEnzCreator V3.1.9] Sale/reset detected; requesting AutoSkip.")
             if not skipSentForCycle then
                 skipSentForCycle = requestSkip()
             end
             wasFull = false
             lastSellAttempt = 0
-            print("[dEnzCreator V3.1.8] AutoSell cycle re-armed.")
+            print("[dEnzCreator V3.1.9] AutoSell cycle re-armed.")
         end
     end
 
@@ -578,7 +578,7 @@ end
 local function applyHiddenMap()
     local mapRoot = Workspace:FindFirstChild("Map")
     if not mapRoot then
-        warn("[dEnzCreator V3.1.8] Workspace.Map not found; Hidden Maps will retry.")
+        warn("[dEnzCreator V3.1.9] Workspace.Map not found; Hidden Maps will retry.")
         return false
     end
 
@@ -597,7 +597,7 @@ local function applyHiddenMap()
         end
     end))
 
-    print("[dEnzCreator V3.1.8] Hidden Maps ON. Food/chunks and collision are preserved.")
+    print("[dEnzCreator V3.1.9] Hidden Maps ON. Food/chunks and collision are preserved.")
     return true
 end
 
@@ -610,7 +610,7 @@ local function setHiddenMaps(enabled)
     else
         restoreHiddenMap()
         hiddenMapsEnabled = false
-        print("[dEnzCreator V3.1.8] Hidden Maps OFF. Original local visuals restored.")
+        print("[dEnzCreator V3.1.9] Hidden Maps OFF. Original local visuals restored.")
     end
 end
 
@@ -791,25 +791,9 @@ end)
 
 -- Wall-clock timers: update independently of AutoFarm activity.
 -- Runtime is retained across script re-execution if the executor keeps its environment.
-local env = _G
-pcall(function()
-    if type(getgenv) == "function" then env = getgenv() end
-end)
-
-local wallNow = os.clock()
-if type(env.__dEnzCreatorRuntimeStart) ~= "number" then
-    env.__dEnzCreatorRuntimeStart = wallNow
-end
-
-local currentJobId = tostring(game.JobId or "")
-if currentJobId == "" then currentJobId = "local-session" end
-env.__dEnzCreatorSessionStarts = env.__dEnzCreatorSessionStarts or {}
-if type(env.__dEnzCreatorSessionStarts[currentJobId]) ~= "number" then
-    env.__dEnzCreatorSessionStarts[currentJobId] = wallNow
-end
-
-local scriptStartedAt = env.__dEnzCreatorRuntimeStart
-local sessionStartedAt = env.__dEnzCreatorSessionStarts[currentJobId]
+-- Same os.clock() timer basis as the first working runtime panel.
+local scriptStartedAt = os.clock()
+local sessionStartedAt = os.clock()
 local function formatDuration(seconds)
     seconds = math.max(0, math.floor(tonumber(seconds) or 0))
     local hours = math.floor(seconds / 3600)
@@ -870,7 +854,7 @@ end
 local function updateRuntimeMonitor()
     -- os.time() measures real elapsed wall time, not CPU time or map duration.
     local now = os.clock()
-    monitor.Text = string.format(
+    runtimeBlock.Text = string.format(
         "Runtime: %s\nActual time: %s",
         formatDuration(now - scriptStartedAt),
         formatDuration(cycleStartedAt and (now - cycleStartedAt) or completedCycleSeconds)
@@ -929,11 +913,11 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator V3.1.8] Loaded. Eat/Grab=0.04s; action animations boosted to 5x; landing stabilizer retained.")
-print("[dEnzCreator V3.1.8] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
+print("[dEnzCreator V3.1.9] Loaded. Eat/Grab=0.04s; action animations boosted to 5x; landing stabilizer retained.")
+print("[dEnzCreator V3.1.9] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
--- V3.1.8 adds a separate Hidden Maps toggle; V3.0.4 farming logic is retained.
+-- V3.1.9 adds a separate Hidden Maps toggle; V3.0.4 farming logic is retained.
 
--- V3.1.8: Central Robloxia farm Z set to 700 studs for retest; missing Grab/Eat watchdog requests map skip.
+-- V3.1.9: Central Robloxia farm Z set to 700 studs for retest; missing Grab/Eat watchdog requests map skip.
 
--- V3.1.8 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
+-- V3.1.9 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
