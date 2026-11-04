@@ -685,7 +685,8 @@ runtimeBlock.TextSize = 8
 runtimeBlock.Font = Enum.Font.GothamMedium
 runtimeBlock.TextXAlignment = Enum.TextXAlignment.Left
 runtimeBlock.TextYAlignment = Enum.TextYAlignment.Center
--- Important: timer label is parented directly to header and has no background of its own.\nruntimeBlock.Parent = header
+-- Important: timer label is parented directly to header and has no background of its own.
+runtimeBlock.Parent = header
 
 local function makeToggle(label, order, color, initial, callback)
     local b = Instance.new("TextButton")
@@ -837,8 +838,7 @@ local function updateRuntimeMonitor()
     -- os.time() measures real elapsed wall time, not CPU time or map duration.
     local now = os.clock()
     runtimeBlock.Text = string.format(
-        "Runtime: %s
-Season time: %s",
+        "Runtime: %s\nSeason time: %s",
         formatDuration(now - scriptStartedAt),
         formatDuration(cycleStartedAt and (now - cycleStartedAt) or completedCycleSeconds)
     )
