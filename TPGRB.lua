@@ -1,4 +1,4 @@
--- KEDADA ETW AUTOFARM V3.0.7 - HIDDEN MAPS
+-- ETW AUTOFARM V3.1.0 - HIDDEN MAPS
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -15,7 +15,7 @@ if not player then return end
 local CFG = {
     Farm = false,
     DefaultZ = 0,
-    CentralRobloxiaZ = 350,
+    CentralRobloxiaZ = 700,
     StudvilleZ = 100,
     AutoSkipAfterSell = true,
     UseMappedSkipRemote = true,
@@ -46,7 +46,7 @@ local lastAnimationBoost = 0
 local missingActionSince = nil
 local missingActionSkipSent = false
 local lastMissingActionMap = ""
-local ACTION_ANIMATION_SPEED = 10.0
+local ACTION_ANIMATION_SPEED = 5.0
 local hiddenMapsEnabled = false
 local hiddenMapOriginals = {}
 local hiddenMapConnections = {}
@@ -104,7 +104,7 @@ local function farmAnchor()
         lastMap = mapName
         pendingLandingMap = mapName
         lastLandingAttempt = 0
-        print("[KEDADA V3.0.7] Map changed; searching for floor:", mapName)
+        print("[ETW V3.1.0] Map changed; searching for floor:", mapName)
     end
 
     if not pendingLandingMap then
@@ -144,7 +144,7 @@ local function farmAnchor()
         hum:ChangeState(Enum.HumanoidStateType.GettingUp)
     end)
 
-    print("[KEDADA V3.0.7] Landed on map floor:", pendingLandingMap,
+    print("[ETW V3.1.0] Landed on map floor:", pendingLandingMap,
         "| X=0 Y=", targetY, "Z=", z)
     pendingLandingMap = nil
     return true
@@ -164,7 +164,7 @@ local function requestSkip()
     local folder = ReplicatedStorage:FindFirstChild("Events")
     local remote = folder and folder:FindFirstChild("SetServerSettings")
     if not remote or not remote:IsA("RemoteEvent") then
-        warn("[KEDADA V3.0.7] SetServerSettings RemoteEvent not found.")
+        warn("[ETW V3.1.0] SetServerSettings RemoteEvent not found.")
         return false
     end
 
@@ -174,11 +174,11 @@ local function requestSkip()
         remote:FireServer(unpack(args))
     end)
     if ok then
-        print("[KEDADA V3.0.7] AutoSkip request sent (timer not paused).")
+        print("[ETW V3.1.0] AutoSkip request sent (timer not paused).")
         return true
     end
 
-    warn("[KEDADA V3.0.7] AutoSkip error:", err)
+    warn("[ETW V3.1.0] AutoSkip error:", err)
     return false
 end
 
@@ -214,7 +214,7 @@ local function monitorGrabEatAvailability()
     end
 
     if not missingActionSkipSent and os.clock() - missingActionSince >= 3.0 then
-        warn("[KEDADA V3.0.7] Grab/Eat missing on", mapName,
+        warn("[ETW V3.1.0] Grab/Eat missing on", mapName,
             "- requesting automatic map skip.")
         missingActionSkipSent = true
         requestSkip()
@@ -231,7 +231,7 @@ local function switchModeIfEnabled(mapName)
         local mode = CFG.SmallMaps[key] and "Mega" or "Normal"
         if pcall(function() remote:FireServer(mode) end) then
             lastMode = key
-            print("[KEDADA V3.0.7] RequestTeleport:", mode, mapName)
+            print("[ETW V3.1.0] RequestTeleport:", mode, mapName)
         end
     end
 end
@@ -307,11 +307,11 @@ end
 local function sendAutoSell(events)
     local sell = events and events:FindFirstChild("Sell")
     if not sell then
-        warn("[KEDADA V3.0.7] Character.Events.Sell not found.")
+        warn("[ETW V3.1.0] Character.Events.Sell not found.")
         return false
     end
     if not sell:IsA("RemoteEvent") then
-        warn("[KEDADA V3.0.7] Sell exists but is not a RemoteEvent:", sell.ClassName)
+        warn("[ETW V3.1.0] Sell exists but is not a RemoteEvent:", sell.ClassName)
         return false
     end
 
@@ -319,11 +319,11 @@ local function sendAutoSell(events)
         sell:FireServer()
     end)
     if not ok then
-        warn("[KEDADA V3.0.7] AutoSell error:", err)
+        warn("[ETW V3.1.0] AutoSell error:", err)
         return false
     end
 
-    print("[KEDADA V3.0.7] AutoSell request sent.")
+    print("[ETW V3.1.0] AutoSell request sent.")
     return true
 end
 
@@ -389,7 +389,7 @@ local function farmStep()
             wasFull = true
             skipSentForCycle = false
             lastSellAttempt = 0
-            print("[KEDADA V3.0.7] FULL detected | Size:", size,
+            print("[ETW V3.1.0] FULL detected | Size:", size,
                 "| Live MaxSize:", maxSize, "| Bar:", barProgress)
         end
         -- Retry at a measured interval if the server has not processed a sale.
@@ -407,13 +407,13 @@ local function farmStep()
             or sizeDrop or barDrop
 
         if sold then
-            print("[KEDADA V3.0.7] Sale/reset detected; requesting AutoSkip.")
+            print("[ETW V3.1.0] Sale/reset detected; requesting AutoSkip.")
             if not skipSentForCycle then
                 skipSentForCycle = requestSkip()
             end
             wasFull = false
             lastSellAttempt = 0
-            print("[KEDADA V3.0.7] AutoSell cycle re-armed.")
+            print("[ETW V3.1.0] AutoSell cycle re-armed.")
         end
     end
 
@@ -502,7 +502,7 @@ end
 local function applyHiddenMap()
     local mapRoot = Workspace:FindFirstChild("Map")
     if not mapRoot then
-        warn("[KEDADA V3.0.7] Workspace.Map not found; Hidden Maps will retry.")
+        warn("[ETW V3.1.0] Workspace.Map not found; Hidden Maps will retry.")
         return false
     end
 
@@ -521,7 +521,7 @@ local function applyHiddenMap()
         end
     end))
 
-    print("[KEDADA V3.0.7] Hidden Maps ON. Food/chunks and collision are preserved.")
+    print("[ETW V3.1.0] Hidden Maps ON. Food/chunks and collision are preserved.")
     return true
 end
 
@@ -534,18 +534,18 @@ local function setHiddenMaps(enabled)
     else
         restoreHiddenMap()
         hiddenMapsEnabled = false
-        print("[KEDADA V3.0.7] Hidden Maps OFF. Original local visuals restored.")
+        print("[ETW V3.1.0] Hidden Maps OFF. Original local visuals restored.")
     end
 end
 
 -- Small draggable mobile panel.
 local gui = Instance.new("ScreenGui")
-gui.Name = "KEDADA_V304_TEST"
+gui.Name = "ETW_AUTOFARM_RUNTIME"
 gui.ResetOnSpawn = false
 gui.Parent = player:WaitForChild("PlayerGui")
 
 local frame = Instance.new("Frame")
-frame.Size = UDim2.fromOffset(184, 119)
+frame.Size = UDim2.fromOffset(220, 220)
 frame.Position = UDim2.new(0, 12, 0.42, 0)
 frame.BackgroundColor3 = Color3.fromRGB(18, 22, 28)
 frame.BorderSizePixel = 0
@@ -556,14 +556,14 @@ local title = Instance.new("TextLabel")
 title.Size = UDim2.new(1, -12, 0, 22)
 title.Position = UDim2.fromOffset(6, 3)
 title.BackgroundTransparency = 1
-title.Text = "KEDADA AUTOFARM V3.0.7"
+title.Text = "ETW AUTOFARM V3.1.0"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.TextSize = 11
 title.Font = Enum.Font.GothamBold
 title.Parent = frame
 
 local button = Instance.new("TextButton")
-button.Size = UDim2.new(1, -12, 0, 34)
+button.Size = UDim2.new(1, -12, 0, 32)
 button.Position = UDim2.fromOffset(6, 29)
 button.BackgroundColor3 = Color3.fromRGB(75, 45, 45)
 button.BorderSizePixel = 0
@@ -578,12 +578,12 @@ button.Activated:Connect(function()
     CFG.Farm = not CFG.Farm
     button.Text = CFG.Farm and "AUTOFARM: ON" or "AUTOFARM: OFF"
     button.BackgroundColor3 = CFG.Farm and Color3.fromRGB(35, 105, 70) or Color3.fromRGB(75, 45, 45)
-    print("[KEDADA V3.0.7] AutoFarm", CFG.Farm and "ON" or "OFF")
+    print("[ETW V3.1.0] AutoFarm", CFG.Farm and "ON" or "OFF")
 end)
 
 local hiddenButton = Instance.new("TextButton")
-hiddenButton.Size = UDim2.new(1, -12, 0, 34)
-hiddenButton.Position = UDim2.fromOffset(6, 72)
+hiddenButton.Size = UDim2.new(1, -12, 0, 32)
+hiddenButton.Position = UDim2.fromOffset(6, 66)
 hiddenButton.BackgroundColor3 = Color3.fromRGB(75, 45, 45)
 hiddenButton.BorderSizePixel = 0
 hiddenButton.Text = "HIDDEN MAPS: OFF"
@@ -599,6 +599,114 @@ hiddenButton.Activated:Connect(function()
     hiddenButton.BackgroundColor3 = hiddenMapsEnabled
         and Color3.fromRGB(35, 85, 105) or Color3.fromRGB(75, 45, 45)
 end)
+
+
+-- Runtime monitor: only reports values that can be read locally.
+local monitor = Instance.new("TextLabel")
+monitor.Size = UDim2.new(1, -14, 0, 104)
+monitor.Position = UDim2.fromOffset(8, 105)
+monitor.BackgroundTransparency = 1
+monitor.TextColor3 = Color3.fromRGB(235, 240, 245)
+monitor.TextXAlignment = Enum.TextXAlignment.Left
+monitor.TextYAlignment = Enum.TextYAlignment.Top
+monitor.TextSize = 11
+monitor.Font = Enum.Font.GothamMedium
+monitor.TextWrapped = false
+monitor.Text = "Runtime: 0h 0m 0s\nActual time: 0m 0s\nApprox. remaining: --\ndayEarn: --\nnumChunks: --"
+monitor.Parent = frame
+
+local scriptStartedAt = os.clock()
+local mapStartedAt = os.clock()
+local startingCash = nil
+local lastMonitorMap = ""
+local lastMonitorUpdate = 0
+
+local function formatDuration(seconds)
+    seconds = math.max(0, math.floor(tonumber(seconds) or 0))
+    local hours = math.floor(seconds / 3600)
+    local minutes = math.floor((seconds % 3600) / 60)
+    local secs = seconds % 60
+    if hours > 0 then
+        return string.format("%dh %dm %ds", hours, minutes, secs)
+    end
+    return string.format("%dm %ds", minutes, secs)
+end
+
+local function findCashValue()
+    local candidates = {
+        player:FindFirstChild("leaderstats"),
+        player:FindFirstChild("Data"),
+        player:FindFirstChild("Stats")
+    }
+    for _, folder in ipairs(candidates) do
+        if folder then
+            for _, obj in ipairs(folder:GetDescendants()) do
+                if (obj:IsA("IntValue") or obj:IsA("NumberValue"))
+                    and (norm(obj.Name):find("cash", 1, true)
+                    or norm(obj.Name):find("coin", 1, true)
+                    or norm(obj.Name):find("money", 1, true)
+                    or norm(obj.Name):find("gold", 1, true)) then
+                    return tonumber(obj.Value)
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function readMapCountdown()
+    local pg = player:FindFirstChildOfClass("PlayerGui")
+    if not pg then return nil end
+    for _, obj in ipairs(pg:GetDescendants()) do
+        if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+            local t = tostring(obj.Text or "")
+            local mm, ss = t:match("(%d%d?):(%d%d)")
+            if mm and ss then
+                local total = tonumber(mm) * 60 + tonumber(ss)
+                if total >= 0 and total <= 3600 then
+                    return total
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function countChunks()
+    local chunks = Workspace:FindFirstChild("Chunks")
+    if not chunks then return nil end
+    return #chunks:GetChildren()
+end
+
+local function updateRuntimeMonitor()
+    if os.clock() - lastMonitorUpdate < 0.5 then return end
+    lastMonitorUpdate = os.clock()
+
+    local mapName = getMapName()
+    if mapName ~= lastMonitorMap then
+        lastMonitorMap = mapName
+        mapStartedAt = os.clock()
+    end
+
+    local cash = findCashValue()
+    if startingCash == nil and cash ~= nil then
+        startingCash = cash
+    end
+    local earned = (cash ~= nil and startingCash ~= nil)
+        and math.max(0, cash - startingCash) or nil
+
+    local chunkCount = countChunks()
+    local remaining = readMapCountdown()
+
+    monitor.Text = string.format(
+        "Runtime: %s\nActual time: %s\nApprox. remaining: %s\ndayEarn: %s\nnumChunks: %s",
+        formatDuration(os.clock() - scriptStartedAt),
+        formatDuration(os.clock() - mapStartedAt),
+        remaining and formatDuration(remaining) or "--",
+        earned and tostring(math.floor(earned)) or "--",
+        chunkCount and tostring(chunkCount) or "--"
+    )
+end
 
 -- Re-apply when the game replaces Workspace.Map during a map transition.
 table.insert(hiddenMapConnections, Workspace.ChildAdded:Connect(function(child)
@@ -634,7 +742,9 @@ UserInputService.InputChanged:Connect(function(input)
 end)
 
 local connection = RunService.Heartbeat:Connect(function()
-    if running and CFG.Farm then
+    if not running then return end
+    pcall(updateRuntimeMonitor)
+    if CFG.Farm then
         pcall(monitorGrabEatAvailability)
         pcall(farmStep)
     end
@@ -647,11 +757,11 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[KEDADA V3.0.7] Loaded. Eat/Grab=0.04s; action animations boosted to 10x; landing stabilizer retained.")
-print("[KEDADA V3.0.7] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
+print("[ETW V3.1.0] Loaded. Eat/Grab=0.04s; action animations boosted to 5x; landing stabilizer retained.")
+print("[ETW V3.1.0] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
--- V3.0.7 adds a separate Hidden Maps toggle; V3.0.4 farming logic is retained.
+-- V3.1.0 adds a separate Hidden Maps toggle; V3.0.4 farming logic is retained.
 
--- V3.0.7: Central Robloxia farm Z adjusted to 350 studs; missing Grab/Eat watchdog requests map skip.
+-- V3.1.0: Central Robloxia farm Z set to 700 studs for retest; missing Grab/Eat watchdog requests map skip.
 
--- V3.0.7 TEST: Action-priority animation speed raised to 10x; Eat cadence remains 0.04s.
+-- V3.1.0 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
