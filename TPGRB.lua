@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM V3.2.1 - HIDDEN MAPS
+-- dEnzCreator ETW AUTOFARM V3.2.2 - HIDDEN MAPS
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -386,11 +386,27 @@ local function monitorNearbyFood(char, root)
     return false
 end
 
+-- Conservative 3x animation test: speed up only tracks whose names clearly
+-- identify Grab or Eat. Do not multiply RemoteEvent calls or movement animations.
+local ACTION_ANIMATION_SPEED = 3.0
+local function accelerateActionAnimations(hum)
+    if not hum then return end
+    local ok, tracks = pcall(function() return hum:GetPlayingAnimationTracks() end)
+    if not ok or type(tracks) ~= "table" then return end
+    for _, track in ipairs(tracks) do
+        local trackName = string.lower(tostring(track.Name or ""))
+        if trackName:find("grab", 1, true) or trackName:find("eat", 1, true) then
+            pcall(function() track:AdjustSpeed(ACTION_ANIMATION_SPEED) end)
+        end
+    end
+end
+
 local function farmStep()
     local char, hum, root, events = getParts()
     if not char then return end
 
     farmAnchor()
+    accelerateActionAnimations(hum)
 
     local foodNearby = monitorNearbyFood(char, root)
 
@@ -614,23 +630,30 @@ layout.Padding = UDim.new(0, 5)
 
 local header = Instance.new("Frame")
 header.LayoutOrder = 1
-header.Size = UDim2.new(1, 0, 0, 22)
-header.BackgroundTransparency = 1
+header.Size = UDim2.new(1, 0, 0, 62)
+header.BackgroundColor3 = Color3.fromRGB(37, 39, 62)
+header.BackgroundTransparency = 0
+header.BorderSizePixel = 0
 header.Parent = frame
+Instance.new("UICorner", header).CornerRadius = UDim.new(0, 7)
+local headerStroke = Instance.new("UIStroke", header)
+headerStroke.Color = Color3.fromRGB(125, 105, 195)
+headerStroke.Thickness = 1
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, 0, 1, 0)
+title.Size = UDim2.new(1, -48, 0, 22)
+title.Position = UDim2.fromOffset(5, 0)
 title.BackgroundTransparency = 1
 title.Text = "dEnzCreator"
 title.TextColor3 = Color3.new(1, 1, 1)
 title.TextSize = 12
 title.Font = Enum.Font.GothamBold
-title.TextXAlignment = Enum.TextXAlignment.Center
+title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = header
 
 local minimize = Instance.new("TextButton")
 minimize.Size = UDim2.fromOffset(20, 20)
-minimize.Position = UDim2.new(1, -40, 0, 1)
+minimize.Position = UDim2.new(1, -42, 0, 1)
 minimize.Text = "–"
 minimize.TextSize = 16
 minimize.Font = Enum.Font.GothamBold
@@ -641,7 +664,7 @@ Instance.new("UICorner", minimize).CornerRadius = UDim.new(1, 0)
 
 local close = Instance.new("TextButton")
 close.Size = UDim2.fromOffset(20, 20)
-close.Position = UDim2.new(1, -20, 0, 1)
+close.Position = UDim2.new(1, -21, 0, 1)
 close.Text = "×"
 close.TextSize = 16
 close.Font = Enum.Font.GothamBold
@@ -652,21 +675,17 @@ Instance.new("UICorner", close).CornerRadius = UDim.new(1, 0)
 
 local runtimeBlock = Instance.new("TextLabel")
 runtimeBlock.Name = "RuntimeBlock"
-runtimeBlock.LayoutOrder = 2
-runtimeBlock.Size = UDim2.new(1, 0, 0, 38)
-runtimeBlock.BackgroundColor3 = Color3.fromRGB(37, 39, 62)
+runtimeBlock.Size = UDim2.new(1, -10, 0, 34)
+runtimeBlock.Position = UDim2.fromOffset(5, 25)
+runtimeBlock.BackgroundTransparency = 1
 runtimeBlock.BorderSizePixel = 0
-runtimeBlock.Text = "Runtime: 0m 0s\\nSeason time: 0m 0s"
+runtimeBlock.Text = "Runtime: 0m 0s\nSeason time: 0m 0s"
 runtimeBlock.TextColor3 = Color3.fromRGB(240, 243, 248)
 runtimeBlock.TextSize = 9
 runtimeBlock.Font = Enum.Font.GothamMedium
 runtimeBlock.TextXAlignment = Enum.TextXAlignment.Center
 runtimeBlock.TextYAlignment = Enum.TextYAlignment.Center
-runtimeBlock.Parent = frame
-Instance.new("UICorner", runtimeBlock).CornerRadius = UDim.new(0, 7)
-local runtimeStroke = Instance.new("UIStroke", runtimeBlock)
-runtimeStroke.Color = Color3.fromRGB(125, 105, 195)
-runtimeStroke.Thickness = 1
+runtimeBlock.Parent = header
 
 local function makeToggle(label, order, color, initial, callback)
     local b = Instance.new("TextButton")
@@ -691,12 +710,12 @@ local function makeToggle(label, order, color, initial, callback)
     return b
 end
 
-makeToggle("AUTOFARM", 3, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
+makeToggle("AUTOFARM", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
     CFG.Farm = on
     print("[dEnzCreator] AutoFarm", on and "ON" or "OFF")
 end)
 
-makeToggle("HIDDEN MAPS", 4, Color3.fromRGB(65, 105, 190), hiddenMapsEnabled, function(on)
+makeToggle("HIDDEN MAPS", 3, Color3.fromRGB(65, 105, 190), hiddenMapsEnabled, function(on)
     setHiddenMaps(on)
 end)
 
@@ -730,7 +749,7 @@ local function claimRewardsStep()
     end
 end
 
-makeToggle("AUTO CLAIM REWARDS", 5, Color3.fromRGB(133, 89, 195), false, function(on)
+makeToggle("AUTO CLAIM REWARDS", 4, Color3.fromRGB(133, 89, 195), false, function(on)
     autoClaimEnabled = on
 end)
 
@@ -818,7 +837,8 @@ local function updateRuntimeMonitor()
     -- os.time() measures real elapsed wall time, not CPU time or map duration.
     local now = os.clock()
     runtimeBlock.Text = string.format(
-        "Runtime: %s\nSeason time: %s",
+        "Runtime: %s
+Season time: %s",
         formatDuration(now - scriptStartedAt),
         formatDuration(cycleStartedAt and (now - cycleStartedAt) or completedCycleSeconds)
     )
@@ -884,3 +904,6 @@ print("[dEnzCreator V3.2.1] Bar/capacity detection loaded. Eat/Grab stay active;
 -- V3.2.1: Central Robloxia farm Z set to 700 studs for retest; missing Grab/Eat watchdog requests map skip.
 
 -- V3.2.1 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
+
+
+-- V3.2.2: Combined title/timer header (140px), left-aligned title, 3x targeted Grab/Eat animation-track speed test. Remote cadence is unchanged.
