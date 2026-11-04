@@ -389,7 +389,7 @@ end
 -- Aggressive action-animation acceleration.
 -- Grab/Eat tracks in ETW are not guaranteed to expose a useful track.Name.
 -- Use Action-priority tracks instead, and catch newly played tracks as well.
-local ACTION_ANIMATION_SPEED = 8.0
+local ACTION_ANIMATION_SPEED = 5.0
 local hookedAnimationHumanoids = setmetatable({}, {__mode = "k"})
 
 local function isActionTrack(track)
