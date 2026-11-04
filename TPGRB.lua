@@ -1,16 +1,16 @@
 --[[
-    AUTO GRAB PLAYER - TEST V3.3
-    TELEPORT CHASE
+    AUTO GRAB PLAYER V3.4
+    CLOSE TELEPORT
 
-    - Select one player.
-    - Read latest target position.
-    - Teleport ONCE behind target.
-    - Wait briefly for positioning.
-    - Fire LocalEvents.Grab ONCE.
+    - Select player.
+    - Teleport once behind target.
+    - Fixed distance: 1.5 studs.
+    - Wait briefly.
+    - Fire LocalEvents.Grab once.
     - Wait 1.5 seconds.
     - Return to starting position.
     - No continuous tracking.
-    - No auto Eat or Throw.
+    - No auto Eat / Throw.
 ]]
 
 local Players = game:GetService("Players")
@@ -21,16 +21,15 @@ local UserInputService = game:GetService("UserInputService")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
-local GUI_NAME = "AUTO_GRAB_PLAYER_TEST_V33"
+local GUI_NAME = "AUTO_GRAB_PLAYER_V34"
 
-local MIN_BEHIND_DISTANCE = 2.5
-local MAX_BEHIND_DISTANCE = 7.0
-local EXTRA_GAP = 0.8
-
-local GRAB_WAIT = 1.5
+-- CONFIGURATION
+local BEHIND_DISTANCE = 1.5
 local TELEPORT_SETTLE = 0.20
+local GRAB_WAIT = 1.5
+local RETURN_DELAY = 0.35
 
--- UI cleanup
+-- REMOVE OLD V3.4 UI
 local oldGui
 
 pcall(function()
@@ -78,6 +77,7 @@ if not parented then
     gui.Parent = PlayerGui
 end
 
+-- COLORS
 local C = {
     bg = Color3.fromRGB(17, 17, 21),
     panel = Color3.fromRGB(29, 28, 34),
@@ -118,6 +118,7 @@ panel.Position = UDim2.new(0.06, 0, 0.22, 0)
 panel.BackgroundColor3 = C.bg
 panel.BorderSizePixel = 0
 panel.Parent = gui
+
 round(panel, 13)
 
 local stroke = Instance.new("UIStroke")
@@ -125,16 +126,18 @@ stroke.Color = C.red
 stroke.Thickness = 1.5
 stroke.Parent = panel
 
+-- HEADER
 local header = Instance.new("Frame")
 header.Size = UDim2.new(1, 0, 0, 31)
 header.BackgroundColor3 = C.panel
 header.BorderSizePixel = 0
 header.Parent = panel
+
 round(header, 12)
 
 makeLabel(
     header,
-    "AUTO GRAB PLAYER • V3.3",
+    "AUTO GRAB PLAYER • V3.4",
     UDim2.new(1, -38, 1, 0),
     UDim2.fromOffset(9, 0),
     9,
@@ -142,6 +145,7 @@ makeLabel(
     Enum.Font.GothamBold
 )
 
+-- STATUS
 local status = makeLabel(
     panel,
     "Pilih player untuk satu kali percobaan.",
@@ -174,6 +178,7 @@ close.TextColor3 = C.white
 close.TextSize = 16
 close.Font = Enum.Font.GothamBold
 close.Parent = header
+
 round(close, 6)
 
 close.Activated:Connect(function()
@@ -248,6 +253,7 @@ layout.Padding = UDim.new(0, 4)
 layout.SortOrder = Enum.SortOrder.LayoutOrder
 layout.Parent = list
 
+-- REFRESH BUTTON
 local refresh = Instance.new("TextButton")
 refresh.Size = UDim2.new(1, -14, 0, 21)
 refresh.Position = UDim2.new(0, 7, 1, -25)
@@ -258,6 +264,7 @@ refresh.TextColor3 = C.white
 refresh.TextSize = 8
 refresh.Font = Enum.Font.GothamBold
 refresh.Parent = panel
+
 round(refresh, 6)
 
 -- CHARACTER DETECTION
@@ -278,53 +285,22 @@ local function getRoot(plr)
     return char, root
 end
 
--- ADAPTIVE DISTANCE
-local function getAdaptiveBehindDistance(targetChar, myChar)
-    local targetDepth = 2
-    local myDepth = 2
-
-    pcall(function()
-        local _, size = targetChar:GetBoundingBox()
-        targetDepth = size.Z
-    end)
-
-    pcall(function()
-        local _, size = myChar:GetBoundingBox()
-        myDepth = size.Z
-    end)
-
-    local distance =
-        (targetDepth * 0.5)
-        + (myDepth * 0.5)
-        + EXTRA_GAP
-
-    return math.clamp(
-        distance,
-        MIN_BEHIND_DISTANCE,
-        MAX_BEHIND_DISTANCE
-    )
-end
-
--- GET ONE TELEPORT POSITION
+-- CLOSE TELEPORT POSITION
 local function getTeleportPosition(target)
-    local targetChar, targetRoot = getRoot(target)
-    local myChar = LocalPlayer.Character
 
-    if not targetChar or not targetRoot or not myChar then
+    local targetChar, targetRoot = getRoot(target)
+
+    if not targetChar or not targetRoot then
         return nil
     end
 
-    -- Read the latest position immediately before teleport.
+    -- Read target's latest position once.
     local latestPosition = targetRoot.Position
     local latestDirection = targetRoot.CFrame.LookVector
 
-    local distance = getAdaptiveBehindDistance(
-        targetChar,
-        myChar
-    )
-
+    -- Fixed distance: 1.5 studs.
     local behindPosition =
-        latestPosition - latestDirection * distance
+        latestPosition - latestDirection * BEHIND_DISTANCE
 
     return CFrame.lookAt(
         behindPosition,
@@ -332,8 +308,9 @@ local function getTeleportPosition(target)
     )
 end
 
--- ONE-TIME TELEPORT
+-- TELEPORT ONCE
 local function teleportOnce(target)
+
     local destination = getTeleportPosition(target)
 
     if not destination then
@@ -397,7 +374,7 @@ local function doGrabTest(target)
 
         -- STEP 1: TELEPORT
         setStatus(
-            "Teleport ke belakang " .. target.DisplayName .. "...",
+            "Teleport dekat belakang " .. target.DisplayName .. "...",
             C.yellow
         )
 
@@ -415,10 +392,11 @@ local function doGrabTest(target)
             return
         end
 
-        -- STEP 3: CHECK TARGET STILL EXISTS
+        -- STEP 3: VERIFY TARGET
         local latestTargetChar, latestTargetRoot = getRoot(target)
 
         if not latestTargetChar or not latestTargetRoot then
+
             setStatus("Target tidak tersedia.", C.yellow)
 
             pcall(function()
@@ -432,14 +410,15 @@ local function doGrabTest(target)
             return
         end
 
-        -- STEP 4: GRAB
+        -- STEP 4: FIND GRAB EVENT
         local localEvents =
             ReplicatedStorage:FindFirstChild("LocalEvents")
 
         local grabEvent =
             localEvents and localEvents:FindFirstChild("Grab")
 
-        if not grabEvent or not grabEvent:IsA("BindableEvent") then
+        if not grabEvent
+        or not grabEvent:IsA("BindableEvent") then
 
             setStatus(
                 "LocalEvents.Grab BindableEvent tidak ditemukan.",
@@ -457,6 +436,7 @@ local function doGrabTest(target)
             return
         end
 
+        -- STEP 5: FIRE GRAB ONCE
         local fired, fireErr = pcall(function()
             grabEvent:Fire()
         end)
@@ -479,7 +459,7 @@ local function doGrabTest(target)
             return
         end
 
-        -- STEP 5: WAIT
+        -- STEP 6: WAIT
         setStatus(
             "Grab dipanggil. Menunggu 1,5 detik...",
             C.yellow
@@ -492,7 +472,7 @@ local function doGrabTest(target)
             return
         end
 
-        -- STEP 6: RETURN
+        -- STEP 7: RETURN TO START
         setStatus(
             "Kembali ke posisi awal...",
             C.yellow
@@ -506,9 +486,9 @@ local function doGrabTest(target)
             end
         end)
 
-        task.wait(0.35)
+        task.wait(RETURN_DELAY)
 
-        -- STEP 7: REPORT
+        -- STEP 8: STATUS
         local _, myRootAfter = getRoot(LocalPlayer)
         local _, targetRootAfter = getRoot(target)
 
@@ -518,9 +498,9 @@ local function doGrabTest(target)
                 (myRootAfter.Position - targetRootAfter.Position).Magnitude
 
             setStatus(
-                "Grab dipanggil. Periksa apakah target ikut terbawa. Jarak: "
+                "Percobaan selesai. Jarak: "
                 .. math.floor(distance)
-                .. " studs.",
+                .. " studs. Periksa apakah target ikut terbawa.",
                 C.yellow
             )
         else
@@ -600,6 +580,7 @@ local function refreshPlayers()
     end
 end
 
+-- EVENTS
 refresh.Activated:Connect(refreshPlayers)
 
 Players.PlayerAdded:Connect(function()
