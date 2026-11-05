@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM V3.3.22 - CENTRAL Z150 + 2S ACTION ANIMATION + TIGHT HEADER (NO DYNAMIC COLLISION)
+-- dEnzCreator ETW AUTOFARM V3.3.24 - CENTRAL Z150 + 2S ACTION ANIMATION + TIGHT HEADER (NO DYNAMIC COLLISION)
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Sell and SkipMaps are requested together at full capacity; Sell retries continue until reset.
@@ -20,7 +20,6 @@ local CFG = {
     StudvilleZ = 100,
     AutoSkipAfterSell = true,
     UseMappedSkipRemote = true,
-    AutoMapModeSwitch = false,
     SmallMaps = {
         ["raven rock"]=true, ["glass houses"]=true, ["courtyard"]=true,
         ["blox city"]=true, ["jungle"]=true, ["community construction"]=true,
@@ -71,10 +70,6 @@ local missingActionSkipSent = false
 local cycleStartedAt = nil
 local completedCycleSeconds = 0
 local lastNearbyFoodAt = nil
-local noFoodSkipSentForMap = false
-local noFoodMapKey = ""
-local lastFoodScanAt = 0
-local cachedFoodNearby = false
 local lastMissingActionMap = ""
 local hiddenMapsEnabled = false
 local hiddenMapOriginals = {}
@@ -151,7 +146,7 @@ local function farmAnchor()
         skipRequestPending = false
         sellPending = false
         sellAttempts = 0
-        print("[dEnzCreator V3.3.22] Map changed:", mapName, "| Central:", isCentral and "yes" or "no")
+        print("[dEnzCreator V3.3.24] Map changed:", mapName, "| Central:", isCentral and "yes" or "no")
     end
     if not pendingLandingMap then return true end
     if os.clock() - lastLandingAttempt < 0.10 then return false end
@@ -203,7 +198,7 @@ local function farmAnchor()
     root.AssemblyAngularVelocity = Vector3.zero
     root.CFrame = CFrame.new(destinationXZ.X, targetY, destinationXZ.Z)
     pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-    print("[dEnzCreator V3.3.22] Landing:", pendingLandingMap,
+    print("[dEnzCreator V3.3.24] Landing:", pendingLandingMap,
         "| food-target:", isCentral and "yes" or "no",
         "| X=", destinationXZ.X, "Y=", targetY, "Z=", destinationXZ.Z)
     pendingLandingMap = nil
@@ -239,7 +234,7 @@ local function requestSkip()
             mapPickDeadline = os.clock() + MAP_PICK_TIMEOUT
             mapPickNextScan = 0
         end
-        print("[dEnzCreator V3.3.22] AutoSkip request sent; verified non-central map selection armed.")
+        print("[dEnzCreator V3.3.24] AutoSkip request sent; verified non-central map selection armed.")
         return true
     end
 
@@ -388,7 +383,7 @@ local function selectNonCentralMapStep()
             if ok then
                 mapPickCompleted = true
                 mapPickArmed = false
-                print("[dEnzCreator V3.3.22] Selected verified non-central map:", title)
+                print("[dEnzCreator V3.3.24] Selected verified non-central map:", title)
                 return
             else
                 warn("[dEnzCreator V3.3.15] Map card activation failed:", err)
@@ -436,20 +431,7 @@ local function monitorGrabEatAvailability()
     end
 end
 
-local function switchModeIfEnabled(mapName)
-    if not CFG.AutoMapModeSwitch then return end
-    local key = norm(mapName)
-    if key == "" or key == lastMode then return end
-    local folder = ReplicatedStorage:FindFirstChild("Events")
-    local remote = folder and folder:FindFirstChild("RequestTeleport")
-    if remote and remote:IsA("RemoteEvent") then
-        local mode = CFG.SmallMaps[key] and "Mega" or "Normal"
-        if pcall(function() remote:FireServer(mode) end) then
-            lastMode = key
-            print("[dEnzCreator V3.3.22] RequestTeleport:", mode, mapName)
-        end
-    end
-end
+-- Optional RequestTeleport mode-switch remote removed in this stabilization build.
 
 -- Visual bar detector: locate the "Klik untuk menjual" label and inspect
 -- green fill elements near that label. No fixed size/upgrade number is used.
@@ -519,29 +501,6 @@ local function getCapacityState(char)
     return size, maxSize, numericFull
 end
 
-local function sendAutoSell(events)
-    local sell = events and events:FindFirstChild("Sell")
-    if not sell then
-        warn("[dEnzCreator V3.3.15] Character.Events.Sell not found.")
-        return false
-    end
-    if not sell:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.3.15] Sell exists but is not a RemoteEvent:", sell.ClassName)
-        return false
-    end
-
-    local ok, err = pcall(function()
-        sell:FireServer()
-    end)
-    if not ok then
-        warn("[dEnzCreator V3.3.15] AutoSell error:", err)
-        return false
-    end
-
-    print("[dEnzCreator V3.3.22] AutoSell request sent.")
-    return true
-end
-
 -- Sell/transition state machine.
 -- Full is detected from either live Size/MaxSize ratio or the visible green bar.
 -- After sending Sell (or noticing a manual sell), wait for a real reset before
@@ -573,7 +532,7 @@ local function monitorSellAndSkip(char, events)
         local numericReset = numericRatio ~= nil and numericRatio < 0.10
 
         if sizeReset or barReset or numericReset then
-            print("[dEnzCreator V3.3.22] SELL CONFIRMED",
+            print("[dEnzCreator V3.3.24] SELL CONFIRMED",
                 "| Size:", size, "| MaxSize:", maxSize,
                 "| Ratio:", ratio, "| Bar:", bar)
             sellPending = false
@@ -601,7 +560,7 @@ local function monitorSellAndSkip(char, events)
             sellBaselineBar = bar
             sellAttempts = 0
             lastSellAttempt = 0
-            print("[dEnzCreator V3.3.22] FULL DETECTED",
+            print("[dEnzCreator V3.3.24] FULL DETECTED",
                 "| Size:", size, "| MaxSize:", maxSize,
                 "| Ratio:", ratio, "| Bar:", bar,
                 "| Sell remote:", events and events:FindFirstChild("Sell") ~= nil)
@@ -609,11 +568,11 @@ local function monitorSellAndSkip(char, events)
             if not skipSentForCycle then
                 if requestSkip() then
                     skipSentForCycle = true
-                    print("[dEnzCreator V3.3.22] SkipMaps sent concurrently with Sell.")
+                    print("[dEnzCreator V3.3.24] SkipMaps sent concurrently with Sell.")
                 else
                     skipRequestPending = true
                     lastSkipRetry = 0
-                    warn("[dEnzCreator V3.3.22] SkipMaps queued for retry while Sell continues.")
+                    warn("[dEnzCreator V3.3.24] SkipMaps queued for retry while Sell continues.")
                 end
             end
         end
@@ -625,21 +584,21 @@ local function monitorSellAndSkip(char, events)
             sellAttempts = sellAttempts + 1
             local sell = events and events:FindFirstChild("Sell")
             if not sell then
-                warn("[dEnzCreator V3.3.22] SELL ATTEMPT", sellAttempts,
+                warn("[dEnzCreator V3.3.24] SELL ATTEMPT", sellAttempts,
                     "FAILED: Character.Events.Sell missing.")
             elseif not sell:IsA("RemoteEvent") then
-                warn("[dEnzCreator V3.3.22] SELL ATTEMPT", sellAttempts,
+                warn("[dEnzCreator V3.3.24] SELL ATTEMPT", sellAttempts,
                     "FAILED: Sell is", sell.ClassName, "not RemoteEvent.")
             else
                 local ok, err = pcall(function()
                     sell:FireServer()
                 end)
                 if ok then
-                    print("[dEnzCreator V3.3.22] SELL ATTEMPT", sellAttempts,
+                    print("[dEnzCreator V3.3.24] SELL ATTEMPT", sellAttempts,
                         "sent | Size:", size, "| MaxSize:", maxSize,
                         "| Ratio:", ratio, "| Bar:", bar)
                 else
-                    warn("[dEnzCreator V3.3.22] SELL ATTEMPT", sellAttempts,
+                    warn("[dEnzCreator V3.3.24] SELL ATTEMPT", sellAttempts,
                         "ERROR:", err)
                 end
             end
@@ -654,7 +613,7 @@ local function monitorSellAndSkip(char, events)
         if requestSkip() then
             skipSentForCycle = true
             skipRequestPending = false
-            print("[dEnzCreator V3.3.22] SkipMaps retry sent.")
+            print("[dEnzCreator V3.3.24] SkipMaps retry sent.")
         end
     end
 
@@ -662,34 +621,7 @@ local function monitorSellAndSkip(char, events)
     lastObservedBar = bar
 end
 
-local function monitorNearbyFood(char, root)
-    if os.clock() - lastFoodScanAt < 1 then
-        return cachedFoodNearby
-    end
-    lastFoodScanAt = os.clock()
-    local _, key = getMapName()
-    if key ~= noFoodMapKey then
-        noFoodMapKey = key
-        lastNearbyFoodAt = nil
-        noFoodSkipSentForMap = false
-        cachedFoodNearby = false
-        lastFoodScanAt = 0
-    end
-
-    if findNearbyFood(char, root) then
-        cachedFoodNearby = true
-        lastNearbyFoodAt = os.clock()
-        return true
-    end
-    cachedFoodNearby = false
-
-    if not lastNearbyFoodAt then
-        lastNearbyFoodAt = os.clock()
-        return false
-    end
-
-    return false
-end
+-- Food polling removed: Grab/Eat runs continuously like KEDADA; no undefined scanner gate.
 
 -- Target: reduce the observed 3.5s Grab/Eat body animation to about 2.0s.
 -- Existing 5x setting is scaled by 3.5/2 = 1.75, giving 8.75x.
@@ -724,9 +656,11 @@ local function farmStep()
         pickerActive = pg ~= nil and findNextMapPrompt(pg) ~= nil
     end
 
+    -- During map transition, do NOT move/anchor the character, but keep
+    -- scanning newly streamed food immediately. Grab/Eat remotes below remain
+    -- active regardless of picker state.
     if not pickerActive then
         farmAnchor()
-        monitorNearbyFood(char, root)
     end
     accelerateActionAnimations(hum)
 
@@ -741,7 +675,7 @@ local function farmStep()
         if grabEvent and eatEvent and cycleStartedAt == nil then
             cycleStartedAt = now
             completedCycleSeconds = 0
-            print("[dEnzCreator V3.3.22] Season time started: Grab/Eat menu active.")
+            print("[dEnzCreator V3.3.24] Season time started: Grab/Eat menu active.")
         end
 
         if grabEvent and eatEvent and now >= nextGrabEatActionAt then
@@ -767,7 +701,7 @@ end
 
 -- HIDDEN MAPS: KEDADA-STYLE SELECTIVE VISUALS
 -- Only Workspace.Map is scanned. Workspace.Chunks is deliberately untouched.
--- Food/collectible descendants are protected by their own name or any ancestor name.
+-- Food/collectible and floor/ground descendants are protected by name/ancestor.
 -- Visual-only: never changes CanCollide/CanTouch/CanQuery, never reparents/deletes.
 local function isProtectedMapObject(obj, mapRoot)
     local current = obj
@@ -778,7 +712,25 @@ local function isProtectedMapObject(obj, mapRoot)
             or n:find("fruit", 1, true)
             or n:find("snack", 1, true)
             or n:find("eat", 1, true)
+            or n:find("floor", 1, true)
+            or n:find("ground", 1, true)
+            or n:find("baseplate", 1, true)
             or n == "chunks" or n == "chunk" then
+            return true
+        end
+        current = current.Parent
+    end
+    return false
+end
+
+local function isFloorMapObject(obj, mapRoot)
+    local current = obj
+    while current and current ~= mapRoot do
+        local n = norm(current.Name)
+        if n:find("floor", 1, true)
+            or n:find("ground", 1, true)
+            or n:find("baseplate", 1, true)
+            or n == "terrain" then
             return true
         end
         current = current.Parent
@@ -788,7 +740,20 @@ end
 
 local function hideMapObject(obj, mapRoot)
     if not hiddenMapsEnabled or not obj or not mapRoot then return end
-    if isProtectedMapObject(obj, mapRoot) then return end
+    if isProtectedMapObject(obj, mapRoot) then
+        if obj:IsA("BasePart") and isFloorMapObject(obj, mapRoot) then
+            if hiddenMapOriginals[obj] == nil then
+                hiddenMapOriginals[obj] = {
+                    kind = "floor",
+                    transparency = obj.LocalTransparencyModifier,
+                    color = obj.Color
+                }
+            end
+            obj.LocalTransparencyModifier = 0
+            obj.Color = Color3.new(0, 0, 0)
+        end
+        return
+    end
 
     -- Match KEDADA V3.0.8: hide local visuals only. Keep the instance and
     -- every physics/query property intact so gameplay interactions continue.
@@ -839,6 +804,9 @@ local function restoreHiddenMap()
             pcall(function()
                 if saved.kind == "part" then
                     obj.LocalTransparencyModifier = saved.value
+                elseif saved.kind == "floor" then
+                    obj.LocalTransparencyModifier = saved.transparency
+                    obj.Color = saved.color
                 elseif saved.kind == "texture" then
                     obj.Transparency = saved.value
                 elseif saved.kind == "effect" then
@@ -886,14 +854,14 @@ local function bindSelectiveMap(mapRoot)
             local obj = descendants[i]
             if obj and obj.Parent then hideMapObject(obj, mapRoot) end
             processed = processed + 1
-            if processed % 400 == 0 then
+            if processed % 120 == 0 then
                 RunService.Heartbeat:Wait()
             end
         end
         if hiddenMapGeneration == generation then
             hiddenMapScanRunning = false
-            print("[dEnzCreator V3.3.22] KEDADA selective Map ready | checked:", processed,
-                "| Chunks untouched | food protected")
+            print("[dEnzCreator V3.3.24] KEDADA selective Map ready | checked:", processed,
+                "| Chunks untouched | food/floor protected")
         end
     end)
     return true
@@ -910,11 +878,11 @@ local function setHiddenMaps(enabled)
     if enabled then
         hiddenMapsEnabled = true
         applyHiddenMap()
-        print("[dEnzCreator V3.3.22] Hidden Maps ON | KEDADA selective transparency; Chunks untouched")
+        print("[dEnzCreator V3.3.24] Hidden Maps ON | KEDADA selective transparency; Chunks untouched")
     else
         hiddenMapsEnabled = false
         restoreHiddenMap()
-        print("[dEnzCreator V3.3.22] Show Model ON | original Map visuals restored")
+        print("[dEnzCreator V3.3.24] Show Model ON | original Map visuals restored")
     end
 end
 
@@ -1218,10 +1186,10 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator V3.3.22] Loaded. AutoSell retries every 0.05s at 99.99% until confirmed sale; SkipMaps follows confirmed reset; Grab/Eat/Chunk timings preserved.")
-print("[dEnzCreator V3.3.22] 99.8% threshold loaded. AutoSell triggers at 99.99%; Sell runs at full during transition; default-map Z=0.")
+print("[dEnzCreator V3.3.24] Loaded. Grab/Eat continuous during transitions; broken food scanner removed; Sell retry 0.05s; SkipMaps and HiddenMaps retained.")
+print("[dEnzCreator V3.3.24] 99.8% threshold loaded. AutoSell triggers at 99.99%; Sell runs at full during transition; default-map Z=0.")
 
--- V3.3.22: KEDADA selective Map visuals; Chunks untouched; Grab/Eat always active. AutoSell confirms real size/bar reset before AutoSkip, including manual sell.
+-- V3.3.24: Removed undefined nearby-food scanner and unused RequestTeleport mode-switch path. Required Grab/Eat, Sell, and SetServerSettings remotes retained. KEDADA selective Map visuals; Chunks untouched.
 
 -- V3.3.8: Default maps use Z=0; Studville uses Z=100; Central Robloxia uses Z=150. Grab/Eat body animation target is ~2.0s (8.75x adjustment); three Eat calls are spread across 0.02s total. Landing anchor remains X=0.
 
@@ -1244,7 +1212,7 @@ print("[dEnzCreator V3.3.22] 99.8% threshold loaded. AutoSell triggers at 99.99%
 -- attempted immediately at 0.10s scan intervals; no fixed post-Skip wait is added.
 -- Grab/Eat/Chunk timing, 99.8% threshold, and map landing coordinates are unchanged.
 
--- V3.3.22 revision: use the same selective visual hiding method as KEDADA V3.0.8.
+-- V3.3.24 revision: use the same selective visual hiding method as KEDADA V3.0.8.
 -- Non-food descendants of Workspace.Map are hidden with local transparency;
 -- food/collectible-named descendants are protected and Workspace.Chunks is untouched.
 -- No collision, touch, query, parenting, or deletion changes. Grab/Eat remains active.
