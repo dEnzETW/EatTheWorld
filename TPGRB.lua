@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM V3.3.4 - PREDICTIVE SKIP + OVERLAP SELL (NO DYNAMIC COLLISION)
+-- dEnzCreator ETW AUTOFARM V3.3.5 - 98% SKIP THRESHOLD + OVERLAP SELL (NO DYNAMIC COLLISION)
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -47,11 +47,7 @@ local wasFull = false
 local skipSentForCycle = false
 local lastSize = nil
 local lastBarProgress = nil
-local lastCapacitySampleAt = 0
-local lastCapacitySampleSize = nil
-local lastCapacitySampleBar = nil
-local lastEarlySkipAttempt = 0
-local PRE_SKIP_SECONDS = 2.0
+local SKIP_THRESHOLD = 0.98
 local pendingLandingMap = nil
 local lastLandingAttempt = 0
 local missingActionSince = nil
@@ -124,7 +120,7 @@ local function farmAnchor()
         lastMap = mapName
         pendingLandingMap = mapName
         lastLandingAttempt = 0
-        print("[dEnzCreator V3.3.4] Map changed; searching for floor:", mapName)
+        print("[dEnzCreator V3.3.5] Map changed; searching for floor:", mapName)
     end
 
     if not pendingLandingMap then
@@ -164,7 +160,7 @@ local function farmAnchor()
         hum:ChangeState(Enum.HumanoidStateType.GettingUp)
     end)
 
-    print("[dEnzCreator V3.3.4] Landed on map floor:", pendingLandingMap,
+    print("[dEnzCreator V3.3.5] Landed on map floor:", pendingLandingMap,
         "| X=0 Y=", targetY, "Z=", z)
     pendingLandingMap = nil
     return true
@@ -184,7 +180,7 @@ local function requestSkip()
     local folder = ReplicatedStorage:FindFirstChild("Events")
     local remote = folder and folder:FindFirstChild("SetServerSettings")
     if not remote or not remote:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.3.4] SetServerSettings RemoteEvent not found.")
+        warn("[dEnzCreator V3.3.5] SetServerSettings RemoteEvent not found.")
         return false
     end
 
@@ -194,11 +190,11 @@ local function requestSkip()
         remote:FireServer(unpack(args))
     end)
     if ok then
-        print("[dEnzCreator V3.3.4] AutoSkip request sent (timer not paused).")
+        print("[dEnzCreator V3.3.5] AutoSkip request sent (timer not paused).")
         return true
     end
 
-    warn("[dEnzCreator V3.3.4] AutoSkip error:", err)
+    warn("[dEnzCreator V3.3.5] AutoSkip error:", err)
     return false
 end
 
@@ -234,7 +230,7 @@ local function monitorGrabEatAvailability()
     end
 
     if not missingActionSkipSent and os.clock() - missingActionSince >= 3.0 then
-        warn("[dEnzCreator V3.3.4] Grab/Eat missing on", mapName,
+        warn("[dEnzCreator V3.3.5] Grab/Eat missing on", mapName,
             "- requesting automatic map skip.")
         missingActionSkipSent = true
         requestSkip()
@@ -251,7 +247,7 @@ local function switchModeIfEnabled(mapName)
         local mode = CFG.SmallMaps[key] and "Mega" or "Normal"
         if pcall(function() remote:FireServer(mode) end) then
             lastMode = key
-            print("[dEnzCreator V3.3.4] RequestTeleport:", mode, mapName)
+            print("[dEnzCreator V3.3.5] RequestTeleport:", mode, mapName)
         end
     end
 end
@@ -327,11 +323,11 @@ end
 local function sendAutoSell(events)
     local sell = events and events:FindFirstChild("Sell")
     if not sell then
-        warn("[dEnzCreator V3.3.4] Character.Events.Sell not found.")
+        warn("[dEnzCreator V3.3.5] Character.Events.Sell not found.")
         return false
     end
     if not sell:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.3.4] Sell exists but is not a RemoteEvent:", sell.ClassName)
+        warn("[dEnzCreator V3.3.5] Sell exists but is not a RemoteEvent:", sell.ClassName)
         return false
     end
 
@@ -339,11 +335,11 @@ local function sendAutoSell(events)
         sell:FireServer()
     end)
     if not ok then
-        warn("[dEnzCreator V3.3.4] AutoSell error:", err)
+        warn("[dEnzCreator V3.3.5] AutoSell error:", err)
         return false
     end
 
-    print("[dEnzCreator V3.3.4] AutoSell request sent.")
+    print("[dEnzCreator V3.3.5] AutoSell request sent.")
     return true
 end
 
@@ -436,7 +432,7 @@ local function farmStep()
         if grabEvent and eatEvent and cycleStartedAt == nil then
             cycleStartedAt = now
             completedCycleSeconds = 0
-            print("[dEnzCreator V3.3.4] Season time started: Grab/Eat menu active.")
+            print("[dEnzCreator V3.3.5] Season time started: Grab/Eat menu active.")
         end
 
         if grabEvent and eatEvent and now >= nextGrabEatActionAt then
@@ -461,34 +457,16 @@ local function farmStep()
     local barProgress = getSellBarProgress()
     lastBarProgress = barProgress
 
-    -- Estimate time-to-full from measured growth. When numeric Size is not
-    -- exposed, use the sell-bar growth rate as a fallback.
-    local secondsToFull = nil
-    if now - lastCapacitySampleAt >= 0.25 then
-        local dt = now - lastCapacitySampleAt
-        if size ~= nil and maxSize ~= nil and maxSize > 0 and lastCapacitySampleSize ~= nil then
-            local rate = (size - lastCapacitySampleSize) / dt
-            if rate > 0 then secondsToFull = math.max(0, (maxSize - size) / rate) end
-        elseif barProgress ~= nil and lastCapacitySampleBar ~= nil then
-            local rate = (barProgress - lastCapacitySampleBar) / dt
-            if rate > 0 then secondsToFull = math.max(0, (1 - barProgress) / rate) end
-        end
-        lastCapacitySampleAt = now
-        lastCapacitySampleSize = size
-        lastCapacitySampleBar = barProgress
-    end
+    -- KEDADA-style overlap using a direct capacity threshold, not a time prediction.
+    -- Skip fires once at 98% of live MaxSize (or 98% of the sell bar as fallback).
+    local skipThresholdReached =
+        (size ~= nil and maxSize ~= nil and maxSize > 0 and size >= maxSize * SKIP_THRESHOLD)
+        or (size == nil and barProgress ~= nil and barProgress >= SKIP_THRESHOLD)
 
-    -- KEDADA-style overlap: request map transition about 2 seconds before
-    -- capacity maxes out. Sell is deliberately sent later, while transition
-    -- is underway, instead of waiting for Sell to finish before requesting Skip.
-    local enoughProgress = (size ~= nil and maxSize ~= nil and maxSize > 0 and size >= maxSize * 0.80)
-        or (barProgress ~= nil and barProgress >= 0.80)
-    if enoughProgress and secondsToFull ~= nil and secondsToFull <= PRE_SKIP_SECONDS
-        and not skipSentForCycle and now - lastEarlySkipAttempt >= 0.35 then
-        lastEarlySkipAttempt = now
+    if skipThresholdReached and not skipSentForCycle then
         if requestSkip() then
             skipSentForCycle = true
-            print("[dEnzCreator V3.3.4] Early AutoSkip sent; estimated time to full:", secondsToFull)
+            print("[dEnzCreator V3.3.5] AutoSkip sent at 98% capacity; AutoSell will run at full during transition.")
         end
     end
 
@@ -504,12 +482,12 @@ local function farmStep()
         if barFull and cycleStartedAt ~= nil then
             completedCycleSeconds = math.max(0, now - cycleStartedAt)
             cycleStartedAt = nil
-            print("[dEnzCreator V3.3.4] Season time stopped: sell bar detected full.")
+            print("[dEnzCreator V3.3.5] Season time stopped: sell bar detected full.")
         end
         if not wasFull then
             wasFull = true
             lastSellAttempt = 0
-            print("[dEnzCreator V3.3.4] Capacity full; AutoSell during map transition.")
+            print("[dEnzCreator V3.3.5] Capacity full; AutoSell during map transition.")
         end
         if now - lastSellAttempt >= 0.45 then
             lastSellAttempt = now
@@ -523,14 +501,10 @@ local function farmStep()
             or sizeDrop or barDrop
 
         if sold then
-            print("[dEnzCreator V3.3.4] Sale/reset detected; cycle re-armed.")
+            print("[dEnzCreator V3.3.5] Sale/reset detected; cycle re-armed.")
             wasFull = false
             skipSentForCycle = false
             lastSellAttempt = 0
-            lastEarlySkipAttempt = 0
-            lastCapacitySampleAt = 0
-            lastCapacitySampleSize = size
-            lastCapacitySampleBar = barProgress
         end
     end
 
@@ -647,7 +621,7 @@ local function applyHiddenMap()
         end
     end
 
-    print("[dEnzCreator V3.3.4] Hidden Map ON. Map and food visuals hidden; collision untouched.")
+    print("[dEnzCreator V3.3.5] Hidden Map ON. Map and food visuals hidden; collision untouched.")
     return true
 end
 
@@ -659,7 +633,7 @@ local function setHiddenMaps(enabled)
     else
         hiddenMapsEnabled = false
         restoreHiddenMap()
-        print("[dEnzCreator V3.3.4] Hidden Map OFF. Original visuals restored.")
+        print("[dEnzCreator V3.3.5] Hidden Map OFF. Original visuals restored.")
     end
 end
 
@@ -962,16 +936,16 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator V3.3.4] Loaded. Dynamic Collision removed. Predictive Skip (T-2s) + AutoSell overlap enabled; Grab/Eat X12 retained.")
-print("[dEnzCreator V3.3.4] Bar/capacity prediction loaded. Skip starts before full; Sell runs during transition; default-map Z=0.")
+print("[dEnzCreator V3.3.5] Loaded. Dynamic Collision removed. 98% capacity Skip + AutoSell overlap enabled; Grab/Eat X12 retained.")
+print("[dEnzCreator V3.3.5] 98% threshold loaded. Skip fires at 98%; Sell runs at full during transition; default-map Z=0.")
 
--- V3.3.4 keeps Hidden Maps; Dynamic Collision is removed. Predictive Skip begins about 2 seconds before capacity max, then AutoSell runs during transition.
+-- V3.3.5 keeps Hidden Maps; Dynamic Collision is removed. Skip triggers at 98% live capacity; AutoSell runs at full during transition.
 
--- V3.3.4: Default maps use Z=0; Studville uses Z=100; Central Robloxia uses Z=700. Landing anchor remains X=0.
+-- V3.3.5: Default maps use Z=0; Studville uses Z=100; Central Robloxia uses Z=700. Landing anchor remains X=0.
 
 -- V3.3.3 retains the live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
 
 
--- V3.3.4: Combined title/timer header (140px), left-aligned title, 5x named Grab/Eat animation acceleration. Grab and post-Grab delays are each divided by 12.
+-- V3.3.5: Combined title/timer header (140px), left-aligned title, 5x named Grab/Eat animation acceleration. Grab and post-Grab delays are each divided by 12.
 
--- V3.3.4: Season time starts when map food objects are detected and stops when the sell bar reaches full.
+-- V3.3.5: Season time starts when map food objects are detected and stops when the sell bar reaches full.
