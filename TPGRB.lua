@@ -1,9 +1,9 @@
--- dEnzCreator ETW AUTOFARM V3.3.15 - CENTRAL Z150 + 2S ACTION ANIMATION + TIGHT HEADER (NO DYNAMIC COLLISION)
+-- dEnzCreator ETW AUTOFARM V3.3.16 - CENTER LOCK + ALWAYS-ON GRAB/EAT (NO DYNAMIC COLLISION)
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
 -- Skip request uses Paused=false. No fixed map countdowns or artificial waits.
--- V3.3.15 test: skip threshold 99.8%; Grab/Eat/Chunk timing preserved from V3.3.12.
+-- V3.3.16 test: skip threshold 99.8%; Grab/Eat/Chunk timing preserved from V3.3.12.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -64,9 +64,6 @@ local noFoodMapKey = ""
 local lastFoodScanAt = 0
 local cachedFoodNearby = false
 local lastMissingActionMap = ""
-local hiddenMapsEnabled = false
-local hiddenMapOriginals = {}
-local hiddenMapConnections = {}
 local workspaceMapConnection = nil
 
 -- Fast map-card picker: the leftmost card is Robloxia Tengah and must be avoided.
@@ -115,6 +112,8 @@ local function getParts()
     if hum and root then return char, hum, root, events end
 end
 
+local updateCenterLockTarget
+
 local function farmAnchor()
     local char, hum, root = getParts()
     if not char then return false end
@@ -135,7 +134,7 @@ local function farmAnchor()
         mapPickArmed = false
         mapPickCompleted = false
         mapPickNextScan = 0
-        print("[dEnzCreator V3.3.15] Map changed:", mapName, "| Central:", isCentral and "yes" or "no")
+        print("[dEnzCreator V3.3.16] Map changed:", mapName, "| Central:", isCentral and "yes" or "no")
     end
     if not pendingLandingMap then return true end
     if os.clock() - lastLandingAttempt < 0.10 then return false end
@@ -186,8 +185,9 @@ local function farmAnchor()
     root.AssemblyLinearVelocity = Vector3.zero
     root.AssemblyAngularVelocity = Vector3.zero
     root.CFrame = CFrame.new(destinationXZ.X, targetY, destinationXZ.Z)
+    if updateCenterLockTarget then updateCenterLockTarget(root.CFrame) end
     pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-    print("[dEnzCreator V3.3.15] Landing:", pendingLandingMap,
+    print("[dEnzCreator V3.3.16] Landing:", pendingLandingMap,
         "| food-target:", isCentral and "yes" or "no",
         "| X=", destinationXZ.X, "Y=", targetY, "Z=", destinationXZ.Z)
     pendingLandingMap = nil
@@ -208,7 +208,7 @@ local function requestSkip()
     local folder = ReplicatedStorage:FindFirstChild("Events")
     local remote = folder and folder:FindFirstChild("SetServerSettings")
     if not remote or not remote:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.3.15] SetServerSettings RemoteEvent not found.")
+        warn("[dEnzCreator V3.3.16] SetServerSettings RemoteEvent not found.")
         return false
     end
 
@@ -223,11 +223,11 @@ local function requestSkip()
             mapPickDeadline = os.clock() + MAP_PICK_TIMEOUT
             mapPickNextScan = 0
         end
-        print("[dEnzCreator V3.3.15] AutoSkip request sent; verified non-central map selection armed.")
+        print("[dEnzCreator V3.3.16] AutoSkip request sent; verified non-central map selection armed.")
         return true
     end
 
-    warn("[dEnzCreator V3.3.15] AutoSkip error:", err)
+    warn("[dEnzCreator V3.3.16] AutoSkip error:", err)
     return false
 end
 
@@ -329,7 +329,7 @@ local function selectNonCentralMapStep()
     local now = os.clock()
     if now > mapPickDeadline then
         mapPickArmed = false
-        warn("[dEnzCreator V3.3.15] Map picker timed out; no verified non-central card was activated.")
+        warn("[dEnzCreator V3.3.16] Map picker timed out; no verified non-central card was activated.")
         return
     end
     if now < mapPickNextScan then return end
@@ -357,10 +357,10 @@ local function selectNonCentralMapStep()
             if ok then
                 mapPickCompleted = true
                 mapPickArmed = false
-                print("[dEnzCreator V3.3.15] Selected verified non-central map:", title)
+                print("[dEnzCreator V3.3.16] Selected verified non-central map:", title)
                 return
             else
-                warn("[dEnzCreator V3.3.15] Map card activation failed:", err)
+                warn("[dEnzCreator V3.3.16] Map card activation failed:", err)
             end
         end
     end
@@ -398,7 +398,7 @@ local function monitorGrabEatAvailability()
     end
 
     if not missingActionSkipSent and os.clock() - missingActionSince >= 3.0 then
-        warn("[dEnzCreator V3.3.15] Grab/Eat missing on", mapName,
+        warn("[dEnzCreator V3.3.16] Grab/Eat missing on", mapName,
             "- requesting automatic map skip.")
         missingActionSkipSent = true
         requestSkip()
@@ -415,7 +415,7 @@ local function switchModeIfEnabled(mapName)
         local mode = CFG.SmallMaps[key] and "Mega" or "Normal"
         if pcall(function() remote:FireServer(mode) end) then
             lastMode = key
-            print("[dEnzCreator V3.3.15] RequestTeleport:", mode, mapName)
+            print("[dEnzCreator V3.3.16] RequestTeleport:", mode, mapName)
         end
     end
 end
@@ -491,11 +491,11 @@ end
 local function sendAutoSell(events)
     local sell = events and events:FindFirstChild("Sell")
     if not sell then
-        warn("[dEnzCreator V3.3.15] Character.Events.Sell not found.")
+        warn("[dEnzCreator V3.3.16] Character.Events.Sell not found.")
         return false
     end
     if not sell:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.3.15] Sell exists but is not a RemoteEvent:", sell.ClassName)
+        warn("[dEnzCreator V3.3.16] Sell exists but is not a RemoteEvent:", sell.ClassName)
         return false
     end
 
@@ -503,11 +503,11 @@ local function sendAutoSell(events)
         sell:FireServer()
     end)
     if not ok then
-        warn("[dEnzCreator V3.3.15] AutoSell error:", err)
+        warn("[dEnzCreator V3.3.16] AutoSell error:", err)
         return false
     end
 
-    print("[dEnzCreator V3.3.15] AutoSell request sent.")
+    print("[dEnzCreator V3.3.16] AutoSell request sent.")
     return true
 end
 
@@ -584,27 +584,20 @@ local function accelerateActionAnimations(hum)
     end
 end
 
+local centerLockEnabled = true
+local ensureCenterLock
+
 local function farmStep()
     local char, hum, root, events = getParts()
     if not char then return end
 
-    -- Freeze movement/Grab/Eat while the map picker is active/visible.
-    -- Timing constants are intentionally unchanged; resume from a clean Grab phase.
-    local pickerActive = mapPickArmed
-    if not pickerActive then
-        local pg = player:FindFirstChildOfClass("PlayerGui")
-        pickerActive = pg ~= nil and findNextMapPrompt(pg) ~= nil
-    end
-    if pickerActive then
-        grabEatPhase = "grab"
-        eatCallsRemaining = 0
-        nextGrabEatActionAt = os.clock() + GRAB_DELAY
-    else
-        farmAnchor()
-        accelerateActionAnimations(hum)
-        monitorNearbyFood(char, root)
-    end
-    if not pickerActive and events then
+    -- Grab/Eat must never be gated by the map picker or transition UI.
+    -- Landing/anchor updates are independent from the action loop.
+    farmAnchor()
+    if centerLockEnabled then ensureCenterLock(root) end
+    accelerateActionAnimations(hum)
+    monitorNearbyFood(char, root)
+    if events then
         local now = os.clock()
         local grabEvent = events:FindFirstChild("Grab")
         local eatEvent = events:FindFirstChild("Eat")
@@ -612,7 +605,7 @@ local function farmStep()
         if grabEvent and eatEvent and cycleStartedAt == nil then
             cycleStartedAt = now
             completedCycleSeconds = 0
-            print("[dEnzCreator V3.3.15] Season time started: Grab/Eat menu active.")
+            print("[dEnzCreator V3.3.16] Season time started: Grab/Eat menu active.")
         end
 
         if grabEvent and eatEvent and now >= nextGrabEatActionAt then
@@ -650,7 +643,7 @@ local function farmStep()
     if skipThresholdReached and not skipSentForCycle then
         if requestSkip() then
             skipSentForCycle = true
-            print("[dEnzCreator V3.3.15] AutoSkip sent at 99.8% capacity; AutoSell will run at full during transition.")
+            print("[dEnzCreator V3.3.16] AutoSkip sent at 99.8% capacity; AutoSell will run at full during transition.")
         end
     end
 
@@ -666,12 +659,12 @@ local function farmStep()
         if barFull and cycleStartedAt ~= nil then
             completedCycleSeconds = math.max(0, now - cycleStartedAt)
             cycleStartedAt = nil
-            print("[dEnzCreator V3.3.15] Season time stopped: sell bar detected full.")
+            print("[dEnzCreator V3.3.16] Season time stopped: sell bar detected full.")
         end
         if not wasFull then
             wasFull = true
             lastSellAttempt = 0
-            print("[dEnzCreator V3.3.15] Capacity full; AutoSell during map transition.")
+            print("[dEnzCreator V3.3.16] Capacity full; AutoSell during map transition.")
         end
         if now - lastSellAttempt >= 0.45 then
             lastSellAttempt = now
@@ -685,7 +678,7 @@ local function farmStep()
             or sizeDrop or barDrop
 
         if sold then
-            print("[dEnzCreator V3.3.15] Sale/reset detected; cycle re-armed.")
+            print("[dEnzCreator V3.3.16] Sale/reset detected; cycle re-armed.")
             wasFull = false
             skipSentForCycle = false
             mapPickCompleted = false
@@ -699,129 +692,9 @@ local function farmStep()
     switchModeIfEnabled(mapName)
 end
 
--- HIDDEN MAPS: FAST TRANSITION MODE (NO DYNAMIC COLLISION)
--- Visual-only changes: no CanCollide/CanTouch/CanQuery edits, no reparenting,
--- and no deletion. All BaseParts including floor and food visuals are hidden.
--- Map and Chunks are scanned asynchronously; newly streamed objects are hidden
--- through DescendantAdded so the farm loop does not wait for a full scan.
-local function hideMapObject(obj)
-    if not hiddenMapsEnabled or not obj then return end
-
-    if obj:IsA("BasePart") then
-        if hiddenMapOriginals[obj] == nil then
-            hiddenMapOriginals[obj] = {
-                kind = "part",
-                transparency = obj.LocalTransparencyModifier
-            }
-        end
-        obj.LocalTransparencyModifier = 1
-    elseif obj:IsA("Decal") or obj:IsA("Texture") then
-        if hiddenMapOriginals[obj] == nil then
-            hiddenMapOriginals[obj] = {kind = "texture", value = obj.Transparency}
-        end
-        obj.Transparency = 1
-    elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") then
-        if hiddenMapOriginals[obj] == nil then
-            hiddenMapOriginals[obj] = {kind = "effect", value = obj.Enabled}
-        end
-        obj.Enabled = false
-    end
-end
-
-local hiddenMapRootSet = {}
-
-local function disconnectHiddenMapListeners()
-    for _, connection in ipairs(hiddenMapConnections) do
-        pcall(function() connection:Disconnect() end)
-    end
-    table.clear(hiddenMapConnections)
-end
-
-local function restoreHiddenMap()
-    disconnectHiddenMapListeners()
-    for obj, saved in pairs(hiddenMapOriginals) do
-        if obj and obj.Parent then
-            pcall(function()
-                if saved.kind == "part" then
-                    obj.LocalTransparencyModifier = saved.transparency
-                elseif saved.kind == "texture" then
-                    obj.Transparency = saved.value
-                elseif saved.kind == "effect" then
-                    obj.Enabled = saved.value
-                end
-            end)
-        end
-    end
-    table.clear(hiddenMapOriginals)
-    table.clear(hiddenMapRootSet)
-end
-
-local function processRootInBatches(root)
-    if not root then return end
-    local stack = {root}
-    local processed = 0
-    while #stack > 0 and hiddenMapsEnabled do
-        local node = table.remove(stack)
-        local children = node:GetChildren()
-        for _, child in ipairs(children) do
-            table.insert(stack, child)
-            hideMapObject(child)
-            processed = processed + 1
-            -- Larger batches reduce transition overhead while yielding regularly.
-            if processed % 300 == 0 then
-                RunService.Heartbeat:Wait()
-                if not hiddenMapsEnabled then return end
-            end
-        end
-    end
-end
-
-local hiddenMapRoots = {}
-local function applyHiddenMap()
-    if not hiddenMapsEnabled then return false end
-
-    table.clear(hiddenMapRoots)
-    local mapRoot = Workspace:FindFirstChild("Map")
-    local chunksRoot = Workspace:FindFirstChild("Chunks")
-    if mapRoot then table.insert(hiddenMapRoots, mapRoot) end
-    if chunksRoot then table.insert(hiddenMapRoots, chunksRoot) end
-    if #hiddenMapRoots == 0 then return false end
-
-    -- Only process roots that are new. If Map is replaced, do not rescan the
-    -- existing Chunks tree; this avoids repeating expensive work at transitions.
-    for _, root in ipairs(hiddenMapRoots) do
-        if not hiddenMapRootSet[root] then
-            hiddenMapRootSet[root] = true
-            table.insert(hiddenMapConnections, root.DescendantAdded:Connect(function(obj)
-                if hiddenMapsEnabled then
-                    task.defer(function()
-                        if hiddenMapsEnabled and obj and obj.Parent then
-                            hideMapObject(obj)
-                        end
-                    end)
-                end
-            end))
-            if hiddenMapsEnabled and root.Parent then
-                processRootInBatches(root)
-            end
-        end
-    end
-
-    print("[dEnzCreator V3.3.15] Hidden Map ON. Map and food visuals hidden; collision untouched.")
-    return true
-end
-
-local function setHiddenMaps(enabled)
-    if enabled then
-        restoreHiddenMap()
-        hiddenMapsEnabled = true
-        task.spawn(applyHiddenMap)
-    else
-        hiddenMapsEnabled = false
-        restoreHiddenMap()
-        print("[dEnzCreator V3.3.15] Hidden Map OFF. Original visuals restored.")
-    end
-end
+-- V3.3.16: No Hidden Maps toggle. This revision does not hide, reparent,
+-- destroy, or alter collision/touch/query properties of map or food objects.
+-- True prevention of server replication is not controllable by a local script.
 
 -- dEnzCreator compact mobile panel (120 px wide), anchored at the top-right.
 local gui = Instance.new("ScreenGui")
@@ -940,8 +813,90 @@ makeToggle("AUTOFARM", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
     print("[dEnzCreator] AutoFarm", on and "ON" or "OFF")
 end)
 
-makeToggle("HIDDEN MAPS", 3, Color3.fromRGB(65, 105, 190), hiddenMapsEnabled, function(on)
-    setHiddenMaps(on)
+-- Character Lock: hold the HumanoidRootPart at a saved center point using
+-- local AlignPosition/AlignOrientation constraints. Grab/Eat remotes keep running.
+local centerLockPart, centerLockAttachment, centerLockRoot, centerLockRootAttachment
+local centerAlignPosition, centerAlignOrientation
+
+local function clearCenterLock()
+    for _, obj in ipairs({centerAlignPosition, centerAlignOrientation,
+        centerLockRootAttachment, centerLockAttachment, centerLockPart}) do
+        if obj then pcall(function() obj:Destroy() end) end
+    end
+    centerAlignPosition, centerAlignOrientation = nil, nil
+    centerLockRootAttachment, centerLockAttachment = nil, nil
+    centerLockPart, centerLockRoot = nil, nil
+end
+
+updateCenterLockTarget = function(cf)
+    if not centerLockEnabled or not cf then return end
+    if not centerLockPart or not centerLockPart.Parent then return end
+    centerLockPart.CFrame = cf
+end
+
+ensureCenterLock = function(root)
+    if not centerLockEnabled or not root or not root.Parent then
+        clearCenterLock()
+        return
+    end
+    if centerLockRoot == root and centerLockPart and centerLockPart.Parent then return end
+    clearCenterLock()
+    centerLockRoot = root
+
+    local anchor = Instance.new("Part")
+    anchor.Name = "dEnzCreator_CenterLockAnchor"
+    anchor.Size = Vector3.new(0.2, 0.2, 0.2)
+    anchor.Transparency = 1
+    anchor.Anchored = true
+    anchor.CanCollide = false
+    anchor.CanTouch = false
+    anchor.CanQuery = false
+    anchor.CFrame = root.CFrame
+    anchor.Parent = Workspace
+    centerLockPart = anchor
+
+    local targetAttachment = Instance.new("Attachment")
+    targetAttachment.Name = "dEnzCreator_CenterTarget"
+    targetAttachment.Parent = anchor
+    centerLockAttachment = targetAttachment
+
+    local rootAttachment = Instance.new("Attachment")
+    rootAttachment.Name = "dEnzCreator_CenterRoot"
+    rootAttachment.Parent = root
+    centerLockRootAttachment = rootAttachment
+
+    local alignPos = Instance.new("AlignPosition")
+    alignPos.Name = "dEnzCreator_CenterPositionLock"
+    alignPos.Attachment0 = rootAttachment
+    alignPos.Attachment1 = targetAttachment
+    alignPos.ApplyAtCenterOfMass = true
+    alignPos.MaxForce = 1000000000
+    alignPos.MaxVelocity = 100000
+    alignPos.Responsiveness = 200
+    alignPos.RigidityEnabled = true
+    alignPos.Parent = root
+    centerAlignPosition = alignPos
+
+    local alignOri = Instance.new("AlignOrientation")
+    alignOri.Name = "dEnzCreator_CenterOrientationLock"
+    alignOri.Attachment0 = rootAttachment
+    alignOri.Attachment1 = targetAttachment
+    alignOri.MaxTorque = 1000000000
+    alignOri.MaxAngularVelocity = 100000
+    alignOri.Responsiveness = 200
+    alignOri.RigidityEnabled = true
+    alignOri.Parent = root
+    centerAlignOrientation = alignOri
+end
+
+makeToggle("CENTER LOCK", 3, Color3.fromRGB(65, 105, 190), centerLockEnabled, function(on)
+    centerLockEnabled = on
+    if not on then
+        clearCenterLock()
+    else
+        local _, _, root = getParts()
+        if root then ensureCenterLock(root) end
+    end
 end)
 
 local autoClaimEnabled = false
@@ -992,7 +947,7 @@ end)
 close.Activated:Connect(function()
     running, CFG.Farm = false, false
     autoClaimEnabled = false
-    setHiddenMaps(false)
+    clearCenterLock()
     gui:Destroy()
 end)
 
@@ -1069,18 +1024,6 @@ local function updateRuntimeMonitor()
 end
 
 
--- Re-apply when the game replaces Map or Chunks during map transitions.
-workspaceMapConnection = Workspace.ChildAdded:Connect(function(child)
-    if (child.Name == "Map" or child.Name == "Chunks") and hiddenMapsEnabled then
-        task.defer(function()
-            if hiddenMapsEnabled then
-                -- Do not rescan the still-existing root when only one root is replaced.
-                applyHiddenMap()
-            end
-        end)
-    end
-end)
-
 local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
 frame.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -1117,16 +1060,16 @@ gui.AncestryChanged:Connect(function(_, parent)
     if parent == nil then
         running, CFG.Farm = false, false
         autoClaimEnabled = false
-        setHiddenMaps(false)
+        clearCenterLock()
         if workspaceMapConnection then workspaceMapConnection:Disconnect() end
         connection:Disconnect()
     end
 end)
 
-print("[dEnzCreator V3.3.15] Loaded. Dynamic Collision removed. 99.8% capacity Skip + AutoSell overlap enabled; Grab/Eat X12 retained; 3x Eat calls spread across 0.02s total.")
-print("[dEnzCreator V3.3.15] 99.8% threshold loaded. Skip fires at 99.8%; Sell runs at full during transition; default-map Z=0.")
+print("[dEnzCreator V3.3.16] Loaded. Dynamic Collision removed. Center Lock available; 99.8% capacity Skip + AutoSell overlap enabled; Grab/Eat X12 retained; 3x Eat calls spread across 0.02s total.")
+print("[dEnzCreator V3.3.16] 99.8% threshold loaded. Skip fires at 99.8%; Sell runs at full during transition; default-map Z=0.")
 
--- V3.3.15 keeps Hidden Maps; Dynamic Collision is removed. Skip triggers at 99.8% live capacity; AutoSell runs at full during transition.
+-- V3.3.16 keeps Center Lock; Dynamic Collision is removed. Skip triggers at 99.8% live capacity; AutoSell runs at full during transition.
 
 -- V3.3.8: Default maps use Z=0; Studville uses Z=100; Central Robloxia uses Z=150. Grab/Eat body animation target is ~2.0s (8.75x adjustment); three Eat calls are spread across 0.02s total. Landing anchor remains X=0.
 
@@ -1144,9 +1087,7 @@ print("[dEnzCreator V3.3.15] 99.8% threshold loaded. Skip fires at 99.8%; Sell r
 -- V3.3.10: Robloxia Tengah landing targets a live Chunks food part instead of the empty map-center anchor. Header/runtime spacing tightened.
 
 
--- V3.3.15 transition update: at the Skip menu, activate the second visible card
--- from the left, avoiding the known leftmost Robloxia Tengah card. Selection is
--- attempted immediately at 0.10s scan intervals; no fixed post-Skip wait is added.
--- Grab/Eat/Chunk timing, 99.8% threshold, and map landing coordinates are unchanged.
-
--- V3.3.15 revision: picker scans at 0.05s, reads each visible card title, rejects Middle Robloxia / Robloxia Tengah / Central Robloxia, and only activates a verified alternative. Grab/Eat phase pauses while the picker is visible; Grab/Eat/Chunk timing constants are unchanged.
+-- V3.3.16: map picker remains title-verified; it does not pause the Grab/Eat loop.
+-- Center Lock holds the character at the current landing point and follows map landings.
+-- This build removes the old full-tree Hidden Maps scan to avoid its client-side overhead.
+-- It does not claim to block server replication of buildings or map geometry.
