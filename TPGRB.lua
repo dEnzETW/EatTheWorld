@@ -47,7 +47,7 @@ local wasFull = false
 local skipSentForCycle = false
 local lastSize = nil
 local lastBarProgress = nil
-local SKIP_THRESHOLD = 0.99
+local SKIP_THRESHOLD = 0.995
 local pendingLandingMap = nil
 local lastLandingAttempt = 0
 local missingActionSince = nil
@@ -458,7 +458,7 @@ local function farmStep()
     lastBarProgress = barProgress
 
     -- KEDADA-style overlap using a direct capacity threshold, not a time prediction.
-    -- Skip fires once at 99% of live MaxSize (or 99% of the sell bar as fallback).
+    -- Skip fires once at 99.5% of live MaxSize (or 99.5% of the sell bar as fallback).
     local skipThresholdReached =
         (size ~= nil and maxSize ~= nil and maxSize > 0 and size >= maxSize * SKIP_THRESHOLD)
         or (size == nil and barProgress ~= nil and barProgress >= SKIP_THRESHOLD)
@@ -466,7 +466,7 @@ local function farmStep()
     if skipThresholdReached and not skipSentForCycle then
         if requestSkip() then
             skipSentForCycle = true
-            print("[dEnzCreator V3.3.6] AutoSkip sent at 99% capacity; AutoSell will run at full during transition.")
+            print("[dEnzCreator V3.3.6] AutoSkip sent at 99.5% capacity; AutoSell will run at full during transition.")
         end
     end
 
@@ -637,7 +637,7 @@ local function setHiddenMaps(enabled)
     end
 end
 
--- dEnzCreator compact mobile panel (120 px wide).
+-- dEnzCreator compact mobile panel (120 px wide), anchored at the top-right.
 local gui = Instance.new("ScreenGui")
 gui.Name = "dEnzCreator_ETW"
 gui.ResetOnSpawn = false
@@ -647,7 +647,7 @@ local frame = Instance.new("Frame")
 frame.Name = "Main"
 frame.Size = UDim2.fromOffset(120, 0)
 frame.AutomaticSize = Enum.AutomaticSize.Y
-frame.Position = UDim2.new(0, 12, 0.42, 0)
+frame.Position = UDim2.new(1, -132, 0, 8)
 frame.BackgroundColor3 = Color3.fromRGB(20, 22, 38)
 frame.BorderSizePixel = 0
 frame.Parent = gui
@@ -936,10 +936,10 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator V3.3.6] Loaded. Dynamic Collision removed. 99% capacity Skip + AutoSell overlap enabled; Grab/Eat X12 retained.")
-print("[dEnzCreator V3.3.6] 99% threshold loaded. Skip fires at 99%; Sell runs at full during transition; default-map Z=0.")
+print("[dEnzCreator V3.3.6] Loaded. Dynamic Collision removed. 99.5% capacity Skip + AutoSell overlap enabled; Grab/Eat X12 retained.")
+print("[dEnzCreator V3.3.6] 99.5% threshold loaded. Skip fires at 99.5%; Sell runs at full during transition; default-map Z=0.")
 
--- V3.3.6 keeps Hidden Maps; Dynamic Collision is removed. Skip triggers at 99% live capacity; AutoSell runs at full during transition.
+-- V3.3.6 keeps Hidden Maps; Dynamic Collision is removed. Skip triggers at 99.5% live capacity; AutoSell runs at full during transition.
 
 -- V3.3.6: Default maps use Z=0; Studville uses Z=100; Central Robloxia uses Z=700. Landing anchor remains X=0.
 
