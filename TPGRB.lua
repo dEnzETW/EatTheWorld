@@ -1,8 +1,9 @@
--- dEnzCreator ETW AUTOFARM V3.3.12 - CENTRAL Z150 + 2S ACTION ANIMATION + TIGHT HEADER (NO DYNAMIC COLLISION)
+-- dEnzCreator ETW AUTOFARM V3.3.14 - CENTRAL Z150 + 2S ACTION ANIMATION + TIGHT HEADER (NO DYNAMIC COLLISION)
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
 -- Skip request uses Paused=false. No fixed map countdowns or artificial waits.
+-- V3.3.14 test: skip threshold 99.8%; Grab/Eat/Chunk timing preserved from V3.3.12.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -50,7 +51,7 @@ local wasFull = false
 local skipSentForCycle = false
 local lastSize = nil
 local lastBarProgress = nil
-local SKIP_THRESHOLD = 0.995
+local SKIP_THRESHOLD = 0.998
 local pendingLandingMap = nil
 local lastLandingAttempt = 0
 local missingActionSince = nil
@@ -67,6 +68,14 @@ local hiddenMapsEnabled = false
 local hiddenMapOriginals = {}
 local hiddenMapConnections = {}
 local workspaceMapConnection = nil
+
+-- Fast map-card picker: the leftmost card is Robloxia Tengah and must be avoided.
+local mapPickArmed = false
+local mapPickDeadline = 0
+local mapPickNextScan = 0
+local mapPickCompleted = false
+local MAP_PICK_TIMEOUT = 20
+local MAP_PICK_SCAN_INTERVAL = 0.10
 
 local function norm(v)
     return string.lower(tostring(v or "")):gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " ")
@@ -123,7 +132,10 @@ local function farmAnchor()
         lastMap = mapName
         pendingLandingMap = mapName
         lastLandingAttempt = 0
-        print("[dEnzCreator V3.3.12] Map changed:", mapName, "| Central:", isCentral and "yes" or "no")
+        mapPickArmed = false
+        mapPickCompleted = false
+        mapPickNextScan = 0
+        print("[dEnzCreator V3.3.14] Map changed:", mapName, "| Central:", isCentral and "yes" or "no")
     end
     if not pendingLandingMap then return true end
     if os.clock() - lastLandingAttempt < 0.10 then return false end
@@ -175,7 +187,7 @@ local function farmAnchor()
     root.AssemblyAngularVelocity = Vector3.zero
     root.CFrame = CFrame.new(destinationXZ.X, targetY, destinationXZ.Z)
     pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-    print("[dEnzCreator V3.3.12] Landing:", pendingLandingMap,
+    print("[dEnzCreator V3.3.14] Landing:", pendingLandingMap,
         "| food-target:", isCentral and "yes" or "no",
         "| X=", destinationXZ.X, "Y=", targetY, "Z=", destinationXZ.Z)
     pendingLandingMap = nil
@@ -196,7 +208,7 @@ local function requestSkip()
     local folder = ReplicatedStorage:FindFirstChild("Events")
     local remote = folder and folder:FindFirstChild("SetServerSettings")
     if not remote or not remote:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.3.12] SetServerSettings RemoteEvent not found.")
+        warn("[dEnzCreator V3.3.14] SetServerSettings RemoteEvent not found.")
         return false
     end
 
@@ -206,12 +218,113 @@ local function requestSkip()
         remote:FireServer(unpack(args))
     end)
     if ok then
-        print("[dEnzCreator V3.3.12] AutoSkip request sent (timer not paused).")
+        if not mapPickArmed and not mapPickCompleted then
+            mapPickArmed = true
+            mapPickDeadline = os.clock() + MAP_PICK_TIMEOUT
+            mapPickNextScan = 0
+        end
+        print("[dEnzCreator V3.3.14] AutoSkip request sent; fast non-leftmost map selection armed.")
         return true
     end
 
-    warn("[dEnzCreator V3.3.12] AutoSkip error:", err)
+    warn("[dEnzCreator V3.3.14] AutoSkip error:", err)
     return false
+end
+
+
+local function isGuiTreeVisible(obj)
+    local node = obj
+    while node do
+        if node:IsA("GuiObject") and not node.Visible then return false end
+        if node:IsA("LayerCollector") and not node.Enabled then return false end
+        node = node.Parent
+    end
+    return true
+end
+
+local function findNextMapPrompt(pg)
+    for _, obj in ipairs(pg:GetDescendants()) do
+        if (obj:IsA("TextLabel") or obj:IsA("TextButton")) and isGuiTreeVisible(obj) then
+            local txt = norm(obj.Text)
+            if txt:find("pilih peta berikutnya", 1, true) then
+                return obj
+            end
+        end
+    end
+    return nil
+end
+
+local function collectMapCardButtons(pg, prompt)
+    local promptY = prompt.AbsolutePosition.Y + prompt.AbsoluteSize.Y * 0.5
+    local raw = {}
+    for _, obj in ipairs(pg:GetDescendants()) do
+        if obj:IsA("GuiButton") and isGuiTreeVisible(obj) then
+            local size = obj.AbsoluteSize
+            local pos = obj.AbsolutePosition
+            local cx = pos.X + size.X * 0.5
+            local cy = pos.Y + size.Y * 0.5
+            -- Map cards are the large horizontal buttons above the prompt.
+            -- This excludes the lower Skip button and small HUD controls.
+            if size.X >= 130 and size.X <= 600
+                and size.Y >= 80 and size.Y <= 380
+                and cy < promptY - 4 and cy > promptY - 500 then
+                table.insert(raw, {button = obj, x = cx, y = cy, area = size.X * size.Y})
+            end
+        end
+    end
+
+    -- Collapse nested/overlapping GuiButtons belonging to the same card.
+    table.sort(raw, function(a, b) return a.area > b.area end)
+    local cards = {}
+    for _, item in ipairs(raw) do
+        local duplicate = false
+        for _, kept in ipairs(cards) do
+            if math.abs(item.x - kept.x) < 90 and math.abs(item.y - kept.y) < 90 then
+                duplicate = true
+                break
+            end
+        end
+        if not duplicate then table.insert(cards, item) end
+    end
+    table.sort(cards, function(a, b) return a.x < b.x end)
+    return cards
+end
+
+local function selectNonCentralMapStep()
+    if not mapPickArmed or mapPickCompleted then return end
+    local now = os.clock()
+    if now > mapPickDeadline then
+        mapPickArmed = false
+        warn("[dEnzCreator V3.3.14] Map picker timed out; no safe card was activated.")
+        return
+    end
+    if now < mapPickNextScan then return end
+    mapPickNextScan = now + MAP_PICK_SCAN_INTERVAL
+
+    local pg = player:FindFirstChildOfClass("PlayerGui")
+    if not pg then return end
+    local prompt = findNextMapPrompt(pg)
+    if not prompt then return end
+
+    local cards = collectMapCardButtons(pg, prompt)
+    if #cards < 2 then return end
+
+    -- Card 1 (far left) is always Robloxia Tengah. Select card 2 instead;
+    -- any map to its right is acceptable per the requested rule.
+    local target = cards[2].button
+    local ok, err = pcall(function()
+        target:Activate()
+    end)
+    if not ok and type(firesignal) == "function" then
+        ok, err = pcall(firesignal, target.Activated)
+    end
+    if ok then
+        mapPickCompleted = true
+        mapPickArmed = false
+        print("[dEnzCreator V3.3.14] Activated second map card (right of Robloxia Tengah); x=", cards[2].x)
+    else
+        warn("[dEnzCreator V3.3.14] Map card activation failed:", err)
+    end
 end
 
 -- If this map/character does not expose both Grab and Eat, request a map
@@ -246,7 +359,7 @@ local function monitorGrabEatAvailability()
     end
 
     if not missingActionSkipSent and os.clock() - missingActionSince >= 3.0 then
-        warn("[dEnzCreator V3.3.12] Grab/Eat missing on", mapName,
+        warn("[dEnzCreator V3.3.14] Grab/Eat missing on", mapName,
             "- requesting automatic map skip.")
         missingActionSkipSent = true
         requestSkip()
@@ -263,7 +376,7 @@ local function switchModeIfEnabled(mapName)
         local mode = CFG.SmallMaps[key] and "Mega" or "Normal"
         if pcall(function() remote:FireServer(mode) end) then
             lastMode = key
-            print("[dEnzCreator V3.3.12] RequestTeleport:", mode, mapName)
+            print("[dEnzCreator V3.3.14] RequestTeleport:", mode, mapName)
         end
     end
 end
@@ -339,11 +452,11 @@ end
 local function sendAutoSell(events)
     local sell = events and events:FindFirstChild("Sell")
     if not sell then
-        warn("[dEnzCreator V3.3.12] Character.Events.Sell not found.")
+        warn("[dEnzCreator V3.3.14] Character.Events.Sell not found.")
         return false
     end
     if not sell:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.3.12] Sell exists but is not a RemoteEvent:", sell.ClassName)
+        warn("[dEnzCreator V3.3.14] Sell exists but is not a RemoteEvent:", sell.ClassName)
         return false
     end
 
@@ -351,11 +464,11 @@ local function sendAutoSell(events)
         sell:FireServer()
     end)
     if not ok then
-        warn("[dEnzCreator V3.3.12] AutoSell error:", err)
+        warn("[dEnzCreator V3.3.14] AutoSell error:", err)
         return false
     end
 
-    print("[dEnzCreator V3.3.12] AutoSell request sent.")
+    print("[dEnzCreator V3.3.14] AutoSell request sent.")
     return true
 end
 
@@ -449,7 +562,7 @@ local function farmStep()
         if grabEvent and eatEvent and cycleStartedAt == nil then
             cycleStartedAt = now
             completedCycleSeconds = 0
-            print("[dEnzCreator V3.3.12] Season time started: Grab/Eat menu active.")
+            print("[dEnzCreator V3.3.14] Season time started: Grab/Eat menu active.")
         end
 
         if grabEvent and eatEvent and now >= nextGrabEatActionAt then
@@ -479,7 +592,7 @@ local function farmStep()
     lastBarProgress = barProgress
 
     -- KEDADA-style overlap using a direct capacity threshold, not a time prediction.
-    -- Skip fires once at 99.5% of live MaxSize (or 99.5% of the sell bar as fallback).
+    -- Skip fires once at 99.8% of live MaxSize (or 99.8% of the sell bar as fallback).
     local skipThresholdReached =
         (size ~= nil and maxSize ~= nil and maxSize > 0 and size >= maxSize * SKIP_THRESHOLD)
         or (size == nil and barProgress ~= nil and barProgress >= SKIP_THRESHOLD)
@@ -487,7 +600,7 @@ local function farmStep()
     if skipThresholdReached and not skipSentForCycle then
         if requestSkip() then
             skipSentForCycle = true
-            print("[dEnzCreator V3.3.12] AutoSkip sent at 99.5% capacity; AutoSell will run at full during transition.")
+            print("[dEnzCreator V3.3.14] AutoSkip sent at 99.8% capacity; AutoSell will run at full during transition.")
         end
     end
 
@@ -503,12 +616,12 @@ local function farmStep()
         if barFull and cycleStartedAt ~= nil then
             completedCycleSeconds = math.max(0, now - cycleStartedAt)
             cycleStartedAt = nil
-            print("[dEnzCreator V3.3.12] Season time stopped: sell bar detected full.")
+            print("[dEnzCreator V3.3.14] Season time stopped: sell bar detected full.")
         end
         if not wasFull then
             wasFull = true
             lastSellAttempt = 0
-            print("[dEnzCreator V3.3.12] Capacity full; AutoSell during map transition.")
+            print("[dEnzCreator V3.3.14] Capacity full; AutoSell during map transition.")
         end
         if now - lastSellAttempt >= 0.45 then
             lastSellAttempt = now
@@ -522,9 +635,11 @@ local function farmStep()
             or sizeDrop or barDrop
 
         if sold then
-            print("[dEnzCreator V3.3.12] Sale/reset detected; cycle re-armed.")
+            print("[dEnzCreator V3.3.14] Sale/reset detected; cycle re-armed.")
             wasFull = false
             skipSentForCycle = false
+            mapPickCompleted = false
+            mapPickArmed = false
             lastSellAttempt = 0
         end
     end
@@ -642,7 +757,7 @@ local function applyHiddenMap()
         end
     end
 
-    print("[dEnzCreator V3.3.12] Hidden Map ON. Map and food visuals hidden; collision untouched.")
+    print("[dEnzCreator V3.3.14] Hidden Map ON. Map and food visuals hidden; collision untouched.")
     return true
 end
 
@@ -654,7 +769,7 @@ local function setHiddenMaps(enabled)
     else
         hiddenMapsEnabled = false
         restoreHiddenMap()
-        print("[dEnzCreator V3.3.12] Hidden Map OFF. Original visuals restored.")
+        print("[dEnzCreator V3.3.14] Hidden Map OFF. Original visuals restored.")
     end
 end
 
@@ -942,6 +1057,7 @@ local connection = RunService.Heartbeat:Connect(function()
     if not running then return end
     pcall(updateRuntimeMonitor)
     pcall(claimRewardsStep)
+    pcall(selectNonCentralMapStep)
     if CFG.Farm then
         pcall(monitorGrabEatAvailability)
         pcall(farmStep)
@@ -957,10 +1073,10 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator V3.3.12] Loaded. Dynamic Collision removed. 99.5% capacity Skip + AutoSell overlap enabled; Grab/Eat X12 retained; 3x Eat calls spread across 0.02s total.")
-print("[dEnzCreator V3.3.12] 99.5% threshold loaded. Skip fires at 99.5%; Sell runs at full during transition; default-map Z=0.")
+print("[dEnzCreator V3.3.14] Loaded. Dynamic Collision removed. 99.8% capacity Skip + AutoSell overlap enabled; Grab/Eat X12 retained; 3x Eat calls spread across 0.02s total.")
+print("[dEnzCreator V3.3.14] 99.8% threshold loaded. Skip fires at 99.8%; Sell runs at full during transition; default-map Z=0.")
 
--- V3.3.12 keeps Hidden Maps; Dynamic Collision is removed. Skip triggers at 99.5% live capacity; AutoSell runs at full during transition.
+-- V3.3.14 keeps Hidden Maps; Dynamic Collision is removed. Skip triggers at 99.8% live capacity; AutoSell runs at full during transition.
 
 -- V3.3.8: Default maps use Z=0; Studville uses Z=100; Central Robloxia uses Z=150. Grab/Eat body animation target is ~2.0s (8.75x adjustment); three Eat calls are spread across 0.02s total. Landing anchor remains X=0.
 
@@ -976,3 +1092,9 @@ print("[dEnzCreator V3.3.12] 99.5% threshold loaded. Skip fires at 99.5%; Sell r
 -- post-Grab pause is 0.03s; title and runtime text blocks are narrower while panel remains top-right.
 
 -- V3.3.10: Robloxia Tengah landing targets a live Chunks food part instead of the empty map-center anchor. Header/runtime spacing tightened.
+
+
+-- V3.3.14 transition update: at the Skip menu, activate the second visible card
+-- from the left, avoiding the known leftmost Robloxia Tengah card. Selection is
+-- attempted immediately at 0.10s scan intervals; no fixed post-Skip wait is added.
+-- Grab/Eat/Chunk timing, 99.8% threshold, and map landing coordinates are unchanged.
