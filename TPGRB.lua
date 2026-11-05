@@ -1,9 +1,9 @@
--- dEnzCreator ETW AUTOFARM V3.3.16 - CENTRAL Z150 + 2S ACTION ANIMATION + TIGHT HEADER (NO DYNAMIC COLLISION)
+-- dEnzCreator ETW AUTOFARM V3.3.17 - CENTRAL Z150 + 2S ACTION ANIMATION + TIGHT HEADER (NO DYNAMIC COLLISION)
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
 -- Skip request uses Paused=false. No fixed map countdowns or artificial waits.
--- V3.3.16: KEDADA-style selective Hidden Maps; Chunks and food visuals preserved. Grab/Eat never pause during map picker.
+-- V3.3.17: KEDADA-style selective Hidden Maps; Chunks and food visuals preserved. Grab/Eat never pause during map picker.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -49,6 +49,17 @@ local EAT_CALL_INTERVAL = EAT_TOTAL_WINDOW / 2 -- 10 ms between call 1->2 and 2-
 local lastSellAttempt = 0
 local wasFull = false
 local skipSentForCycle = false
+local sellPending = false
+local sellBaselineSize = nil
+local sellBaselineBar = nil
+local sellAttempts = 0
+local skipRequestPending = false
+local lastSkipRetry = 0
+local lastObservedSize = nil
+local lastObservedBar = nil
+local SELL_RETRY_INTERVAL = 1.25
+local SELL_MAX_ATTEMPTS = 3
+local SELL_RESET_EPSILON = 0.01
 local lastSize = nil
 local lastBarProgress = nil
 local SKIP_THRESHOLD = 0.998
@@ -135,7 +146,11 @@ local function farmAnchor()
         mapPickArmed = false
         mapPickCompleted = false
         mapPickNextScan = 0
-        print("[dEnzCreator V3.3.16] Map changed:", mapName, "| Central:", isCentral and "yes" or "no")
+        skipSentForCycle = false
+        skipRequestPending = false
+        sellPending = false
+        sellAttempts = 0
+        print("[dEnzCreator V3.3.17] Map changed:", mapName, "| Central:", isCentral and "yes" or "no")
     end
     if not pendingLandingMap then return true end
     if os.clock() - lastLandingAttempt < 0.10 then return false end
@@ -187,7 +202,7 @@ local function farmAnchor()
     root.AssemblyAngularVelocity = Vector3.zero
     root.CFrame = CFrame.new(destinationXZ.X, targetY, destinationXZ.Z)
     pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-    print("[dEnzCreator V3.3.16] Landing:", pendingLandingMap,
+    print("[dEnzCreator V3.3.17] Landing:", pendingLandingMap,
         "| food-target:", isCentral and "yes" or "no",
         "| X=", destinationXZ.X, "Y=", targetY, "Z=", destinationXZ.Z)
     pendingLandingMap = nil
@@ -223,7 +238,7 @@ local function requestSkip()
             mapPickDeadline = os.clock() + MAP_PICK_TIMEOUT
             mapPickNextScan = 0
         end
-        print("[dEnzCreator V3.3.16] AutoSkip request sent; verified non-central map selection armed.")
+        print("[dEnzCreator V3.3.17] AutoSkip request sent; verified non-central map selection armed.")
         return true
     end
 
@@ -348,7 +363,22 @@ local function selectNonCentralMapStep()
     -- alternative. If a title cannot be read, wait rather than risk a wrong map.
     for i = 1, #cards do
         local title = getCardTitle(pg, cards[i])
-        if title ~= "" and not isCentralMapTitle(title) then
+        local cardHasCentralText = false
+        local b = cards[i].button
+        local bp, bs = b.AbsolutePosition, b.AbsoluteSize
+        for _, obj in ipairs(pg:GetDescendants()) do
+            if (obj:IsA("TextLabel") or obj:IsA("TextButton")) and isGuiTreeVisible(obj) then
+                local p, z = obj.AbsolutePosition, obj.AbsoluteSize
+                local cx, cy = p.X + z.X * 0.5, p.Y + z.Y * 0.5
+                local inside = cx >= bp.X - 4 and cx <= bp.X + bs.X + 4
+                    and cy >= bp.Y - 4 and cy <= bp.Y + bs.Y + 4
+                if inside and isCentralMapTitle(obj.Text) then
+                    cardHasCentralText = true
+                    break
+                end
+            end
+        end
+        if title ~= "" and not cardHasCentralText and not isCentralMapTitle(title) then
             local target = cards[i].button
             local ok, err = pcall(function() target:Activate() end)
             if not ok and type(firesignal) == "function" then
@@ -357,7 +387,7 @@ local function selectNonCentralMapStep()
             if ok then
                 mapPickCompleted = true
                 mapPickArmed = false
-                print("[dEnzCreator V3.3.16] Selected verified non-central map:", title)
+                print("[dEnzCreator V3.3.17] Selected verified non-central map:", title)
                 return
             else
                 warn("[dEnzCreator V3.3.15] Map card activation failed:", err)
@@ -415,7 +445,7 @@ local function switchModeIfEnabled(mapName)
         local mode = CFG.SmallMaps[key] and "Mega" or "Normal"
         if pcall(function() remote:FireServer(mode) end) then
             lastMode = key
-            print("[dEnzCreator V3.3.16] RequestTeleport:", mode, mapName)
+            print("[dEnzCreator V3.3.17] RequestTeleport:", mode, mapName)
         end
     end
 end
@@ -507,9 +537,103 @@ local function sendAutoSell(events)
         return false
     end
 
-    print("[dEnzCreator V3.3.16] AutoSell request sent.")
+    print("[dEnzCreator V3.3.17] AutoSell request sent.")
     return true
 end
+
+-- Sell/transition state machine.
+-- Full is detected from either live Size/MaxSize ratio or the visible green bar.
+-- After sending Sell (or noticing a manual sell), wait for a real reset before
+-- requesting the next map. This prevents the previous bug: sending skip while
+-- the inventory is still full, or never sending skip after a manual sale.
+local function monitorSellAndSkip(char, events)
+    local now = os.clock()
+    if skipRequestPending and now - lastSkipRetry >= 1.0 then
+        lastSkipRetry = now
+        if requestSkip() then
+            skipSentForCycle = true
+            skipRequestPending = false
+        end
+    end
+    local size, maxSize, numericFull = getCapacityState(char)
+    local bar = getSellBarProgress()
+
+    local numericRatio = nil
+    if size and maxSize and maxSize > 0 then
+        numericRatio = math.clamp(size / maxSize, 0, 1.5)
+    end
+    local isFull = numericFull == true
+        or (numericRatio ~= nil and numericRatio >= SKIP_THRESHOLD)
+        or (bar ~= nil and bar >= SKIP_THRESHOLD)
+
+    -- If we are already waiting for a sale to register, look for an actual
+    -- reduction in size or a reset/drop in the bar. This also catches manual sell.
+    if sellPending then
+        local sizeReset = sellBaselineSize ~= nil and size ~= nil
+            and size < sellBaselineSize - math.max(1, sellBaselineSize * 0.005)
+        local barReset = sellBaselineBar ~= nil and bar ~= nil
+            and (bar <= 0.10 or bar < sellBaselineBar - 0.15)
+        local numericReset = numericRatio ~= nil and numericRatio < 0.10
+        if sizeReset or barReset or numericReset then
+            sellPending = false
+            wasFull = false
+            sellAttempts = 0
+            lastSellAttempt = 0
+            cycleStartedAt = nil
+            completedCycleSeconds = 0
+
+            if not skipSentForCycle then
+                print("[dEnzCreator V3.3.17] Sell confirmed (auto/manual); requesting next map.")
+                skipRequestPending = true
+                lastSkipRetry = 0
+                if requestSkip() then
+                    skipSentForCycle = true
+                    skipRequestPending = false
+                end
+            end
+            sellBaselineSize = nil
+            sellBaselineBar = nil
+            lastObservedSize = size
+            lastObservedBar = bar
+            return
+        end
+
+        -- Retry only a small bounded number of times; never spam the Sell remote.
+        if sellAttempts < SELL_MAX_ATTEMPTS
+            and now - lastSellAttempt >= SELL_RETRY_INTERVAL then
+            if sendAutoSell(events) then
+                sellAttempts = sellAttempts + 1
+                lastSellAttempt = now
+                print("[dEnzCreator V3.3.17] Sell retry", sellAttempts, "/", SELL_MAX_ATTEMPTS)
+            end
+        end
+        lastObservedSize = size
+        lastObservedBar = bar
+        return
+    end
+
+    if isFull and not skipSentForCycle then
+        sellPending = true
+        wasFull = true
+        sellBaselineSize = size
+        sellBaselineBar = bar
+        sellAttempts = 0
+        lastSellAttempt = now
+        if sendAutoSell(events) then
+            sellAttempts = 1
+            print("[dEnzCreator V3.3.17] Capacity full; waiting for sell confirmation.")
+        else
+            -- Keep the pending state so a manual sell can still be detected.
+            warn("[dEnzCreator V3.3.17] Full detected but auto-sell remote unavailable; manual sell will still be monitored.")
+        end
+    elseif not isFull then
+        wasFull = false
+    end
+
+    lastObservedSize = size
+    lastObservedBar = bar
+end
+
 
 -- Detect collectible food/chunks close to the character from live Workspace.Chunks state.
 -- No fixed 13-second loading delay: map readiness is inferred from live instances.
@@ -601,6 +725,9 @@ local function farmStep()
     end
     accelerateActionAnimations(hum)
 
+    -- AutoSell/AutoSkip monitoring remains active while the map picker is open.
+    monitorSellAndSkip(char, events)
+
     if events then
         local now = os.clock()
         local grabEvent = events:FindFirstChild("Grab")
@@ -609,7 +736,7 @@ local function farmStep()
         if grabEvent and eatEvent and cycleStartedAt == nil then
             cycleStartedAt = now
             completedCycleSeconds = 0
-            print("[dEnzCreator V3.3.16] Season time started: Grab/Eat menu active.")
+            print("[dEnzCreator V3.3.17] Season time started: Grab/Eat menu active.")
         end
 
         if grabEvent and eatEvent and now >= nextGrabEatActionAt then
@@ -713,8 +840,11 @@ local function bindSelectiveMap(mapRoot)
     if hiddenMapRoot == mapRoot then return true end
 
     disconnectHiddenMapListeners()
-    hiddenMapRoot = mapRoot
+    -- Invalidate any scan for the previous Map root. Its task exits on the
+    -- generation check and cannot block the new root's scan.
     hiddenMapGeneration = hiddenMapGeneration + 1
+    hiddenMapScanRunning = false
+    hiddenMapRoot = mapRoot
     local generation = hiddenMapGeneration
 
     -- Attach first, so objects arriving while the initial scan runs are not missed.
@@ -728,7 +858,6 @@ local function bindSelectiveMap(mapRoot)
         end)
     end))
 
-    if hiddenMapScanRunning then return true end
     hiddenMapScanRunning = true
     task.spawn(function()
         local descendants = mapRoot:GetDescendants()
@@ -747,7 +876,7 @@ local function bindSelectiveMap(mapRoot)
         end
         if hiddenMapGeneration == generation then
             hiddenMapScanRunning = false
-            print("[dEnzCreator V3.3.16] Selective Map ready | checked:", processed,
+            print("[dEnzCreator V3.3.17] Selective Map ready | checked:", processed,
                 "| Chunks untouched | food protected")
         end
     end)
@@ -765,11 +894,11 @@ local function setHiddenMaps(enabled)
     if enabled then
         hiddenMapsEnabled = true
         applyHiddenMap()
-        print("[dEnzCreator V3.3.16] Hidden Maps ON | KEDADA selective mode")
+        print("[dEnzCreator V3.3.17] Hidden Maps ON | KEDADA selective mode")
     else
         hiddenMapsEnabled = false
         restoreHiddenMap()
-        print("[dEnzCreator V3.3.16] Show Model ON | original Map visuals restored")
+        print("[dEnzCreator V3.3.17] Show Model ON | original Map visuals restored")
     end
 end
 
@@ -1073,10 +1202,10 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator V3.3.16] Loaded. Dynamic Collision removed. 99.8% capacity Skip + AutoSell overlap enabled; Grab/Eat X12 retained; 3x Eat calls spread across 0.02s total.")
-print("[dEnzCreator V3.3.16] 99.8% threshold loaded. Skip fires at 99.8%; Sell runs at full during transition; default-map Z=0.")
+print("[dEnzCreator V3.3.17] Loaded. AutoSell waits for real inventory/bar reset before AutoSkip; manual sell is detected; Grab/Eat/Chunk timings preserved.")
+print("[dEnzCreator V3.3.17] 99.8% threshold loaded. Skip fires at 99.8%; Sell runs at full during transition; default-map Z=0.")
 
--- V3.3.16 uses KEDADA selective Map visuals; Chunks/food are preserved and Grab/Eat remain active during picker transitions. Skip triggers at 99.8% live capacity; AutoSell runs at full during transition.
+-- V3.3.17: KEDADA selective Map visuals; Chunks untouched; Grab/Eat always active. AutoSell confirms real size/bar reset before AutoSkip, including manual sell.
 
 -- V3.3.8: Default maps use Z=0; Studville uses Z=100; Central Robloxia uses Z=150. Grab/Eat body animation target is ~2.0s (8.75x adjustment); three Eat calls are spread across 0.02s total. Landing anchor remains X=0.
 
@@ -1099,6 +1228,6 @@ print("[dEnzCreator V3.3.16] 99.8% threshold loaded. Skip fires at 99.8%; Sell r
 -- attempted immediately at 0.10s scan intervals; no fixed post-Skip wait is added.
 -- Grab/Eat/Chunk timing, 99.8% threshold, and map landing coordinates are unchanged.
 
--- V3.3.16 revision: KEDADA-style selective visuals process Workspace.Map only,
+-- V3.3.17 revision: KEDADA-style selective visuals process Workspace.Map only,
 -- protect food-named descendants, and leave Workspace.Chunks untouched.
 -- Grab/Eat cadence continues while the map picker is visible.
