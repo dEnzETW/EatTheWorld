@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM V3.3.8 - 99.5% SKIP + CENTRAL MAP ALIASES + COMPACT HEADER (NO DYNAMIC COLLISION)
+-- dEnzCreator ETW AUTOFARM V3.3.9 - CENTRAL FOOD TARGET + TIGHT HEADER (NO DYNAMIC COLLISION)
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -109,65 +109,72 @@ local function farmAnchor()
 
     local mapName, key = getMapName()
     local compactKey = key:gsub("[^%w]", "")
-    local isCentral = key:find("central robloxia", 1, true) ~= nil
-        or key:find("robloxia tengah", 1, true) ~= nil
-        or key:find("tengah robloxia", 1, true) ~= nil
-        or compactKey:find("centralrobloxia", 1, true) ~= nil
-        or compactKey:find("robloxiatengah", 1, true) ~= nil
-        or compactKey:find("tengahrobloxia", 1, true) ~= nil
+    local isCentral = (key:find("central", 1, true) and key:find("robloxia", 1, true))
+        or (key:find("robloxia", 1, true) and key:find("tengah", 1, true))
+        or compactKey:find("centralrobloxia", 1, true)
+        or compactKey:find("robloxiatengah", 1, true)
     local isStudville = key:find("studville", 1, true) ~= nil
-    local z = isCentral and CFG.CentralRobloxiaZ
-        or (isStudville and CFG.StudvilleZ or CFG.DefaultZ)
     local mapChanged = mapName ~= lastMap
 
-    -- Do not continuously overwrite the character CFrame every Heartbeat.
-    -- Wait for actual map floor collision, then teleport once onto that floor.
     if mapChanged then
         lastMap = mapName
         pendingLandingMap = mapName
         lastLandingAttempt = 0
-        print("[dEnzCreator V3.3.8] Map changed; searching for floor:", mapName)
+        print("[dEnzCreator V3.3.9] Map changed:", mapName, "| Central:", isCentral and "yes" or "no")
     end
-
-    if not pendingLandingMap then
-        return true
-    end
-
-    -- Retry only while the destination floor is not available; no fixed wait.
-    if os.clock() - lastLandingAttempt < 0.10 then
-        return false
-    end
+    if not pendingLandingMap then return true end
+    if os.clock() - lastLandingAttempt < 0.10 then return false end
     lastLandingAttempt = os.clock()
+
+    local destinationXZ
+    if isCentral then
+        -- Robloxia Tengah: never land at the empty map center. Select a live
+        -- collectible part from Chunks and stand a short distance beside it.
+        local chunks = Workspace:FindFirstChild("Chunks")
+        if not chunks then return false end
+        local nearest, nearestDist = nil, math.huge
+        for _, obj in ipairs(chunks:GetDescendants()) do
+            if obj:IsA("BasePart") and obj.Parent and obj:IsDescendantOf(chunks) then
+                local delta = Vector3.new(obj.Position.X - root.Position.X, 0, obj.Position.Z - root.Position.Z)
+                local d2 = delta:Dot(delta)
+                if d2 < nearestDist then nearest, nearestDist = obj, d2 end
+            end
+        end
+        if not nearest then return false end
+        local foodPos = nearest.Position
+        local away = Vector3.new(root.Position.X - foodPos.X, 0, root.Position.Z - foodPos.Z)
+        if away.Magnitude < 0.1 then away = Vector3.new(1, 0, 0) end
+        destinationXZ = Vector3.new(foodPos.X, 0, foodPos.Z) + away.Unit * 3
+    else
+        local z = isStudville and CFG.StudvilleZ or CFG.DefaultZ
+        destinationXZ = Vector3.new(0, 0, z)
+    end
 
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.FilterDescendantsInstances = {char}
+    local chunksRoot = Workspace:FindFirstChild("Chunks")
+    if isCentral and chunksRoot then params.FilterDescendantsInstances = {char, chunksRoot} end
     params.IgnoreWater = true
-
-    local origin = Vector3.new(0, 5000, z)
+    local origin = Vector3.new(destinationXZ.X, 5000, destinationXZ.Z)
     local result = Workspace:Raycast(origin, Vector3.new(0, -10000, 0), params)
-
-    -- Ignore the script's own artificial bedrock if present.
     local bedrock = Workspace:FindFirstChild("bedrock")
     if result and bedrock and result.Instance == bedrock then
-        params.FilterDescendantsInstances = {char, bedrock}
+        local exclusions = {char, bedrock}
+        if isCentral and chunksRoot then table.insert(exclusions, chunksRoot) end
+        params.FilterDescendantsInstances = exclusions
         result = Workspace:Raycast(origin, Vector3.new(0, -10000, 0), params)
     end
-
-    if not result then
-        return false
-    end
+    if not result then return false end
 
     local targetY = result.Position.Y + hum.HipHeight + root.Size.Y / 2 + 0.15
     root.AssemblyLinearVelocity = Vector3.zero
     root.AssemblyAngularVelocity = Vector3.zero
-    root.CFrame = CFrame.new(0, targetY, z)
-    pcall(function()
-        hum:ChangeState(Enum.HumanoidStateType.GettingUp)
-    end)
-
-    print("[dEnzCreator V3.3.8] Landed on map floor:", pendingLandingMap,
-        "| X=0 Y=", targetY, "Z=", z)
+    root.CFrame = CFrame.new(destinationXZ.X, targetY, destinationXZ.Z)
+    pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+    print("[dEnzCreator V3.3.9] Landing:", pendingLandingMap,
+        "| food-target:", isCentral and "yes" or "no",
+        "| X=", destinationXZ.X, "Y=", targetY, "Z=", destinationXZ.Z)
     pendingLandingMap = nil
     return true
 end
@@ -186,7 +193,7 @@ local function requestSkip()
     local folder = ReplicatedStorage:FindFirstChild("Events")
     local remote = folder and folder:FindFirstChild("SetServerSettings")
     if not remote or not remote:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.3.8] SetServerSettings RemoteEvent not found.")
+        warn("[dEnzCreator V3.3.9] SetServerSettings RemoteEvent not found.")
         return false
     end
 
@@ -196,11 +203,11 @@ local function requestSkip()
         remote:FireServer(unpack(args))
     end)
     if ok then
-        print("[dEnzCreator V3.3.8] AutoSkip request sent (timer not paused).")
+        print("[dEnzCreator V3.3.9] AutoSkip request sent (timer not paused).")
         return true
     end
 
-    warn("[dEnzCreator V3.3.8] AutoSkip error:", err)
+    warn("[dEnzCreator V3.3.9] AutoSkip error:", err)
     return false
 end
 
@@ -236,7 +243,7 @@ local function monitorGrabEatAvailability()
     end
 
     if not missingActionSkipSent and os.clock() - missingActionSince >= 3.0 then
-        warn("[dEnzCreator V3.3.8] Grab/Eat missing on", mapName,
+        warn("[dEnzCreator V3.3.9] Grab/Eat missing on", mapName,
             "- requesting automatic map skip.")
         missingActionSkipSent = true
         requestSkip()
@@ -253,7 +260,7 @@ local function switchModeIfEnabled(mapName)
         local mode = CFG.SmallMaps[key] and "Mega" or "Normal"
         if pcall(function() remote:FireServer(mode) end) then
             lastMode = key
-            print("[dEnzCreator V3.3.8] RequestTeleport:", mode, mapName)
+            print("[dEnzCreator V3.3.9] RequestTeleport:", mode, mapName)
         end
     end
 end
@@ -329,11 +336,11 @@ end
 local function sendAutoSell(events)
     local sell = events and events:FindFirstChild("Sell")
     if not sell then
-        warn("[dEnzCreator V3.3.8] Character.Events.Sell not found.")
+        warn("[dEnzCreator V3.3.9] Character.Events.Sell not found.")
         return false
     end
     if not sell:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.3.8] Sell exists but is not a RemoteEvent:", sell.ClassName)
+        warn("[dEnzCreator V3.3.9] Sell exists but is not a RemoteEvent:", sell.ClassName)
         return false
     end
 
@@ -341,11 +348,11 @@ local function sendAutoSell(events)
         sell:FireServer()
     end)
     if not ok then
-        warn("[dEnzCreator V3.3.8] AutoSell error:", err)
+        warn("[dEnzCreator V3.3.9] AutoSell error:", err)
         return false
     end
 
-    print("[dEnzCreator V3.3.8] AutoSell request sent.")
+    print("[dEnzCreator V3.3.9] AutoSell request sent.")
     return true
 end
 
@@ -438,7 +445,7 @@ local function farmStep()
         if grabEvent and eatEvent and cycleStartedAt == nil then
             cycleStartedAt = now
             completedCycleSeconds = 0
-            print("[dEnzCreator V3.3.8] Season time started: Grab/Eat menu active.")
+            print("[dEnzCreator V3.3.9] Season time started: Grab/Eat menu active.")
         end
 
         if grabEvent and eatEvent and now >= nextGrabEatActionAt then
@@ -472,7 +479,7 @@ local function farmStep()
     if skipThresholdReached and not skipSentForCycle then
         if requestSkip() then
             skipSentForCycle = true
-            print("[dEnzCreator V3.3.8] AutoSkip sent at 99.5% capacity; AutoSell will run at full during transition.")
+            print("[dEnzCreator V3.3.9] AutoSkip sent at 99.5% capacity; AutoSell will run at full during transition.")
         end
     end
 
@@ -488,12 +495,12 @@ local function farmStep()
         if barFull and cycleStartedAt ~= nil then
             completedCycleSeconds = math.max(0, now - cycleStartedAt)
             cycleStartedAt = nil
-            print("[dEnzCreator V3.3.8] Season time stopped: sell bar detected full.")
+            print("[dEnzCreator V3.3.9] Season time stopped: sell bar detected full.")
         end
         if not wasFull then
             wasFull = true
             lastSellAttempt = 0
-            print("[dEnzCreator V3.3.8] Capacity full; AutoSell during map transition.")
+            print("[dEnzCreator V3.3.9] Capacity full; AutoSell during map transition.")
         end
         if now - lastSellAttempt >= 0.45 then
             lastSellAttempt = now
@@ -507,7 +514,7 @@ local function farmStep()
             or sizeDrop or barDrop
 
         if sold then
-            print("[dEnzCreator V3.3.8] Sale/reset detected; cycle re-armed.")
+            print("[dEnzCreator V3.3.9] Sale/reset detected; cycle re-armed.")
             wasFull = false
             skipSentForCycle = false
             lastSellAttempt = 0
@@ -627,7 +634,7 @@ local function applyHiddenMap()
         end
     end
 
-    print("[dEnzCreator V3.3.8] Hidden Map ON. Map and food visuals hidden; collision untouched.")
+    print("[dEnzCreator V3.3.9] Hidden Map ON. Map and food visuals hidden; collision untouched.")
     return true
 end
 
@@ -639,7 +646,7 @@ local function setHiddenMaps(enabled)
     else
         hiddenMapsEnabled = false
         restoreHiddenMap()
-        print("[dEnzCreator V3.3.8] Hidden Map OFF. Original visuals restored.")
+        print("[dEnzCreator V3.3.9] Hidden Map OFF. Original visuals restored.")
     end
 end
 
@@ -670,11 +677,11 @@ padding.PaddingRight = UDim.new(0, 6)
 
 local layout = Instance.new("UIListLayout", frame)
 layout.SortOrder = Enum.SortOrder.LayoutOrder
-layout.Padding = UDim.new(0, 5)
+layout.Padding = UDim.new(0, 3)
 
 local header = Instance.new("Frame")
 header.LayoutOrder = 1
-header.Size = UDim2.new(1, 0, 0, 60)
+header.Size = UDim2.new(1, 0, 0, 43)
 header.BackgroundColor3 = Color3.fromRGB(37, 39, 62)
 header.BackgroundTransparency = 0
 header.BorderSizePixel = 0
@@ -685,7 +692,7 @@ headerStroke.Color = Color3.fromRGB(125, 105, 195)
 headerStroke.Thickness = 1
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(0, 66, 0, 22)
+title.Size = UDim2.new(0, 66, 0, 17)
 title.Position = UDim2.fromOffset(6, 1)
 title.BackgroundTransparency = 1
 title.Text = "dEnzCreator"
@@ -719,13 +726,13 @@ Instance.new("UICorner", close).CornerRadius = UDim.new(1, 0)
 
 local runtimeBlock = Instance.new("TextLabel")
 runtimeBlock.Name = "RuntimeBlock"
-runtimeBlock.Size = UDim2.new(0, 88, 0, 32)
-runtimeBlock.Position = UDim2.fromOffset(5, 26)
+runtimeBlock.Size = UDim2.new(0, 88, 0, 19)
+runtimeBlock.Position = UDim2.fromOffset(5, 21)
 runtimeBlock.BackgroundTransparency = 1
 runtimeBlock.BorderSizePixel = 0
 runtimeBlock.Text = "Runtime: 0m 0s\nSeason time: 0m 0s"
 runtimeBlock.TextColor3 = Color3.fromRGB(240, 243, 248)
-runtimeBlock.TextSize = 7
+runtimeBlock.TextSize = 6
 runtimeBlock.Font = Enum.Font.GothamMedium
 runtimeBlock.TextXAlignment = Enum.TextXAlignment.Left
 runtimeBlock.TextYAlignment = Enum.TextYAlignment.Center
@@ -735,7 +742,7 @@ runtimeBlock.Parent = header
 local function makeToggle(label, order, color, initial, callback)
     local b = Instance.new("TextButton")
     b.LayoutOrder = order
-    b.Size = UDim2.new(1, 0, 0, 27)
+    b.Size = UDim2.new(1, 0, 0, 24)
     b.BackgroundColor3 = initial and color or Color3.fromRGB(54, 52, 76)
     b.BorderSizePixel = 0
     b.Text = label .. (initial and ": ON" or ": OFF")
@@ -942,10 +949,10 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator V3.3.8] Loaded. Dynamic Collision removed. 99.5% capacity Skip + AutoSell overlap enabled; Grab/Eat X12 retained.")
-print("[dEnzCreator V3.3.8] 99.5% threshold loaded. Skip fires at 99.5%; Sell runs at full during transition; default-map Z=0.")
+print("[dEnzCreator V3.3.9] Loaded. Dynamic Collision removed. 99.5% capacity Skip + AutoSell overlap enabled; Grab/Eat X12 retained.")
+print("[dEnzCreator V3.3.9] 99.5% threshold loaded. Skip fires at 99.5%; Sell runs at full during transition; default-map Z=0.")
 
--- V3.3.8 keeps Hidden Maps; Dynamic Collision is removed. Skip triggers at 99.5% live capacity; AutoSell runs at full during transition.
+-- V3.3.9 keeps Hidden Maps; Dynamic Collision is removed. Skip triggers at 99.5% live capacity; AutoSell runs at full during transition.
 
 -- V3.3.8: Default maps use Z=0; Studville uses Z=100; Central Robloxia uses Z=700. Landing anchor remains X=0.
 
@@ -959,3 +966,5 @@ print("[dEnzCreator V3.3.8] 99.5% threshold loaded. Skip fires at 99.5%; Sell ru
 
 -- V3.3.8 changes: Central Robloxia name matching accepts English/Indonesian word orders;
 -- post-Grab pause is 0.03s; title and runtime text blocks are narrower while panel remains top-right.
+
+-- V3.3.9: Robloxia Tengah landing targets a live Chunks food part instead of the empty map-center anchor. Header/runtime spacing tightened.
