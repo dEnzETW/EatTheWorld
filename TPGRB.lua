@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM V3.3.10 - CENTRAL Z150 TEST + TIGHT HEADER (NO DYNAMIC COLLISION)
+-- dEnzCreator ETW AUTOFARM V3.3.12 - CENTRAL Z150 + 2S ACTION ANIMATION + TIGHT HEADER (NO DYNAMIC COLLISION)
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -36,12 +36,15 @@ local CFG = {
 local running, lastMap, lastMode = true, "", ""
 local lastFoodAction = 0
 local grabEatPhase = "grab"
+local eatCallsRemaining = 0
 local nextGrabEatActionAt = 0
 local GRAB_DELAY_BASE = 0.04
 local POST_GRAB_DELAY_BASE = 0.03 -- requested shorter pause between Grab and Eat
 local DELAY_ACCELERATION = 12
 local GRAB_DELAY = GRAB_DELAY_BASE / DELAY_ACCELERATION
 local POST_GRAB_DELAY = POST_GRAB_DELAY_BASE
+local EAT_TOTAL_WINDOW = 0.02 -- spread all 3 Eat calls across 20 ms total
+local EAT_CALL_INTERVAL = EAT_TOTAL_WINDOW / 2 -- 10 ms between call 1->2 and 2->3
 local lastSellAttempt = 0
 local wasFull = false
 local skipSentForCycle = false
@@ -120,7 +123,7 @@ local function farmAnchor()
         lastMap = mapName
         pendingLandingMap = mapName
         lastLandingAttempt = 0
-        print("[dEnzCreator V3.3.10] Map changed:", mapName, "| Central:", isCentral and "yes" or "no")
+        print("[dEnzCreator V3.3.12] Map changed:", mapName, "| Central:", isCentral and "yes" or "no")
     end
     if not pendingLandingMap then return true end
     if os.clock() - lastLandingAttempt < 0.10 then return false end
@@ -172,7 +175,7 @@ local function farmAnchor()
     root.AssemblyAngularVelocity = Vector3.zero
     root.CFrame = CFrame.new(destinationXZ.X, targetY, destinationXZ.Z)
     pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-    print("[dEnzCreator V3.3.10] Landing:", pendingLandingMap,
+    print("[dEnzCreator V3.3.12] Landing:", pendingLandingMap,
         "| food-target:", isCentral and "yes" or "no",
         "| X=", destinationXZ.X, "Y=", targetY, "Z=", destinationXZ.Z)
     pendingLandingMap = nil
@@ -193,7 +196,7 @@ local function requestSkip()
     local folder = ReplicatedStorage:FindFirstChild("Events")
     local remote = folder and folder:FindFirstChild("SetServerSettings")
     if not remote or not remote:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.3.10] SetServerSettings RemoteEvent not found.")
+        warn("[dEnzCreator V3.3.12] SetServerSettings RemoteEvent not found.")
         return false
     end
 
@@ -203,11 +206,11 @@ local function requestSkip()
         remote:FireServer(unpack(args))
     end)
     if ok then
-        print("[dEnzCreator V3.3.10] AutoSkip request sent (timer not paused).")
+        print("[dEnzCreator V3.3.12] AutoSkip request sent (timer not paused).")
         return true
     end
 
-    warn("[dEnzCreator V3.3.10] AutoSkip error:", err)
+    warn("[dEnzCreator V3.3.12] AutoSkip error:", err)
     return false
 end
 
@@ -243,7 +246,7 @@ local function monitorGrabEatAvailability()
     end
 
     if not missingActionSkipSent and os.clock() - missingActionSince >= 3.0 then
-        warn("[dEnzCreator V3.3.10] Grab/Eat missing on", mapName,
+        warn("[dEnzCreator V3.3.12] Grab/Eat missing on", mapName,
             "- requesting automatic map skip.")
         missingActionSkipSent = true
         requestSkip()
@@ -260,7 +263,7 @@ local function switchModeIfEnabled(mapName)
         local mode = CFG.SmallMaps[key] and "Mega" or "Normal"
         if pcall(function() remote:FireServer(mode) end) then
             lastMode = key
-            print("[dEnzCreator V3.3.10] RequestTeleport:", mode, mapName)
+            print("[dEnzCreator V3.3.12] RequestTeleport:", mode, mapName)
         end
     end
 end
@@ -336,11 +339,11 @@ end
 local function sendAutoSell(events)
     local sell = events and events:FindFirstChild("Sell")
     if not sell then
-        warn("[dEnzCreator V3.3.10] Character.Events.Sell not found.")
+        warn("[dEnzCreator V3.3.12] Character.Events.Sell not found.")
         return false
     end
     if not sell:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.3.10] Sell exists but is not a RemoteEvent:", sell.ClassName)
+        warn("[dEnzCreator V3.3.12] Sell exists but is not a RemoteEvent:", sell.ClassName)
         return false
     end
 
@@ -348,11 +351,11 @@ local function sendAutoSell(events)
         sell:FireServer()
     end)
     if not ok then
-        warn("[dEnzCreator V3.3.10] AutoSell error:", err)
+        warn("[dEnzCreator V3.3.12] AutoSell error:", err)
         return false
     end
 
-    print("[dEnzCreator V3.3.10] AutoSell request sent.")
+    print("[dEnzCreator V3.3.12] AutoSell request sent.")
     return true
 end
 
@@ -407,10 +410,11 @@ local function monitorNearbyFood(char, root)
     return false
 end
 
--- Conservative 5x animation acceleration.
--- Restore the earlier narrow behavior: only tracks explicitly named Grab/Eat.
--- Do not hook AnimationPlayed, defer repeated speed changes, or affect other actions.
-local ACTION_ANIMATION_SPEED = 5.0
+-- Target: reduce the observed 3.5s Grab/Eat body animation to about 2.0s.
+-- Existing 5x setting is scaled by 3.5/2 = 1.75, giving 8.75x.
+-- Only tracks explicitly named Grab/Eat are affected.
+-- Do not hook AnimationPlayed or affect other actions.
+local ACTION_ANIMATION_SPEED = 8.75
 local function accelerateActionAnimations(hum)
     if not hum then return end
     local ok, tracks = pcall(function()
@@ -445,22 +449,26 @@ local function farmStep()
         if grabEvent and eatEvent and cycleStartedAt == nil then
             cycleStartedAt = now
             completedCycleSeconds = 0
-            print("[dEnzCreator V3.3.10] Season time started: Grab/Eat menu active.")
+            print("[dEnzCreator V3.3.12] Season time started: Grab/Eat menu active.")
         end
 
         if grabEvent and eatEvent and now >= nextGrabEatActionAt then
             if grabEatPhase == "grab" then
                 fire(grabEvent)
                 grabEatPhase = "eat"
+                eatCallsRemaining = 3
                 nextGrabEatActionAt = now + POST_GRAB_DELAY
-            else
+            elseif grabEatPhase == "eat" then
                 fire(eatEvent)
-                fire(eatEvent)
-                fire(eatEvent)
-                grabEatPhase = "grab"
-                nextGrabEatActionAt = now + GRAB_DELAY
+                eatCallsRemaining = eatCallsRemaining - 1
+                lastFoodAction = now
+                if eatCallsRemaining > 0 then
+                    nextGrabEatActionAt = now + EAT_CALL_INTERVAL
+                else
+                    grabEatPhase = "grab"
+                    nextGrabEatActionAt = now + GRAB_DELAY
+                end
             end
-            lastFoodAction = now
         end
     end
 
@@ -479,7 +487,7 @@ local function farmStep()
     if skipThresholdReached and not skipSentForCycle then
         if requestSkip() then
             skipSentForCycle = true
-            print("[dEnzCreator V3.3.10] AutoSkip sent at 99.5% capacity; AutoSell will run at full during transition.")
+            print("[dEnzCreator V3.3.12] AutoSkip sent at 99.5% capacity; AutoSell will run at full during transition.")
         end
     end
 
@@ -495,12 +503,12 @@ local function farmStep()
         if barFull and cycleStartedAt ~= nil then
             completedCycleSeconds = math.max(0, now - cycleStartedAt)
             cycleStartedAt = nil
-            print("[dEnzCreator V3.3.10] Season time stopped: sell bar detected full.")
+            print("[dEnzCreator V3.3.12] Season time stopped: sell bar detected full.")
         end
         if not wasFull then
             wasFull = true
             lastSellAttempt = 0
-            print("[dEnzCreator V3.3.10] Capacity full; AutoSell during map transition.")
+            print("[dEnzCreator V3.3.12] Capacity full; AutoSell during map transition.")
         end
         if now - lastSellAttempt >= 0.45 then
             lastSellAttempt = now
@@ -514,7 +522,7 @@ local function farmStep()
             or sizeDrop or barDrop
 
         if sold then
-            print("[dEnzCreator V3.3.10] Sale/reset detected; cycle re-armed.")
+            print("[dEnzCreator V3.3.12] Sale/reset detected; cycle re-armed.")
             wasFull = false
             skipSentForCycle = false
             lastSellAttempt = 0
@@ -634,7 +642,7 @@ local function applyHiddenMap()
         end
     end
 
-    print("[dEnzCreator V3.3.10] Hidden Map ON. Map and food visuals hidden; collision untouched.")
+    print("[dEnzCreator V3.3.12] Hidden Map ON. Map and food visuals hidden; collision untouched.")
     return true
 end
 
@@ -646,7 +654,7 @@ local function setHiddenMaps(enabled)
     else
         hiddenMapsEnabled = false
         restoreHiddenMap()
-        print("[dEnzCreator V3.3.10] Hidden Map OFF. Original visuals restored.")
+        print("[dEnzCreator V3.3.12] Hidden Map OFF. Original visuals restored.")
     end
 end
 
@@ -949,12 +957,12 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator V3.3.10] Loaded. Dynamic Collision removed. 99.5% capacity Skip + AutoSell overlap enabled; Grab/Eat X12 retained.")
-print("[dEnzCreator V3.3.10] 99.5% threshold loaded. Skip fires at 99.5%; Sell runs at full during transition; default-map Z=0.")
+print("[dEnzCreator V3.3.12] Loaded. Dynamic Collision removed. 99.5% capacity Skip + AutoSell overlap enabled; Grab/Eat X12 retained; 3x Eat calls spread across 0.02s total.")
+print("[dEnzCreator V3.3.12] 99.5% threshold loaded. Skip fires at 99.5%; Sell runs at full during transition; default-map Z=0.")
 
--- V3.3.10 keeps Hidden Maps; Dynamic Collision is removed. Skip triggers at 99.5% live capacity; AutoSell runs at full during transition.
+-- V3.3.12 keeps Hidden Maps; Dynamic Collision is removed. Skip triggers at 99.5% live capacity; AutoSell runs at full during transition.
 
--- V3.3.8: Default maps use Z=0; Studville uses Z=100; Central Robloxia uses Z=150. Landing anchor remains X=0.
+-- V3.3.8: Default maps use Z=0; Studville uses Z=100; Central Robloxia uses Z=150. Grab/Eat body animation target is ~2.0s (8.75x adjustment); three Eat calls are spread across 0.02s total. Landing anchor remains X=0.
 
 -- V3.3.3 retains the live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
 
