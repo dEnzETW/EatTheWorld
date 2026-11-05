@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM V3.3.5 - 98% SKIP THRESHOLD + OVERLAP SELL (NO DYNAMIC COLLISION)
+-- dEnzCreator ETW AUTOFARM V3.3.6 - 99% SKIP THRESHOLD + NARROW PANEL (NO DYNAMIC COLLISION)
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -47,7 +47,7 @@ local wasFull = false
 local skipSentForCycle = false
 local lastSize = nil
 local lastBarProgress = nil
-local SKIP_THRESHOLD = 0.98
+local SKIP_THRESHOLD = 0.99
 local pendingLandingMap = nil
 local lastLandingAttempt = 0
 local missingActionSince = nil
@@ -120,7 +120,7 @@ local function farmAnchor()
         lastMap = mapName
         pendingLandingMap = mapName
         lastLandingAttempt = 0
-        print("[dEnzCreator V3.3.5] Map changed; searching for floor:", mapName)
+        print("[dEnzCreator V3.3.6] Map changed; searching for floor:", mapName)
     end
 
     if not pendingLandingMap then
@@ -160,7 +160,7 @@ local function farmAnchor()
         hum:ChangeState(Enum.HumanoidStateType.GettingUp)
     end)
 
-    print("[dEnzCreator V3.3.5] Landed on map floor:", pendingLandingMap,
+    print("[dEnzCreator V3.3.6] Landed on map floor:", pendingLandingMap,
         "| X=0 Y=", targetY, "Z=", z)
     pendingLandingMap = nil
     return true
@@ -180,7 +180,7 @@ local function requestSkip()
     local folder = ReplicatedStorage:FindFirstChild("Events")
     local remote = folder and folder:FindFirstChild("SetServerSettings")
     if not remote or not remote:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.3.5] SetServerSettings RemoteEvent not found.")
+        warn("[dEnzCreator V3.3.6] SetServerSettings RemoteEvent not found.")
         return false
     end
 
@@ -190,11 +190,11 @@ local function requestSkip()
         remote:FireServer(unpack(args))
     end)
     if ok then
-        print("[dEnzCreator V3.3.5] AutoSkip request sent (timer not paused).")
+        print("[dEnzCreator V3.3.6] AutoSkip request sent (timer not paused).")
         return true
     end
 
-    warn("[dEnzCreator V3.3.5] AutoSkip error:", err)
+    warn("[dEnzCreator V3.3.6] AutoSkip error:", err)
     return false
 end
 
@@ -230,7 +230,7 @@ local function monitorGrabEatAvailability()
     end
 
     if not missingActionSkipSent and os.clock() - missingActionSince >= 3.0 then
-        warn("[dEnzCreator V3.3.5] Grab/Eat missing on", mapName,
+        warn("[dEnzCreator V3.3.6] Grab/Eat missing on", mapName,
             "- requesting automatic map skip.")
         missingActionSkipSent = true
         requestSkip()
@@ -247,7 +247,7 @@ local function switchModeIfEnabled(mapName)
         local mode = CFG.SmallMaps[key] and "Mega" or "Normal"
         if pcall(function() remote:FireServer(mode) end) then
             lastMode = key
-            print("[dEnzCreator V3.3.5] RequestTeleport:", mode, mapName)
+            print("[dEnzCreator V3.3.6] RequestTeleport:", mode, mapName)
         end
     end
 end
@@ -323,11 +323,11 @@ end
 local function sendAutoSell(events)
     local sell = events and events:FindFirstChild("Sell")
     if not sell then
-        warn("[dEnzCreator V3.3.5] Character.Events.Sell not found.")
+        warn("[dEnzCreator V3.3.6] Character.Events.Sell not found.")
         return false
     end
     if not sell:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.3.5] Sell exists but is not a RemoteEvent:", sell.ClassName)
+        warn("[dEnzCreator V3.3.6] Sell exists but is not a RemoteEvent:", sell.ClassName)
         return false
     end
 
@@ -335,11 +335,11 @@ local function sendAutoSell(events)
         sell:FireServer()
     end)
     if not ok then
-        warn("[dEnzCreator V3.3.5] AutoSell error:", err)
+        warn("[dEnzCreator V3.3.6] AutoSell error:", err)
         return false
     end
 
-    print("[dEnzCreator V3.3.5] AutoSell request sent.")
+    print("[dEnzCreator V3.3.6] AutoSell request sent.")
     return true
 end
 
@@ -432,7 +432,7 @@ local function farmStep()
         if grabEvent and eatEvent and cycleStartedAt == nil then
             cycleStartedAt = now
             completedCycleSeconds = 0
-            print("[dEnzCreator V3.3.5] Season time started: Grab/Eat menu active.")
+            print("[dEnzCreator V3.3.6] Season time started: Grab/Eat menu active.")
         end
 
         if grabEvent and eatEvent and now >= nextGrabEatActionAt then
@@ -458,7 +458,7 @@ local function farmStep()
     lastBarProgress = barProgress
 
     -- KEDADA-style overlap using a direct capacity threshold, not a time prediction.
-    -- Skip fires once at 98% of live MaxSize (or 98% of the sell bar as fallback).
+    -- Skip fires once at 99% of live MaxSize (or 99% of the sell bar as fallback).
     local skipThresholdReached =
         (size ~= nil and maxSize ~= nil and maxSize > 0 and size >= maxSize * SKIP_THRESHOLD)
         or (size == nil and barProgress ~= nil and barProgress >= SKIP_THRESHOLD)
@@ -466,7 +466,7 @@ local function farmStep()
     if skipThresholdReached and not skipSentForCycle then
         if requestSkip() then
             skipSentForCycle = true
-            print("[dEnzCreator V3.3.5] AutoSkip sent at 98% capacity; AutoSell will run at full during transition.")
+            print("[dEnzCreator V3.3.6] AutoSkip sent at 99% capacity; AutoSell will run at full during transition.")
         end
     end
 
@@ -482,12 +482,12 @@ local function farmStep()
         if barFull and cycleStartedAt ~= nil then
             completedCycleSeconds = math.max(0, now - cycleStartedAt)
             cycleStartedAt = nil
-            print("[dEnzCreator V3.3.5] Season time stopped: sell bar detected full.")
+            print("[dEnzCreator V3.3.6] Season time stopped: sell bar detected full.")
         end
         if not wasFull then
             wasFull = true
             lastSellAttempt = 0
-            print("[dEnzCreator V3.3.5] Capacity full; AutoSell during map transition.")
+            print("[dEnzCreator V3.3.6] Capacity full; AutoSell during map transition.")
         end
         if now - lastSellAttempt >= 0.45 then
             lastSellAttempt = now
@@ -501,7 +501,7 @@ local function farmStep()
             or sizeDrop or barDrop
 
         if sold then
-            print("[dEnzCreator V3.3.5] Sale/reset detected; cycle re-armed.")
+            print("[dEnzCreator V3.3.6] Sale/reset detected; cycle re-armed.")
             wasFull = false
             skipSentForCycle = false
             lastSellAttempt = 0
@@ -621,7 +621,7 @@ local function applyHiddenMap()
         end
     end
 
-    print("[dEnzCreator V3.3.5] Hidden Map ON. Map and food visuals hidden; collision untouched.")
+    print("[dEnzCreator V3.3.6] Hidden Map ON. Map and food visuals hidden; collision untouched.")
     return true
 end
 
@@ -633,11 +633,11 @@ local function setHiddenMaps(enabled)
     else
         hiddenMapsEnabled = false
         restoreHiddenMap()
-        print("[dEnzCreator V3.3.5] Hidden Map OFF. Original visuals restored.")
+        print("[dEnzCreator V3.3.6] Hidden Map OFF. Original visuals restored.")
     end
 end
 
--- dEnzCreator compact mobile panel (140 px wide).
+-- dEnzCreator compact mobile panel (120 px wide).
 local gui = Instance.new("ScreenGui")
 gui.Name = "dEnzCreator_ETW"
 gui.ResetOnSpawn = false
@@ -645,7 +645,7 @@ gui.Parent = player:WaitForChild("PlayerGui")
 
 local frame = Instance.new("Frame")
 frame.Name = "Main"
-frame.Size = UDim2.fromOffset(140, 0)
+frame.Size = UDim2.fromOffset(120, 0)
 frame.AutomaticSize = Enum.AutomaticSize.Y
 frame.Position = UDim2.new(0, 12, 0.42, 0)
 frame.BackgroundColor3 = Color3.fromRGB(20, 22, 38)
@@ -668,7 +668,7 @@ layout.Padding = UDim.new(0, 5)
 
 local header = Instance.new("Frame")
 header.LayoutOrder = 1
-header.Size = UDim2.new(1, 0, 0, 64)
+header.Size = UDim2.new(1, 0, 0, 60)
 header.BackgroundColor3 = Color3.fromRGB(37, 39, 62)
 header.BackgroundTransparency = 0
 header.BorderSizePixel = 0
@@ -679,12 +679,12 @@ headerStroke.Color = Color3.fromRGB(125, 105, 195)
 headerStroke.Thickness = 1
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -48, 0, 23)
+title.Size = UDim2.new(1, -48, 0, 22)
 title.Position = UDim2.fromOffset(6, 1)
 title.BackgroundTransparency = 1
 title.Text = "dEnzCreator"
 title.TextColor3 = Color3.new(1, 1, 1)
-title.TextSize = 11
+title.TextSize = 10
 title.Font = Enum.Font.GothamBold
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = header
@@ -713,13 +713,13 @@ Instance.new("UICorner", close).CornerRadius = UDim.new(1, 0)
 
 local runtimeBlock = Instance.new("TextLabel")
 runtimeBlock.Name = "RuntimeBlock"
-runtimeBlock.Size = UDim2.new(1, -12, 0, 34)
-runtimeBlock.Position = UDim2.fromOffset(6, 27)
+runtimeBlock.Size = UDim2.new(1, -10, 0, 32)
+runtimeBlock.Position = UDim2.fromOffset(5, 26)
 runtimeBlock.BackgroundTransparency = 1
 runtimeBlock.BorderSizePixel = 0
 runtimeBlock.Text = "Runtime: 0m 0s\nSeason time: 0m 0s"
 runtimeBlock.TextColor3 = Color3.fromRGB(240, 243, 248)
-runtimeBlock.TextSize = 8
+runtimeBlock.TextSize = 7
 runtimeBlock.Font = Enum.Font.GothamMedium
 runtimeBlock.TextXAlignment = Enum.TextXAlignment.Left
 runtimeBlock.TextYAlignment = Enum.TextYAlignment.Center
@@ -729,12 +729,12 @@ runtimeBlock.Parent = header
 local function makeToggle(label, order, color, initial, callback)
     local b = Instance.new("TextButton")
     b.LayoutOrder = order
-    b.Size = UDim2.new(1, 0, 0, 30)
+    b.Size = UDim2.new(1, 0, 0, 27)
     b.BackgroundColor3 = initial and color or Color3.fromRGB(54, 52, 76)
     b.BorderSizePixel = 0
     b.Text = label .. (initial and ": ON" or ": OFF")
     b.TextColor3 = Color3.new(1, 1, 1)
-    b.TextSize = 9
+    b.TextSize = 8
     b.Font = Enum.Font.GothamSemibold
     b.TextWrapped = true
     b.Parent = frame
@@ -936,16 +936,16 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator V3.3.5] Loaded. Dynamic Collision removed. 98% capacity Skip + AutoSell overlap enabled; Grab/Eat X12 retained.")
-print("[dEnzCreator V3.3.5] 98% threshold loaded. Skip fires at 98%; Sell runs at full during transition; default-map Z=0.")
+print("[dEnzCreator V3.3.6] Loaded. Dynamic Collision removed. 99% capacity Skip + AutoSell overlap enabled; Grab/Eat X12 retained.")
+print("[dEnzCreator V3.3.6] 99% threshold loaded. Skip fires at 99%; Sell runs at full during transition; default-map Z=0.")
 
--- V3.3.5 keeps Hidden Maps; Dynamic Collision is removed. Skip triggers at 98% live capacity; AutoSell runs at full during transition.
+-- V3.3.6 keeps Hidden Maps; Dynamic Collision is removed. Skip triggers at 99% live capacity; AutoSell runs at full during transition.
 
--- V3.3.5: Default maps use Z=0; Studville uses Z=100; Central Robloxia uses Z=700. Landing anchor remains X=0.
+-- V3.3.6: Default maps use Z=0; Studville uses Z=100; Central Robloxia uses Z=700. Landing anchor remains X=0.
 
 -- V3.3.3 retains the live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
 
 
--- V3.3.5: Combined title/timer header (140px), left-aligned title, 5x named Grab/Eat animation acceleration. Grab and post-Grab delays are each divided by 12.
+-- V3.3.6: Combined title/timer header (140px), left-aligned title, 5x named Grab/Eat animation acceleration. Grab and post-Grab delays are each divided by 12.
 
--- V3.3.5: Season time starts when map food objects are detected and stops when the sell bar reaches full.
+-- V3.3.6: Season time starts when map food objects are detected and stops when the sell bar reaches full.
