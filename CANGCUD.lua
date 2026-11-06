@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM V3.3.9 - POST-SELL Z=100 + NO-CHUNK SKIP TEST
+-- dEnzCreator ETW AUTOFARM V3.3.8 - POST-SELL RETURN POINT Z=100 + NO-FOOD AUTO-SKIP 3S
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -51,13 +51,13 @@ local SKIP_THRESHOLD = 0.995
 local pendingLandingMap = nil
 local postSellLanding = false
 local lastLandingAttempt = 0
+local landingConfirmedAt = nil -- starts the 3s no-food check only after landing
 local missingActionSince = nil
 local missingActionSkipSent = false
 local cycleStartedAt = nil
 local completedCycleSeconds = 0
 local lastNearbyFoodAt = nil
 local noFoodSkipSentForMap = false
-local foodFoundForMap = false
 local noFoodMapKey = ""
 local lastFoodScanAt = 0
 local cachedFoodNearby = false
@@ -125,6 +125,11 @@ local function farmAnchor()
         lastMap = mapName
         pendingLandingMap = mapName
         lastLandingAttempt = 0
+        landingConfirmedAt = nil
+        lastNearbyFoodAt = nil
+        noFoodSkipSentForMap = false
+        lastFoodScanAt = 0
+        cachedFoodNearby = false
         print("[dEnzCreator V3.3.6] Map changed; searching for floor:", mapName)
     end
 
@@ -169,6 +174,13 @@ local function farmAnchor()
         "| X=0 Y=", targetY, "Z=", z)
     pendingLandingMap = nil
     postSellLanding = false
+    -- Begin the no-food window only after the destination floor is confirmed.
+    landingConfirmedAt = os.clock()
+    noFoodMapKey = select(2, getMapName())
+    lastNearbyFoodAt = nil
+    noFoodSkipSentForMap = false
+    lastFoodScanAt = 0
+    cachedFoodNearby = false
     return true
 end
 
@@ -353,7 +365,7 @@ end
 -- No fixed 13-second loading delay: map readiness is inferred from live instances.
 -- The Grab/Eat loop is not gated by this detector and continues during transitions.
 local NO_FOOD_RADIUS = 100
-local NO_FOOD_CONFIRM_SECONDS = 3.0 -- test: skip only if no nearby chunk is detected within 3 seconds of map arrival
+local NO_FOOD_CONFIRM_SECONDS = 3.0
 
 local function findNearbyFood(char, root)
     local chunks = Workspace:FindFirstChild("Chunks")
@@ -372,40 +384,39 @@ local function findNearbyFood(char, root)
 end
 
 local function monitorNearbyFood(char, root)
-    local now = os.clock()
-    if now - lastFoodScanAt < 0.50 then
+    -- Do not count map-loading time: the timer starts only after farmAnchor
+    -- confirms that the character has landed on the new map's floor.
+    if not landingConfirmedAt or noFoodSkipSentForMap then
         return cachedFoodNearby
     end
-    lastFoodScanAt = now
 
-    local mapName, key = getMapName()
+    if os.clock() - lastFoodScanAt < 1 then
+        return cachedFoodNearby
+    end
+    lastFoodScanAt = os.clock()
+
+    local _, key = getMapName()
     if key ~= noFoodMapKey then
         noFoodMapKey = key
-        lastNearbyFoodAt = now -- start the 3-second window when a new map is detected
+        landingConfirmedAt = os.clock()
+        lastNearbyFoodAt = nil
         noFoodSkipSentForMap = false
-        foodFoundForMap = false
         cachedFoodNearby = false
-        print("[dEnzCreator V3.3.9] New map detected; checking for chunks for 3 seconds:", mapName)
+        lastFoodScanAt = 0
     end
 
     if findNearbyFood(char, root) then
         cachedFoodNearby = true
-        foodFoundForMap = true
-        if not noFoodSkipSentForMap then
-            print("[dEnzCreator V3.3.9] Chunk detected on", mapName, "- no no-chunk skip for this map.")
-        end
+        lastNearbyFoodAt = os.clock()
+        -- Food appeared within the landing window; disarm no-food skip for this map.
+        noFoodSkipSentForMap = true
         return true
     end
-    cachedFoodNearby = false
 
-    -- Only evaluate the arrival window. If at least one chunk appeared in
-    -- that window, keep farming this map; do not later skip due to food moving.
-    if not foodFoundForMap and not noFoodSkipSentForMap
-        and lastNearbyFoodAt ~= nil
-        and now - lastNearbyFoodAt >= NO_FOOD_CONFIRM_SECONDS then
+    cachedFoodNearby = false
+    if os.clock() - landingConfirmedAt >= NO_FOOD_CONFIRM_SECONDS then
         noFoodSkipSentForMap = true
-        warn("[dEnzCreator V3.3.9] No chunk detected within 3 seconds on", mapName,
-            "- requesting next map.")
+        warn("[dEnzCreator V3.3.8] No food detected within 3 seconds after landing; requesting AutoSkip.")
         requestSkip()
     end
 
