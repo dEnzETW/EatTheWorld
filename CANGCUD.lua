@@ -159,8 +159,10 @@ local function farmAnchor()
     if not char then return false end
 
     local mapName, key = getMapName()
-    -- Unified landing point: every map uses X=0, Z=100.
-    local z = 100
+    -- Unified landing point: every map uses X=0, Z=50.
+    -- Y remains calculated from the floor top and character dimensions so the
+    -- HumanoidRootPart stands safely on the floor instead of clipping into it.
+    local z = 50
     local mapChanged = mapName ~= lastMap
 
     -- On every map change, immediately re-seat the character on the persistent
@@ -1067,7 +1069,7 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator] Loaded. All maps use landing Z=100; Grab and post-Grab delays target 0.02s/12 each; actual timing is Heartbeat-frame-limited; 5x named Grab/Eat animation acceleration; continuous floor hold retained through map transitions.")
+print("[dEnzCreator] Loaded. All maps use landing X=0, Z=50 with Y grounded to the floor; Grab and post-Grab delays target 0.02s/12 each; actual timing is Heartbeat-frame-limited; 5x named Grab/Eat animation acceleration; continuous floor hold retained through map transitions.")
 print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
 -- V3.3.6 keeps the character seated on the dedicated floor through map transitions; Grab/Eat never waits for food detection.
