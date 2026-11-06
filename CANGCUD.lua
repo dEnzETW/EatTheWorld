@@ -114,7 +114,7 @@ local FARM_FLOOR_NAME = "dEnzCreator_FarmFloor"
 local FARM_FLOOR_SIZE = Vector3.new(2048, 10, 2048)
 local FARM_FLOOR_HALF_HEIGHT = FARM_FLOOR_SIZE.Y / 2
 local FARM_LANDING_X = 0
-local FARM_LANDING_Z = 50
+local FARM_LANDING_Z = 100
 local FARM_SURFACE_RAY_TOP = 5000
 local FARM_SURFACE_RAY_LENGTH = 10000
 local FARM_SURFACE_SCAN_INTERVAL = 0.35
@@ -156,7 +156,7 @@ local function ensureFarmFloor()
     return floor
 end
 
--- Find a broad, walkable map surface under the shared X=0, Z=50 landing point.
+-- Find a broad, walkable map surface under the shared X=0, Z=100 landing point.
 -- Original map parts are only hidden with LocalTransparencyModifier, so they
 -- remain queryable and can still provide their actual height for this scan.
 local function detectMapSurfaceTopY()
@@ -1227,7 +1227,7 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator] Loaded. All maps use landing X=0, Z=50; anchored floor Y is detected from each map surface; Grab/Eat animation acceleration 5x; Grab and post-Grab delays target 0.02s/12 each.")
+print("[dEnzCreator] Loaded. All maps use landing X=0, Z=100; anchored floor Y is detected from each map surface; Grab/Eat animation acceleration 5x; Grab and post-Grab delays target 0.02s/12 each.")
 print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
 -- V3.3.6 keeps the character seated on the dedicated floor through map transitions; Grab/Eat never waits for food detection.
