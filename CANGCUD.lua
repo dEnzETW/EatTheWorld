@@ -44,6 +44,7 @@ local DELAY_ACCELERATION = 12
 local GRAB_DELAY = GRAB_DELAY_BASE / DELAY_ACCELERATION
 local POST_GRAB_DELAY = POST_GRAB_DELAY_BASE / DELAY_ACCELERATION
 local lastSellAttempt = 0
+local sellAfterSkipAt = nil
 local wasFull = false
 local skipSentForCycle = false
 local lastSize = nil
@@ -569,11 +570,21 @@ local function farmStep()
             wasFull = true
             skipSentForCycle = false
             lastSellAttempt = 0
-            print("[dEnzCreator V3.3.6] FULL detected | Size:", size,
-                "| Live MaxSize:", maxSize, "| Bar:", barProgress)
+            -- New order: request the next map immediately at FULL, then
+            -- schedule Sell 0.02s later. Grab/Eat is intentionally NOT paused.
+            skipSentForCycle = requestSkip()
+            sellAfterSkipAt = os.clock() + 0.02
+            print("[dEnzCreator] FULL detected | Skip requested immediately; Sell scheduled in 0.02s.")
         end
-        -- Retry at a measured interval if the server has not processed a sale.
-        if os.clock() - lastSellAttempt >= 1.75 then
+
+        -- Keep Grab/Eat running continuously while the map-skip request is
+        -- processed. Send Sell after the short 0.02s offset, then retry only
+        -- if the sale/reset has not yet been observed.
+        if sellAfterSkipAt and os.clock() >= sellAfterSkipAt then
+            sellAfterSkipAt = nil
+            lastSellAttempt = os.clock()
+            sendAutoSell(events)
+        elseif not sellAfterSkipAt and os.clock() - lastSellAttempt >= 1.75 then
             lastSellAttempt = os.clock()
             sendAutoSell(events)
         end
@@ -593,7 +604,8 @@ local function farmStep()
             end
             wasFull = false
             lastSellAttempt = 0
-            print("[dEnzCreator V3.3.6] AutoSell cycle re-armed.")
+            sellAfterSkipAt = nil
+            print("[dEnzCreator] Sale/reset detected; continuous Grab/Eat cycle re-armed.")
         end
     end
 
