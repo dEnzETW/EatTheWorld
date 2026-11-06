@@ -227,8 +227,11 @@ local function fire(obj)
     end)
 end
 
-local function requestSkip()
-    if not CFG.AutoSkipAfterSell or not CFG.UseMappedSkipRemote then return false end
+local function requestSkip(forceNoEatSkip)
+    -- No-food landing skip is independent from the AutoSkip-after-Sell toggle.
+    if (not forceNoEatSkip and not CFG.AutoSkipAfterSell) or not CFG.UseMappedSkipRemote then
+        return false
+    end
 
     local folder = ReplicatedStorage:FindFirstChild("Events")
     local remote = folder and folder:FindFirstChild("SetServerSettings")
@@ -457,7 +460,7 @@ local function monitorLandingEatProgress(char, hum, root)
     if now - landingConfirmedAt >= NO_EAT_CONFIRM_SECONDS
         and now - lastNoFoodSkipAttemptAt >= NO_EAT_RETRY_INTERVAL then
         lastNoFoodSkipAttemptAt = now
-        if requestSkip() then
+        if requestSkip(true) then
             -- Keep monitoring/retrying until the map key actually changes.
             -- A successful FireServer call alone does not prove the server skipped.
             print("[dEnzCreator] No actual eating progress 3 seconds after landing; AutoSkip sent, awaiting map change:", pendingLandingMap)
@@ -607,6 +610,8 @@ local hiddenMapRoot = nil
 local hiddenMapAddedConnection = nil
 local hiddenMapGeneration = 0
 local hiddenMapScanRunning = false
+local hiddenChunksRoot = nil
+local hiddenChunksAddedConnection = nil
 
 local function isProtectedMapObject(obj, mapRoot)
     local current = obj
@@ -649,11 +654,61 @@ local function hideMapObject(obj, mapRoot)
     end
 end
 
+local function hideFoodVisual(obj)
+    if not hiddenMapsEnabled or not obj then return end
+    -- Hide only food/chunk visuals. Keep physics, touch, query and scripts intact
+    -- so the existing Grab/Eat interaction can still reach the objects.
+    if obj:IsA("BasePart") then
+        if hiddenMapOriginals[obj] == nil then
+            hiddenMapOriginals[obj] = {kind = "part", value = obj.LocalTransparencyModifier}
+        end
+        obj.LocalTransparencyModifier = 1
+    elseif obj:IsA("Decal") or obj:IsA("Texture") then
+        if hiddenMapOriginals[obj] == nil then
+            hiddenMapOriginals[obj] = {kind = "texture", value = obj.Transparency}
+        end
+        obj.Transparency = 1
+    elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") then
+        if hiddenMapOriginals[obj] == nil then
+            hiddenMapOriginals[obj] = {kind = "effect", value = obj.Enabled}
+        end
+        obj.Enabled = false
+    end
+end
+
+local function bindHiddenChunks()
+    local chunks = Workspace:FindFirstChild("Chunks")
+    if not chunks then return false end
+    if hiddenChunksRoot == chunks then return true end
+    if hiddenChunksAddedConnection then
+        pcall(function() hiddenChunksAddedConnection:Disconnect() end)
+        hiddenChunksAddedConnection = nil
+    end
+    hiddenChunksRoot = chunks
+    hiddenChunksAddedConnection = chunks.DescendantAdded:Connect(function(obj)
+        task.defer(function()
+            if hiddenMapsEnabled and hiddenChunksRoot == chunks
+                and obj and obj.Parent and obj:IsDescendantOf(chunks) then
+                hideFoodVisual(obj)
+            end
+        end)
+    end)
+    for _, obj in ipairs(chunks:GetDescendants()) do
+        hideFoodVisual(obj)
+    end
+    return true
+end
+
 local function disconnectHiddenMapRoot()
     if hiddenMapAddedConnection then
         pcall(function() hiddenMapAddedConnection:Disconnect() end)
         hiddenMapAddedConnection = nil
     end
+    if hiddenChunksAddedConnection then
+        pcall(function() hiddenChunksAddedConnection:Disconnect() end)
+        hiddenChunksAddedConnection = nil
+    end
+    hiddenChunksRoot = nil
     hiddenMapRoot = nil
     hiddenMapScanRunning = false
     -- Clearing this table releases references to every object in the old map.
@@ -742,7 +797,8 @@ local function setHiddenMaps(enabled)
     if enabled then
         hiddenMapsEnabled = true
         applyHiddenMap()
-        print("[dEnzCreator V3.3.6] Hidden Maps ON. Original map visuals hidden; food/chunks preserved.")
+        bindHiddenChunks()
+        print("[dEnzCreator V3.3.6] Hidden Maps ON. Map and food/chunk visuals hidden; Grab/Eat physics preserved.")
     else
         hiddenMapsEnabled = false
         restoreHiddenMap()
