@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM - TRANSITION FLOOR LOCK + NO-FOOD AUTOSKIP
+-- dEnzCreator ETW AUTOFARM - FRONT 50 STREAM PRIORITY + 4-MINUTE BACKGROUND STREAM
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -105,6 +105,72 @@ local function getParts()
     local root = char:FindFirstChild("HumanoidRootPart")
     local events = char:FindFirstChild("Events")
     if hum and root then return char, hum, root, events end
+end
+
+-- STREAMING PRIORITY EXPERIMENT:
+-- Request the region immediately in front of the player first, then request
+-- surrounding regions gradually over four minutes. This does not change Hide.
+local streamPriorityGeneration = 0
+local STREAM_FRONT_DISTANCE = 50
+local STREAM_BACKGROUND_DURATION = 240
+local STREAM_RING_DISTANCES = {100, 175, 250, 325, 400}
+local STREAM_DIRECTIONS = 8
+
+local function requestStreamAt(position)
+    if not player or not player.Parent then return false end
+    local ok = pcall(function()
+        player:RequestStreamAroundAsync(position, 2)
+    end)
+    return ok
+end
+
+local function startMapStreamingPriority()
+    streamPriorityGeneration = streamPriorityGeneration + 1
+    local generation = streamPriorityGeneration
+
+    task.spawn(function()
+        local _, _, root = getParts()
+        if not root then
+            root = player.Character and player.Character:WaitForChild("HumanoidRootPart", 5)
+        end
+        if not root or generation ~= streamPriorityGeneration then return end
+
+        -- First request: a point 50 studs ahead of the current facing direction.
+        local basePosition = root.Position
+        local forward = root.CFrame.LookVector
+        local frontPosition = basePosition + forward * STREAM_FRONT_DISTANCE
+        requestStreamAt(frontPosition)
+
+        if generation ~= streamPriorityGeneration then return end
+
+        -- Background requests are deliberately spread over 240 seconds.
+        -- These are streaming requests, not Hide operations or object edits.
+        local targets = {}
+        local right = root.CFrame.RightVector
+        for _, distance in ipairs(STREAM_RING_DISTANCES) do
+            for index = 0, STREAM_DIRECTIONS - 1 do
+                local angle = (2 * math.pi * index) / STREAM_DIRECTIONS
+                local direction = (forward * math.cos(angle) + right * math.sin(angle))
+                if direction.Magnitude > 0 then
+                    table.insert(targets, basePosition + direction.Unit * distance)
+                end
+            end
+        end
+
+        local interval = STREAM_BACKGROUND_DURATION / math.max(1, #targets)
+        local startedAt = os.clock()
+        for index, target in ipairs(targets) do
+            if generation ~= streamPriorityGeneration then break end
+            local dueAt = startedAt + (index - 1) * interval
+            local waitFor = dueAt - os.clock()
+            if waitFor > 0 then task.wait(waitFor) end
+            if generation ~= streamPriorityGeneration then break end
+            requestStreamAt(target)
+        end
+        if generation == streamPriorityGeneration then
+            print("[dEnzCreator] Streaming priority pass complete: front 50 first; surrounding regions requested over 240s.")
+        end
+    end)
 end
 
 
@@ -702,7 +768,7 @@ local function farmStep()
 end
 
 
--- HIDDEN MAPS: FRONT-50 FOOD PRIORITY + 4-MINUTE STAGED HIDE / BLACK FLOOR
+-- HIDDEN MAPS: FAST TRANSITION / LOW VISUAL LOAD / BLACK FLOOR
 -- KEDADA-style: hide non-food visuals under Workspace.Map only.
 -- Workspace.Chunks is deliberately untouched so food/chunk gameplay remains safe.
 -- Map visuals are hidden only; map object physics properties are unchanged.
@@ -865,85 +931,24 @@ local function bindHiddenMapRoot(mapRoot)
     if hiddenMapScanRunning then return true end
     hiddenMapScanRunning = true
     task.spawn(function()
-        local descendants = mapRoot:GetDescendants()
-        local rootPart = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-        local origin = rootPart and rootPart.Position or Vector3.new(FARM_LANDING_X, 0, FARM_LANDING_Z)
-        local forward = rootPart and rootPart.CFrame.LookVector or Vector3.new(0, 0, -1)
-
-        -- PRIORITY PASS: identify food objects in the forward 50-stud cone.
-        -- Food remains protected from map hiding; this pass records availability
-        -- without changing physics, touch, query, or the game's Grab/Eat remotes.
-        local frontFoodCount = 0
-        local background = {}
-        for _, obj in ipairs(descendants) do
-            if obj and obj.Parent then
-                if isProtectedMapObject(obj, mapRoot) then
-                    if obj:IsA("BasePart") then
-                        local offset = obj.Position - origin
-                        local distance = offset.Magnitude
-                        if distance <= 50 and distance > 0
-                            and offset.Unit:Dot(forward) >= 0.25 then
-                            frontFoodCount = frontFoodCount + 1
-                        end
-                    end
-                else
-                    local distance = 0
-                    if obj:IsA("BasePart") then
-                        distance = (obj.Position - origin).Magnitude
-                    end
-                    table.insert(background, {object = obj, distance = distance})
-                end
-            end
-        end
-
-        -- Distant decoration is hidden first. Remaining non-food visuals are
-        -- processed gradually across four minutes, in small batches.
-        table.sort(background, function(a, b)
-            return a.distance > b.distance
-        end)
-
-        local total = #background
-        local duration = 240
-        local batchSize = 120
-        local batchCount = math.max(1, math.ceil(total / batchSize))
-        local pausePerBatch = duration / batchCount
         local processed = 0
-        local startedAt = os.clock()
-
-        print("[dEnzCreator] Front-50 priority:", mapRoot.Name,
-            "| food parts in forward cone:", frontFoodCount,
-            "| background objects:", total,
-            "| staged hide window: 240s")
-
-        for i = 1, total do
+        -- Snapshot once. Small batches avoid a single large frame hitch.
+        local descendants = mapRoot:GetDescendants()
+        for i = 1, #descendants do
             if not hiddenMapsEnabled or hiddenMapRoot ~= mapRoot
                 or hiddenMapGeneration ~= generation then
                 break
             end
-            local obj = background[i].object
-            if obj and obj.Parent and obj:IsDescendantOf(mapRoot) then
+            local obj = descendants[i]
+            if obj and obj.Parent then
                 hideMapObject(obj, mapRoot)
             end
             processed = processed + 1
-
-            if processed % batchSize == 0 then
-                local elapsed = os.clock() - startedAt
-                local targetElapsed = math.min(duration,
-                    math.ceil(processed / batchSize) * pausePerBatch)
-                local waitTime = targetElapsed - elapsed
-                if waitTime > 0 then
-                    task.wait(waitTime)
-                else
-                    task.wait()
-                end
-            end
         end
-
         if hiddenMapGeneration == generation then
             hiddenMapScanRunning = false
-            print("[dEnzCreator] Front-50 / 4-minute Hide test complete:",
-                mapRoot.Name, "| objects processed:", processed,
-                "| elapsed:", math.floor(os.clock() - startedAt), "s")
+            print("[dEnzCreator V3.3.6] Map visuals hidden; dedicated farm floor active:", mapRoot.Name,
+                "| objects checked:", processed)
         end
     end)
     return true
@@ -1084,6 +1089,9 @@ end
 makeToggle("AUTOFARM", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
     CFG.Farm = on
     if on then
+        if Workspace:FindFirstChild("Map") then
+            startMapStreamingPriority()
+        end
         -- Prepare the single floor and remove map visuals in the same activation.
         ensureFarmFloor()
         setHiddenMaps(true)
@@ -1099,6 +1107,7 @@ makeToggle("AUTOFARM", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
         -- Do not wait for the next Heartbeat before the first Grab/Eat attempt.
         pcall(farmStep)
     else
+        streamPriorityGeneration = streamPriorityGeneration + 1
         setHiddenMaps(false)
         removeFarmFloor()
         pendingLandingMap = nil
@@ -1240,9 +1249,18 @@ workspaceMapConnection = Workspace.ChildAdded:Connect(function(child)
     if child.Name == "Map" then
         task.defer(function()
             if child.Parent == Workspace then
+                -- Keep existing Hide behavior unchanged; only add streaming requests.
                 if hiddenMapsEnabled then bindHiddenMapRoot(child) end
+                if CFG.Farm then startMapStreamingPriority() end
             end
         end)
+    end
+end)
+
+-- Also prioritize the current map if it already exists when the script starts.
+task.defer(function()
+    if CFG.Farm and Workspace:FindFirstChild("Map") then
+        startMapStreamingPriority()
     end
 end)
 
@@ -1288,7 +1306,7 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator] Loaded. All maps use landing X=0, Z=100; anchored floor Y is detected from each map surface; Grab/Eat animation acceleration 5x; Grab and post-Grab delays target 0.02s/12 each.")
+print("[dEnzCreator] Loaded. Front-50 streaming request first; surrounding regions requested gradually over 240s; Hide behavior unchanged; landing X=0, Z=100.")
 print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
 -- V3.3.6 keeps the character seated on the dedicated floor through map transitions; Grab/Eat never waits for food detection.
