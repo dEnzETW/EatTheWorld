@@ -702,7 +702,7 @@ local function farmStep()
 end
 
 
--- HIDDEN MAPS: FAST TRANSITION / LOW VISUAL LOAD / BLACK FLOOR
+-- HIDDEN MAPS: DISTANCE-PRIORITY EXPERIMENT / LOW VISUAL LOAD / BLACK FLOOR
 -- KEDADA-style: hide non-food visuals under Workspace.Map only.
 -- Workspace.Chunks is deliberately untouched so food/chunk gameplay remains safe.
 -- Map visuals are hidden only; map object physics properties are unchanged.
@@ -866,23 +866,45 @@ local function bindHiddenMapRoot(mapRoot)
     hiddenMapScanRunning = true
     task.spawn(function()
         local processed = 0
-        -- Snapshot once. Small batches avoid a single large frame hitch.
         local descendants = mapRoot:GetDescendants()
-        for i = 1, #descendants do
+        local rootPart = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+        local origin = rootPart and rootPart.Position or Vector3.new(FARM_LANDING_X, 0, FARM_LANDING_Z)
+
+        -- EXPERIMENT: hide distant map decoration first; nearby visuals are
+        -- processed later in small batches so the active farming area gets
+        -- less immediate work during map transition. Food/chunks stay protected.
+        local sortable = {}
+        for _, obj in ipairs(descendants) do
+            if obj and obj.Parent and obj:IsA("BasePart") then
+                local distance = (obj.Position - origin).Magnitude
+                table.insert(sortable, {object = obj, distance = distance})
+            else
+                table.insert(sortable, {object = obj, distance = 0})
+            end
+        end
+        table.sort(sortable, function(a, b)
+            return a.distance > b.distance
+        end)
+
+        local batchSize = 120
+        for i = 1, #sortable do
             if not hiddenMapsEnabled or hiddenMapRoot ~= mapRoot
                 or hiddenMapGeneration ~= generation then
                 break
             end
-            local obj = descendants[i]
+            local obj = sortable[i].object
             if obj and obj.Parent then
                 hideMapObject(obj, mapRoot)
             end
             processed = processed + 1
+            if processed % batchSize == 0 then
+                task.wait()
+            end
         end
         if hiddenMapGeneration == generation then
             hiddenMapScanRunning = false
-            print("[dEnzCreator V3.3.6] Map visuals hidden; dedicated farm floor active:", mapRoot.Name,
-                "| objects checked:", processed)
+            print("[dEnzCreator] Distance-priority Hide test complete:", mapRoot.Name,
+                "| objects checked:", processed, "| batch:", batchSize)
         end
     end)
     return true
