@@ -109,11 +109,11 @@ end
 
 
 -- One persistent farm floor, matching the KEDADA bedrock dimensions
--- recorded during the earlier script audit: 2048 x 10 x 2048 at (0, -5, 0).
+-- recorded during the earlier script audit: 2048 x 10 x 2048 at (0, 0, 0).
 -- Workspace.Chunks is deliberately left untouched so food can still spawn/be collected.
 local FARM_FLOOR_NAME = "dEnzCreator_FarmFloor"
 local FARM_FLOOR_SIZE = Vector3.new(2048, 10, 2048)
-local FARM_FLOOR_CFRAME = CFrame.new(0, -5, 0)
+local FARM_FLOOR_CFRAME = CFrame.new(0, 0, 0)
 local farmFloor = nil
 
 local function ensureFarmFloor()
