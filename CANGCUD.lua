@@ -44,7 +44,6 @@ local DELAY_ACCELERATION = 12
 local GRAB_DELAY = GRAB_DELAY_BASE / DELAY_ACCELERATION
 local POST_GRAB_DELAY = POST_GRAB_DELAY_BASE / DELAY_ACCELERATION
 local lastSellAttempt = 0
-local sellAfterSkipAt = nil
 local wasFull = false
 local skipSentForCycle = false
 local lastSize = nil
@@ -475,7 +474,7 @@ end
 
 -- Separate animation speeds: Grab is accelerated to 10x until the
 -- pre-Eat standing phase; Eat animation remains at 5x. Other tracks untouched.
-local GRAB_ANIMATION_SPEED = 10.0
+local GRAB_ANIMATION_SPEED = 5.0
 local EAT_ANIMATION_SPEED = 5.0
 local function accelerateActionAnimations(hum)
     if not hum then return end
@@ -569,22 +568,16 @@ local function farmStep()
         if not wasFull then
             wasFull = true
             skipSentForCycle = false
-            lastSellAttempt = 0
-            -- New order: request the next map immediately at FULL, then
-            -- schedule Sell 0.02s later. Grab/Eat is intentionally NOT paused.
-            skipSentForCycle = requestSkip()
-            sellAfterSkipAt = os.clock() + 0.02
-            print("[dEnzCreator] FULL detected | Skip requested immediately; Sell scheduled in 0.02s.")
-        end
-
-        -- Keep Grab/Eat running continuously while the map-skip request is
-        -- processed. Send Sell after the short 0.02s offset, then retry only
-        -- if the sale/reset has not yet been observed.
-        if sellAfterSkipAt and os.clock() >= sellAfterSkipAt then
-            sellAfterSkipAt = nil
             lastSellAttempt = os.clock()
+
+            -- Requested order: detect FULL -> Sell immediately -> Skip
+            -- immediately. Do not add a wait between either remote call.
             sendAutoSell(events)
-        elseif not sellAfterSkipAt and os.clock() - lastSellAttempt >= 1.75 then
+            skipSentForCycle = requestSkip()
+            print("[dEnzCreator] FULL detected | Sell sent, then Skip sent with no added delay.")
+        elseif os.clock() - lastSellAttempt >= 1.75 then
+            -- Retry Sell if the full state persists; do not repeatedly send
+            -- Skip for the same full-bar cycle.
             lastSellAttempt = os.clock()
             sendAutoSell(events)
         end
@@ -604,7 +597,6 @@ local function farmStep()
             end
             wasFull = false
             lastSellAttempt = 0
-            sellAfterSkipAt = nil
             print("[dEnzCreator] Sale/reset detected; continuous Grab/Eat cycle re-armed.")
         end
     end
