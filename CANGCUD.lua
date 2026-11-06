@@ -60,6 +60,8 @@ local noFoodSkipSentForMap = false
 local noFoodMapKey = ""
 local lastFoodScanAt = 0
 local cachedFoodNearby = false
+local landingSizeBaseline = nil
+local landingBarBaseline = nil
 local lastMissingActionMap = ""
 local hiddenMapsEnabled = false
 local hiddenMapOriginals = {}
@@ -175,6 +177,8 @@ local function farmAnchor()
         noFoodSkipSentForMap = false
         lastFoodScanAt = 0
         cachedFoodNearby = false
+        landingSizeBaseline = nil
+        landingBarBaseline = nil
         lastLandingAttempt = 0
         print("[dEnzCreator] Map transition detected; holding character at floor:", mapName)
     end
@@ -392,81 +396,73 @@ local function sendAutoSell(events)
     return true
 end
 
--- Detect collectible food/chunks close to the character from live Workspace.Chunks state.
--- The 3-second no-food timer starts only after physical floor contact is confirmed.
--- Grab/Eat continues independently; this detector never pauses the farming loop.
-local NO_FOOD_RADIUS = 100
-local NO_FOOD_CONFIRM_SECONDS = 3.0
-local NO_FOOD_SCAN_INTERVAL = 0.25
+-- Detect REAL eating progress after a confirmed landing.
+-- Sending Grab/Eat remotes is not proof that food was eaten, so this watches
+-- the character Size value and sell-bar progress for an actual increase.
+-- The 3-second timer starts only after the character is physically on the floor.
+local NO_EAT_CONFIRM_SECONDS = 3.0
+local NO_EAT_RETRY_INTERVAL = 1.5
+local EAT_SIZE_EPSILON = 0.000001
+local EAT_BAR_EPSILON = 0.005
 
-local function findNearbyFood(char, root)
-    local chunks = Workspace:FindFirstChild("Chunks")
-    if not chunks then return false end
-
-    local radiusSquared = NO_FOOD_RADIUS * NO_FOOD_RADIUS
-    for _, obj in ipairs(chunks:GetDescendants()) do
-        if obj:IsA("BasePart") and obj.Parent and obj:IsDescendantOf(chunks) then
-            local delta = obj.Position - root.Position
-            if delta:Dot(delta) <= radiusSquared then
-                return true
-            end
-        end
-    end
-    return false
-end
-
-local function monitorNearbyFood(char, hum, root)
+local function monitorLandingEatProgress(char, hum, root)
     if not pendingLandingMap or noFoodSkipSentForMap then
         return false
     end
 
-    local _, key = getMapName()
+    local mapName, key = getMapName()
     if key ~= noFoodMapKey then
-        -- A new map key always gets a fresh landing confirmation and timer.
         noFoodMapKey = key
-        pendingLandingMap = select(1, getMapName())
+        pendingLandingMap = mapName
         landingConfirmedAt = nil
         lastNoFoodSkipAttemptAt = 0
-        lastNearbyFoodAt = nil
+        landingSizeBaseline = nil
+        landingBarBaseline = nil
         noFoodSkipSentForMap = false
-        cachedFoodNearby = false
-        lastFoodScanAt = 0
-    end
-
-    -- FloorMaterial is updated by physics after contact. Do not start the
-    -- timer merely because farmAnchor() moved the character to the floor.
-    if not landingConfirmedAt then
-        -- Allow at least one physics update after the floor-lock teleport so
-        -- stale FloorMaterial from the previous map cannot start the timer.
-        if os.clock() - lastLandingAttempt < 0.15
-            or hum.FloorMaterial == Enum.Material.Air then
-            return false
-        end
-        landingConfirmedAt = os.clock()
-        lastFoodScanAt = 0
-        print("[dEnzCreator] Landing confirmed; checking for food for 3 seconds:", pendingLandingMap)
     end
 
     local now = os.clock()
-    if now - lastFoodScanAt >= NO_FOOD_SCAN_INTERVAL then
-        lastFoodScanAt = now
-        cachedFoodNearby = findNearbyFood(char, root)
+    if not landingConfirmedAt then
+        local floor = ensureFarmFloor()
+        local floorTop = floor.Position.Y + floor.Size.Y / 2
+        local expectedRootY = floorTop + hum.HipHeight + root.Size.Y / 2 + 0.08
+        local onFloor = hum.FloorMaterial ~= Enum.Material.Air
+            and math.abs(root.Position.Y - expectedRootY) <= 1.0
+        if not onFloor or now - lastLandingAttempt < 0.15 then
+            return false
+        end
+
+        landingConfirmedAt = now
+        landingSizeBaseline = select(1, getCapacityState(char))
+        landingBarBaseline = getSellBarProgress()
+        print("[dEnzCreator] Landing confirmed; monitoring actual eating for 3 seconds:", pendingLandingMap)
+        return false
     end
 
-    if cachedFoodNearby then
+    local currentSize = select(1, getCapacityState(char))
+    local currentBar = getSellBarProgress()
+    local sizeIncreased = currentSize ~= nil and landingSizeBaseline ~= nil
+        and currentSize > landingSizeBaseline + EAT_SIZE_EPSILON
+    local barIncreased = currentBar ~= nil and landingBarBaseline ~= nil
+        and currentBar > landingBarBaseline + EAT_BAR_EPSILON
+
+    if sizeIncreased or barIncreased then
         noFoodSkipSentForMap = true
         pendingLandingMap = nil
-        lastNearbyFoodAt = now
-        print("[dEnzCreator] Food detected within 100 studs; no-food AutoSkip cancelled for this map.")
+        print("[dEnzCreator] Actual eating progress detected; no-food AutoSkip cancelled for this map.",
+            sizeIncreased and "Size increased" or "sell bar increased")
         return true
     end
 
-    if now - landingConfirmedAt >= NO_FOOD_CONFIRM_SECONDS
-        and now - lastNoFoodSkipAttemptAt >= 1.5 then
+    if now - landingConfirmedAt >= NO_EAT_CONFIRM_SECONDS
+        and now - lastNoFoodSkipAttemptAt >= NO_EAT_RETRY_INTERVAL then
         lastNoFoodSkipAttemptAt = now
         if requestSkip() then
-            noFoodSkipSentForMap = true
-            print("[dEnzCreator] No food within 100 studs after 3 seconds; AutoSkip requested:", pendingLandingMap)
+            -- Keep monitoring/retrying until the map key actually changes.
+            -- A successful FireServer call alone does not prove the server skipped.
+            print("[dEnzCreator] No actual eating progress 3 seconds after landing; AutoSkip sent, awaiting map change:", pendingLandingMap)
+        else
+            warn("[dEnzCreator] No-eat AutoSkip request failed; will retry while this map remains active.")
         end
     end
 
@@ -501,12 +497,7 @@ local function farmStep()
     farmAnchor()
     accelerateActionAnimations(hum)
 
-    local foodNearby = monitorNearbyFood(char, hum, root)
-    if foodNearby and pendingLandingMap then
-        print("[dEnzCreator V3.3.6] Food detected after transition; character remained on farm floor:",
-            pendingLandingMap)
-        pendingLandingMap = nil
-    end
+    monitorLandingEatProgress(char, hum, root)
     -- Re-assert the floor lock after food detection, without pausing Grab/Eat.
     farmAnchor()
 
