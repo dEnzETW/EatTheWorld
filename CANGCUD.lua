@@ -1,9 +1,8 @@
--- dEnzCreator ETW AUTOFARM V3.3.25 - COMMON X0 Z100 + BLACK MAP VISUALS
+-- dEnzCreator ETW AUTOFARM V3.3.4 - BLACK FLOOR / TRANSITION
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
--- Sell and SkipMaps are requested together at full capacity; Sell retries continue until reset.
--- HiddenMaps follows KEDADA: turn non-food Map parts black; keep Chunks and food visuals.
--- Chunks and food visuals remain protected; Grab/Eat never pause during map transition.
+-- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
+-- Skip request uses Paused=false. No fixed map countdowns or artificial waits.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -15,9 +14,12 @@ if not player then return end
 
 local CFG = {
     Farm = false,
-    DefaultZ = 100,
+    DefaultZ = 0,
+    CentralRobloxiaZ = 700,
+    StudvilleZ = 100,
     AutoSkipAfterSell = true,
     UseMappedSkipRemote = true,
+    AutoMapModeSwitch = false,
     SmallMaps = {
         ["raven rock"]=true, ["glass houses"]=true, ["courtyard"]=true,
         ["blox city"]=true, ["jungle"]=true, ["community construction"]=true,
@@ -34,56 +36,40 @@ local CFG = {
 local running, lastMap, lastMode = true, "", ""
 local lastFoodAction = 0
 local grabEatPhase = "grab"
-local eatCallsRemaining = 0
 local nextGrabEatActionAt = 0
 local GRAB_DELAY_BASE = 0.04
-local POST_GRAB_DELAY_BASE = 0.03 -- requested shorter pause between Grab and Eat
+local POST_GRAB_DELAY_BASE = 0.04
 local DELAY_ACCELERATION = 12
 local GRAB_DELAY = GRAB_DELAY_BASE / DELAY_ACCELERATION
-local POST_GRAB_DELAY = POST_GRAB_DELAY_BASE
-local EAT_TOTAL_WINDOW = 0.02 -- spread all 3 Eat calls across 20 ms total
-local EAT_CALL_INTERVAL = EAT_TOTAL_WINDOW / 2 -- 10 ms between call 1->2 and 2->3
+local POST_GRAB_DELAY = POST_GRAB_DELAY_BASE / DELAY_ACCELERATION
 local lastSellAttempt = 0
 local wasFull = false
 local skipSentForCycle = false
-local sellPending = false
-local sellBaselineSize = nil
-local sellBaselineBar = nil
-local sellAttempts = 0
-local skipRequestPending = false
-local lastSkipRetry = 0
-local lastObservedSize = nil
-local lastObservedBar = nil
-local SELL_RETRY_INTERVAL = 0.05 -- requested fast Sell retry cadence
-local SELL_MAX_ATTEMPTS = math.huge -- continue while full; stop after sale is confirmed
-local SELL_RESET_EPSILON = 0.01
 local lastSize = nil
 local lastBarProgress = nil
-local SKIP_THRESHOLD = 0.9999
-local SELL_TRIGGER_THRESHOLD = 0.9999
 local pendingLandingMap = nil
 local lastLandingAttempt = 0
 local missingActionSince = nil
 local missingActionSkipSent = false
-local landedAt = nil
-local landedMapKey = ""
-local landedBaselineSize = nil
 local cycleStartedAt = nil
 local completedCycleSeconds = 0
 local lastNearbyFoodAt = nil
+local noFoodSkipSentForMap = false
+local noFoodMapKey = ""
+local lastFoodScanAt = 0
+local cachedFoodNearby = false
 local lastMissingActionMap = ""
 local hiddenMapsEnabled = false
 local hiddenMapOriginals = {}
 local hiddenMapConnections = {}
 local workspaceMapConnection = nil
-
--- Fast map-card picker: the leftmost card is Robloxia Tengah and must be avoided.
-local mapPickArmed = false
-local mapPickDeadline = 0
-local mapPickNextScan = 0
-local mapPickCompleted = false
-local MAP_PICK_TIMEOUT = 20
-local MAP_PICK_SCAN_INTERVAL = 0.05
+local dynamicCollisionEnabled = false
+local collisionOriginals = {}
+local collisionMapRoot = nil
+local collisionMapAddedConnection = nil
+local lastCollisionUpdate = 0
+local collisionUpdateInterval = 0.15
+local collisionGroundParts = {}
 
 local function norm(v)
     return string.lower(tostring(v or "")):gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " ")
@@ -128,60 +114,61 @@ local function farmAnchor()
     if not char then return false end
 
     local mapName, key = getMapName()
+    local isCentral = key == "central robloxia" or key == "robloxia tengah"
+        or key == "central robloxia map"
+    local isStudville = key == "studville"
+    local z = isCentral and CFG.CentralRobloxiaZ
+        or (isStudville and CFG.StudvilleZ or CFG.DefaultZ)
     local mapChanged = mapName ~= lastMap
 
+    -- Do not continuously overwrite the character CFrame every Heartbeat.
+    -- Wait for actual map floor collision, then teleport once onto that floor.
     if mapChanged then
         lastMap = mapName
         pendingLandingMap = mapName
         lastLandingAttempt = 0
-        landedAt = nil
-        landedMapKey = key
-        landedBaselineSize = nil
-        missingActionSince = nil
-        missingActionSkipSent = false
-        mapPickArmed = false
-        mapPickCompleted = false
-        mapPickNextScan = 0
-        skipSentForCycle = false
-        skipRequestPending = false
-        sellPending = false
-        sellAttempts = 0
-        print("[dEnzCreator V3.3.25] Map changed:", mapName, "| common landing X=0 Z=100")
+        print("[dEnzCreator V3.3.4] Map changed; searching for floor:", mapName)
     end
-    if not pendingLandingMap then return true end
-    if os.clock() - lastLandingAttempt < 0.10 then return false end
-    lastLandingAttempt = os.clock()
 
-    -- Every map uses the same X/Z anchor. Y is resolved from the actual floor.
-    local destinationXZ = Vector3.new(0, 0, CFG.DefaultZ)
+    if not pendingLandingMap then
+        return true
+    end
+
+    -- Retry only while the destination floor is not available; no fixed wait.
+    if os.clock() - lastLandingAttempt < 0.10 then
+        return false
+    end
+    lastLandingAttempt = os.clock()
 
     local params = RaycastParams.new()
     params.FilterType = Enum.RaycastFilterType.Exclude
     params.FilterDescendantsInstances = {char}
     params.IgnoreWater = true
-    local origin = Vector3.new(destinationXZ.X, 5000, destinationXZ.Z)
+
+    local origin = Vector3.new(0, 5000, z)
     local result = Workspace:Raycast(origin, Vector3.new(0, -10000, 0), params)
+
+    -- Ignore the script's own artificial bedrock if present.
     local bedrock = Workspace:FindFirstChild("bedrock")
     if result and bedrock and result.Instance == bedrock then
-        local exclusions = {char, bedrock}
-        params.FilterDescendantsInstances = exclusions
+        params.FilterDescendantsInstances = {char, bedrock}
         result = Workspace:Raycast(origin, Vector3.new(0, -10000, 0), params)
     end
-    if not result then return false end
+
+    if not result then
+        return false
+    end
 
     local targetY = result.Position.Y + hum.HipHeight + root.Size.Y / 2 + 0.15
     root.AssemblyLinearVelocity = Vector3.zero
     root.AssemblyAngularVelocity = Vector3.zero
-    root.CFrame = CFrame.new(destinationXZ.X, targetY, destinationXZ.Z)
-    pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
-    print("[dEnzCreator V3.3.25] Landing:", pendingLandingMap,
-        "| X=", destinationXZ.X, "Y=", targetY, "Z=", destinationXZ.Z)
-    landedAt = os.clock()
-    landedMapKey = key
-    local sizeObj = char:FindFirstChild("Size")
-    landedBaselineSize = sizeObj and tonumber(sizeObj.Value) or nil
-    missingActionSince = landedAt
-    missingActionSkipSent = false
+    root.CFrame = CFrame.new(0, targetY, z)
+    pcall(function()
+        hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+    end)
+
+    print("[dEnzCreator V3.3.4] Landed on map floor:", pendingLandingMap,
+        "| X=0 Y=", targetY, "Z=", z)
     pendingLandingMap = nil
     return true
 end
@@ -200,7 +187,7 @@ local function requestSkip()
     local folder = ReplicatedStorage:FindFirstChild("Events")
     local remote = folder and folder:FindFirstChild("SetServerSettings")
     if not remote or not remote:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.3.15] SetServerSettings RemoteEvent not found.")
+        warn("[dEnzCreator V3.3.4] SetServerSettings RemoteEvent not found.")
         return false
     end
 
@@ -210,200 +197,67 @@ local function requestSkip()
         remote:FireServer(unpack(args))
     end)
     if ok then
-        if not mapPickArmed and not mapPickCompleted then
-            mapPickArmed = true
-            mapPickDeadline = os.clock() + MAP_PICK_TIMEOUT
-            mapPickNextScan = 0
-        end
-        print("[dEnzCreator V3.3.24] AutoSkip request sent; verified non-central map selection armed.")
+        print("[dEnzCreator V3.3.4] AutoSkip request sent (timer not paused).")
         return true
     end
 
-    warn("[dEnzCreator V3.3.15] AutoSkip error:", err)
+    warn("[dEnzCreator V3.3.4] AutoSkip error:", err)
     return false
 end
 
-
-local function isGuiTreeVisible(obj)
-    local node = obj
-    while node do
-        if node:IsA("GuiObject") and not node.Visible then return false end
-        if node:IsA("LayerCollector") and not node.Enabled then return false end
-        node = node.Parent
-    end
-    return true
-end
-
-local function findNextMapPrompt(pg)
-    for _, obj in ipairs(pg:GetDescendants()) do
-        if (obj:IsA("TextLabel") or obj:IsA("TextButton")) and isGuiTreeVisible(obj) then
-            local txt = norm(obj.Text)
-            if txt:find("pilih peta berikutnya", 1, true) then
-                return obj
-            end
-        end
-    end
-    return nil
-end
-
-local function collectMapCardButtons(pg, prompt)
-    local promptY = prompt.AbsolutePosition.Y + prompt.AbsoluteSize.Y * 0.5
-    local raw = {}
-    for _, obj in ipairs(pg:GetDescendants()) do
-        if obj:IsA("GuiButton") and isGuiTreeVisible(obj) then
-            local size = obj.AbsoluteSize
-            local pos = obj.AbsolutePosition
-            local cx = pos.X + size.X * 0.5
-            local cy = pos.Y + size.Y * 0.5
-            -- Map cards are the large horizontal buttons above the prompt.
-            -- This excludes the lower Skip button and small HUD controls.
-            if size.X >= 130 and size.X <= 600
-                and size.Y >= 80 and size.Y <= 380
-                and cy < promptY - 4 and cy > promptY - 500 then
-                table.insert(raw, {button = obj, x = cx, y = cy, area = size.X * size.Y})
-            end
-        end
-    end
-
-    -- Collapse nested/overlapping GuiButtons belonging to the same card.
-    table.sort(raw, function(a, b) return a.area > b.area end)
-    local cards = {}
-    for _, item in ipairs(raw) do
-        local duplicate = false
-        for _, kept in ipairs(cards) do
-            if math.abs(item.x - kept.x) < 90 and math.abs(item.y - kept.y) < 90 then
-                duplicate = true
-                break
-            end
-        end
-        if not duplicate then table.insert(cards, item) end
-    end
-    table.sort(cards, function(a, b) return a.x < b.x end)
-    return cards
-end
-
-local function getCardTitle(pg, card)
-    local b = card.button
-    local bp, bs = b.AbsolutePosition, b.AbsoluteSize
-    local best, bestScore = "", -math.huge
-    for _, obj in ipairs(pg:GetDescendants()) do
-        if (obj:IsA("TextLabel") or obj:IsA("TextButton")) and isGuiTreeVisible(obj) then
-            local txt = norm(obj.Text)
-            if txt ~= "" and not txt:find("pilih peta berikutnya", 1, true) then
-                local p, z = obj.AbsolutePosition, obj.AbsoluteSize
-                local cx, cy = p.X + z.X * 0.5, p.Y + z.Y * 0.5
-                local inside = cx >= bp.X - 4 and cx <= bp.X + bs.X + 4
-                    and cy >= bp.Y - 4 and cy <= bp.Y + bs.Y + 4
-                if inside then
-                    -- Prefer the larger, prominent title text on the card.
-                    local score = math.min(z.X * z.Y, 1000000) + (#txt * 100)
-                    if score > bestScore then best, bestScore = txt, score end
-                end
-            end
-        end
-    end
-    return best
-end
-
-local function isCentralMapTitle(title)
-    local t = norm(title)
-    local compact = t:gsub("[^%w]", "")
-    return (t:find("middle robloxia", 1, true) ~= nil)
-        or (t:find("robloxia tengah", 1, true) ~= nil)
-        or (t:find("central robloxia", 1, true) ~= nil)
-        or compact:find("middlerobloxia", 1, true) ~= nil
-        or compact:find("robloxiatengah", 1, true) ~= nil
-        or compact:find("centralrobloxia", 1, true) ~= nil
-end
-
-local function selectNonCentralMapStep()
-    if not mapPickArmed or mapPickCompleted then return end
-    local now = os.clock()
-    if now > mapPickDeadline then
-        mapPickArmed = false
-        warn("[dEnzCreator V3.3.15] Map picker timed out; no verified non-central card was activated.")
-        return
-    end
-    if now < mapPickNextScan then return end
-    mapPickNextScan = now + MAP_PICK_SCAN_INTERVAL
-
-    local pg = player:FindFirstChildOfClass("PlayerGui")
-    if not pg then return end
-    local prompt = findNextMapPrompt(pg)
-    if not prompt then return end
-
-    local cards = collectMapCardButtons(pg, prompt)
-    if #cards < 2 then return end
-
-    -- Do not blindly activate card #2. Read the visible title associated with
-    -- each card, reject Middle/Robloxia Tengah, and choose the leftmost verified
-    -- alternative. If a title cannot be read, wait rather than risk a wrong map.
-    for i = 1, #cards do
-        local title = getCardTitle(pg, cards[i])
-        local cardHasCentralText = false
-        local b = cards[i].button
-        local bp, bs = b.AbsolutePosition, b.AbsoluteSize
-        for _, obj in ipairs(pg:GetDescendants()) do
-            if (obj:IsA("TextLabel") or obj:IsA("TextButton")) and isGuiTreeVisible(obj) then
-                local p, z = obj.AbsolutePosition, obj.AbsoluteSize
-                local cx, cy = p.X + z.X * 0.5, p.Y + z.Y * 0.5
-                local inside = cx >= bp.X - 4 and cx <= bp.X + bs.X + 4
-                    and cy >= bp.Y - 4 and cy <= bp.Y + bs.Y + 4
-                if inside and isCentralMapTitle(obj.Text) then
-                    cardHasCentralText = true
-                    break
-                end
-            end
-        end
-        if title ~= "" and not cardHasCentralText and not isCentralMapTitle(title) then
-            local target = cards[i].button
-            local ok, err = pcall(function() target:Activate() end)
-            if not ok and type(firesignal) == "function" then
-                ok, err = pcall(firesignal, target.Activated)
-            end
-            if ok then
-                mapPickCompleted = true
-                mapPickArmed = false
-                print("[dEnzCreator V3.3.24] Selected verified non-central map:", title)
-                return
-            else
-                warn("[dEnzCreator V3.3.15] Map card activation failed:", err)
-            end
-        end
-    end
-end
-
--- Start the 3-second no-food watchdog only AFTER successful landing.
--- A real Size increase confirms eating activity and cancels the watchdog.
+-- If this map/character does not expose both Grab and Eat, request a map
+-- transition after a short confirmation window. This avoids reacting to a
+-- brief character respawn or map-loading gap.
 local function monitorGrabEatAvailability()
-    if not landedAt or missingActionSkipSent then return end
     local char = player.Character
     if not char then return end
-    local _, key = getMapName()
-    if key ~= landedMapKey then return end
 
-    local sizeObj = char:FindFirstChild("Size")
-    local currentSize = sizeObj and tonumber(sizeObj.Value) or nil
-    if currentSize ~= nil and landedBaselineSize == nil then
-        landedBaselineSize = currentSize
-    elseif currentSize ~= nil and landedBaselineSize ~= nil
-        and currentSize > landedBaselineSize then
-        landedBaselineSize = currentSize
-        landedAt = nil
+    local mapName = getMapName()
+    local _, key = getMapName()
+    if key ~= lastMissingActionMap then
+        lastMissingActionMap = key
         missingActionSince = nil
+        missingActionSkipSent = false
+    end
+
+    local events = char:FindFirstChild("Events")
+    local grab = events and events:FindFirstChild("Grab")
+    local eat = events and events:FindFirstChild("Eat")
+    local ready = grab ~= nil and eat ~= nil
+
+    if ready then
+        missingActionSince = nil
+        missingActionSkipSent = false
         return
     end
 
-    if os.clock() - landedAt >= 3.0 then
-        warn("[dEnzCreator V3.3.25] No Size growth 3s after landing on", key,
+    if not missingActionSince then
+        missingActionSince = os.clock()
+        return
+    end
+
+    if not missingActionSkipSent and os.clock() - missingActionSince >= 3.0 then
+        warn("[dEnzCreator V3.3.4] Grab/Eat missing on", mapName,
             "- requesting automatic map skip.")
         missingActionSkipSent = true
-        landedAt = nil
         requestSkip()
     end
 end
 
--- Optional RequestTeleport mode-switch remote removed in this stabilization build.
+local function switchModeIfEnabled(mapName)
+    if not CFG.AutoMapModeSwitch then return end
+    local key = norm(mapName)
+    if key == "" or key == lastMode then return end
+    local folder = ReplicatedStorage:FindFirstChild("Events")
+    local remote = folder and folder:FindFirstChild("RequestTeleport")
+    if remote and remote:IsA("RemoteEvent") then
+        local mode = CFG.SmallMaps[key] and "Mega" or "Normal"
+        if pcall(function() remote:FireServer(mode) end) then
+            lastMode = key
+            print("[dEnzCreator V3.3.4] RequestTeleport:", mode, mapName)
+        end
+    end
+end
 
 -- Visual bar detector: locate the "Klik untuk menjual" label and inspect
 -- green fill elements near that label. No fixed size/upgrade number is used.
@@ -473,133 +327,84 @@ local function getCapacityState(char)
     return size, maxSize, numericFull
 end
 
--- Sell/transition state machine.
--- Full is detected from either live Size/MaxSize ratio or the visible green bar.
--- After sending Sell (or noticing a manual sell), wait for a real reset before
--- requesting the next map. This prevents the previous bug: sending skip while
--- the inventory is still full, or never sending skip after a manual sale.
-local function monitorSellAndSkip(char, events)
-    local now = os.clock()
-    local size, maxSize, numericFull = getCapacityState(char)
-    local bar = getSellBarProgress()
-
-    local numericRatio = nil
-    if size ~= nil and maxSize ~= nil and maxSize > 0 then
-        numericRatio = math.clamp(size / maxSize, 0, 1.5)
+local function sendAutoSell(events)
+    local sell = events and events:FindFirstChild("Sell")
+    if not sell then
+        warn("[dEnzCreator V3.3.4] Character.Events.Sell not found.")
+        return false
+    end
+    if not sell:IsA("RemoteEvent") then
+        warn("[dEnzCreator V3.3.4] Sell exists but is not a RemoteEvent:", sell.ClassName)
+        return false
     end
 
-    -- 99.99% trigger. Prefer live Size/MaxSize; use the visual bar only
-    -- when numeric capacity values are unavailable.
-    local ratio = numericRatio
-    if ratio == nil then ratio = bar end
-    local isFull = (ratio ~= nil and ratio >= 0.9999) or numericFull == true
-
-    -- A sale can be performed by AutoSell or manually. Detect the actual
-    -- inventory/bar reset, then request the next map exactly once.
-    if sellPending then
-        local sizeReset = sellBaselineSize ~= nil and size ~= nil
-            and size < sellBaselineSize - math.max(1, sellBaselineSize * 0.005)
-        local barReset = sellBaselineBar ~= nil and bar ~= nil
-            and (bar <= 0.10 or bar < sellBaselineBar - 0.15)
-        local numericReset = numericRatio ~= nil and numericRatio < 0.10
-
-        if sizeReset or barReset or numericReset then
-            print("[dEnzCreator V3.3.24] SELL CONFIRMED",
-                "| Size:", size, "| MaxSize:", maxSize,
-                "| Ratio:", ratio, "| Bar:", bar)
-            sellPending = false
-            wasFull = false
-            sellAttempts = 0
-            lastSellAttempt = 0
-            sellBaselineSize = nil
-            sellBaselineBar = nil
-            cycleStartedAt = nil
-            completedCycleSeconds = 0
-
-            -- SkipMaps was requested concurrently when the bar first became full.
-            -- Do not send a second map request after the sale confirmation.
-            lastObservedSize = size
-            lastObservedBar = bar
-            return
-        end
+    local ok, err = pcall(function()
+        sell:FireServer()
+    end)
+    if not ok then
+        warn("[dEnzCreator V3.3.4] AutoSell error:", err)
+        return false
     end
 
-    if isFull then
-        if not wasFull then
-            wasFull = true
-            sellPending = true
-            sellBaselineSize = size
-            sellBaselineBar = bar
-            sellAttempts = 0
-            lastSellAttempt = 0
-            print("[dEnzCreator V3.3.24] FULL DETECTED",
-                "| Size:", size, "| MaxSize:", maxSize,
-                "| Ratio:", ratio, "| Bar:", bar,
-                "| Sell remote:", events and events:FindFirstChild("Sell") ~= nil)
-            -- KEDADA-like overlap: request next map immediately; do not wait for Sell reset.
-            if not skipSentForCycle then
-                if requestSkip() then
-                    skipSentForCycle = true
-                    print("[dEnzCreator V3.3.24] SkipMaps sent concurrently with Sell.")
-                else
-                    skipRequestPending = true
-                    lastSkipRetry = 0
-                    warn("[dEnzCreator V3.3.24] SkipMaps queued for retry while Sell continues.")
-                end
-            end
-        end
-
-        -- Keep retrying Sell every 0.05s while capacity remains full.
-        -- A successful local FireServer call is NOT treated as a confirmed sale.
-        if now - lastSellAttempt >= SELL_RETRY_INTERVAL then
-            lastSellAttempt = now
-            sellAttempts = sellAttempts + 1
-            local sell = events and events:FindFirstChild("Sell")
-            if not sell then
-                warn("[dEnzCreator V3.3.24] SELL ATTEMPT", sellAttempts,
-                    "FAILED: Character.Events.Sell missing.")
-            elseif not sell:IsA("RemoteEvent") then
-                warn("[dEnzCreator V3.3.24] SELL ATTEMPT", sellAttempts,
-                    "FAILED: Sell is", sell.ClassName, "not RemoteEvent.")
-            else
-                local ok, err = pcall(function()
-                    sell:FireServer()
-                end)
-                if ok then
-                    print("[dEnzCreator V3.3.24] SELL ATTEMPT", sellAttempts,
-                        "sent | Size:", size, "| MaxSize:", maxSize,
-                        "| Ratio:", ratio, "| Bar:", bar)
-                else
-                    warn("[dEnzCreator V3.3.24] SELL ATTEMPT", sellAttempts,
-                        "ERROR:", err)
-                end
-            end
-        end
-    elseif not sellPending then
-        wasFull = false
-    end
-
-    -- Keep queued SkipMaps requests retrying independently of AutoSell.
-    if skipRequestPending and now - lastSkipRetry >= 1.0 then
-        lastSkipRetry = now
-        if requestSkip() then
-            skipSentForCycle = true
-            skipRequestPending = false
-            print("[dEnzCreator V3.3.24] SkipMaps retry sent.")
-        end
-    end
-
-    lastObservedSize = size
-    lastObservedBar = bar
+    print("[dEnzCreator V3.3.4] AutoSell request sent.")
+    return true
 end
 
--- Food polling removed: Grab/Eat runs continuously like KEDADA; no undefined scanner gate.
+-- Detect collectible food/chunks close to the character from live Workspace.Chunks state.
+-- No fixed 13-second loading delay: map readiness is inferred from live instances.
+-- The Grab/Eat loop is not gated by this detector and continues during transitions.
+local NO_FOOD_RADIUS = 100
+local NO_FOOD_CONFIRM_SECONDS = nil -- disabled temporarily
 
--- Target: reduce the observed 3.5s Grab/Eat body animation to about 2.0s.
--- Existing 5x setting is scaled by 3.5/2 = 1.75, giving 8.75x.
--- Only tracks explicitly named Grab/Eat are affected.
--- Do not hook AnimationPlayed or affect other actions.
-local ACTION_ANIMATION_SPEED = 8.75
+local function findNearbyFood(char, root)
+    local chunks = Workspace:FindFirstChild("Chunks")
+    if not chunks then return false end
+
+    local radiusSquared = NO_FOOD_RADIUS * NO_FOOD_RADIUS
+    for _, obj in ipairs(chunks:GetDescendants()) do
+        if obj:IsA("BasePart") and obj.Parent and obj:IsDescendantOf(chunks) then
+            local delta = obj.Position - root.Position
+            if delta:Dot(delta) <= radiusSquared then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+local function monitorNearbyFood(char, root)
+    if os.clock() - lastFoodScanAt < 1 then
+        return cachedFoodNearby
+    end
+    lastFoodScanAt = os.clock()
+    local _, key = getMapName()
+    if key ~= noFoodMapKey then
+        noFoodMapKey = key
+        lastNearbyFoodAt = nil
+        noFoodSkipSentForMap = false
+        cachedFoodNearby = false
+        lastFoodScanAt = 0
+    end
+
+    if findNearbyFood(char, root) then
+        cachedFoodNearby = true
+        lastNearbyFoodAt = os.clock()
+        return true
+    end
+    cachedFoodNearby = false
+
+    if not lastNearbyFoodAt then
+        lastNearbyFoodAt = os.clock()
+        return false
+    end
+
+    return false
+end
+
+-- Conservative 5x animation acceleration.
+-- Restore the earlier narrow behavior: only tracks explicitly named Grab/Eat.
+-- Do not hook AnimationPlayed, defer repeated speed changes, or affect other actions.
+local ACTION_ANIMATION_SPEED = 5.0
 local function accelerateActionAnimations(hum)
     if not hum then return end
     local ok, tracks = pcall(function()
@@ -621,60 +426,118 @@ local function farmStep()
     local char, hum, root, events = getParts()
     if not char then return end
 
-    -- Map picker may suppress anchoring/movement only. Grab/Eat cadence NEVER pauses.
-    local pickerActive = mapPickArmed
-    if not pickerActive then
-        local pg = player:FindFirstChildOfClass("PlayerGui")
-        pickerActive = pg ~= nil and findNextMapPrompt(pg) ~= nil
-    end
-
-    -- During map transition, do NOT move/anchor the character, but keep
-    -- scanning newly streamed food immediately. Grab/Eat remotes below remain
-    -- active regardless of picker state.
-    if not pickerActive then
-        farmAnchor()
-    end
+    farmAnchor()
     accelerateActionAnimations(hum)
 
-    -- AutoSell/AutoSkip monitoring remains active while the map picker is open.
-    monitorSellAndSkip(char, events)
+    local foodNearby = monitorNearbyFood(char, root)
 
+    -- X12 delay tuning: Grab and the post-Grab Eat phase each use 1/12
+    -- of the former 0.04s interval. Heartbeat frame rate is the practical
+    -- lower bound; this does not spawn a high-frequency remote spam loop.
     if events then
         local now = os.clock()
         local grabEvent = events:FindFirstChild("Grab")
         local eatEvent = events:FindFirstChild("Eat")
 
+        -- Start Season Time only once both controls are present and the first
+        -- Grab/Eat sequence is about to be sent.
         if grabEvent and eatEvent and cycleStartedAt == nil then
             cycleStartedAt = now
             completedCycleSeconds = 0
-            print("[dEnzCreator V3.3.24] Season time started: Grab/Eat menu active.")
+            print("[dEnzCreator V3.3.4] Season time started: Grab/Eat menu active.")
         end
 
         if grabEvent and eatEvent and now >= nextGrabEatActionAt then
             if grabEatPhase == "grab" then
                 fire(grabEvent)
                 grabEatPhase = "eat"
-                eatCallsRemaining = 3
                 nextGrabEatActionAt = now + POST_GRAB_DELAY
-            elseif grabEatPhase == "eat" then
+            else
                 fire(eatEvent)
-                eatCallsRemaining = eatCallsRemaining - 1
-                lastFoodAction = now
-                if eatCallsRemaining > 0 then
-                    nextGrabEatActionAt = now + EAT_CALL_INTERVAL
-                else
-                    grabEatPhase = "grab"
-                    nextGrabEatActionAt = now + GRAB_DELAY
-                end
+                fire(eatEvent)
+                fire(eatEvent)
+                grabEatPhase = "grab"
+                nextGrabEatActionAt = now + GRAB_DELAY
             end
+            lastFoodAction = now
         end
     end
+
+    local size, maxSize, numericFull = getCapacityState(char)
+    local previousBarProgress = lastBarProgress
+    local barProgress = getSellBarProgress()
+    lastBarProgress = barProgress
+
+    -- Use the actual changing upgrade limit when available. The bar is the
+    -- fallback when the game does not expose Size/MaxSize to this client.
+    local full
+    local barFull = barProgress ~= nil and barProgress >= 0.985
+    if size ~= nil and maxSize ~= nil and maxSize > 0 then
+        -- Live MaxSize follows upgrades; the bar is an additional visual signal.
+        full = numericFull or (barFull and size >= maxSize * 0.97)
+    else
+        full = barFull
+    end
+
+    if full then
+        -- Season timer stops only on the actual visual sell-bar full signal.
+        if barFull and cycleStartedAt ~= nil then
+            completedCycleSeconds = math.max(0, os.clock() - cycleStartedAt)
+            cycleStartedAt = nil
+            print("[dEnzCreator V3.3.4] Season time stopped: sell bar detected full.")
+        end
+        if not wasFull then
+            wasFull = true
+            skipSentForCycle = false
+            lastSellAttempt = 0
+            print("[dEnzCreator V3.3.4] FULL detected | Size:", size,
+                "| Live MaxSize:", maxSize, "| Bar:", barProgress)
+        end
+        -- Retry at a measured interval if the server has not processed a sale.
+        if os.clock() - lastSellAttempt >= 1.75 then
+            lastSellAttempt = os.clock()
+            sendAutoSell(events)
+        end
+    elseif wasFull then
+        -- A drop after a full bar confirms either AutoSell or a manual sale.
+        -- Prefer the Size reset/change signal; the bar drop is the fallback.
+        local sizeDrop = size ~= nil and lastSize ~= nil and size < lastSize
+        local barDrop = barProgress ~= nil and previousBarProgress ~= nil
+            and previousBarProgress >= 0.985 and barProgress < 0.90
+        local sold = (size ~= nil and maxSize ~= nil and size <= maxSize * 0.05)
+            or sizeDrop or barDrop
+
+        if sold then
+            print("[dEnzCreator V3.3.4] Sale/reset detected; requesting AutoSkip.")
+            if not skipSentForCycle then
+                skipSentForCycle = requestSkip()
+            end
+            wasFull = false
+            lastSellAttempt = 0
+            print("[dEnzCreator V3.3.4] AutoSell cycle re-armed.")
+        end
+    end
+
+    if size ~= nil then
+        lastSize = size
+    end
+
+    local mapName = getMapName()
+    switchModeIfEnabled(mapName)
 end
 
--- HIDDEN MAPS: KEDADA-STYLE SELECTIVE VISUALS
--- Only Workspace.Map is scanned. Workspace.Chunks is deliberately untouched.
--- Food/collectible and floor/ground descendants are protected by name/ancestor.
--- Visual-only: never changes CanCollide/CanTouch/CanQuery, never reparents/deletes.
+
+-- HIDDEN MAPS: FAST TRANSITION / LOW VISUAL LOAD / BLACK FLOOR
+-- KEDADA-style: hide non-food visuals under Workspace.Map only.
+-- Workspace.Chunks is deliberately untouched so food/chunk gameplay remains safe.
+-- No objects are destroyed/unparented; collision/query/touch properties are unchanged.
+-- One active Map root, one DescendantAdded connection, bounded scan batches.
+
+local hiddenMapRoot = nil
+local hiddenMapAddedConnection = nil
+local hiddenMapGeneration = 0
+local hiddenMapScanRunning = false
+
 local function isProtectedMapObject(obj, mapRoot)
     local current = obj
     while current and current ~= mapRoot do
@@ -684,9 +547,6 @@ local function isProtectedMapObject(obj, mapRoot)
             or n:find("fruit", 1, true)
             or n:find("snack", 1, true)
             or n:find("eat", 1, true)
-            or n:find("floor", 1, true)
-            or n:find("ground", 1, true)
-            or n:find("baseplate", 1, true)
             or n == "chunks" or n == "chunk" then
             return true
         end
@@ -695,93 +555,86 @@ local function isProtectedMapObject(obj, mapRoot)
     return false
 end
 
-local function isFloorMapObject(obj, mapRoot)
-    local current = obj
-    while current and current ~= mapRoot do
-        local n = norm(current.Name)
-        if n:find("floor", 1, true)
-            or n:find("ground", 1, true)
-            or n:find("baseplate", 1, true)
-            or n == "terrain" then
-            return true
-        end
-        current = current.Parent
+-- Keep large horizontal floor surfaces visible and black while hiding
+-- buildings/decorations. This is visual-only: collision/query/touch are untouched.
+local function isFloorPart(obj)
+    if not obj or not obj:IsA("BasePart") then return false end
+
+    local name = norm(obj.Name)
+    if name:find("floor", 1, true)
+        or name:find("ground", 1, true)
+        or name:find("baseplate", 1, true)
+        or name:find("bedrock", 1, true)
+        or name:find("platform", 1, true) then
+        return true
     end
-    return false
+
+    -- Fallback for unnamed map floors: broad, thin, mostly-horizontal parts.
+    local size = obj.Size
+    return size.X >= 100 and size.Z >= 100
+        and size.Y <= 18
+        and size.Y < math.min(size.X, size.Z) * 0.08
 end
 
 local function hideMapObject(obj, mapRoot)
-    if not hiddenMapsEnabled or not obj or not mapRoot then return end
-    if isProtectedMapObject(obj, mapRoot) then
-        if obj:IsA("BasePart") and isFloorMapObject(obj, mapRoot) then
+    if not hiddenMapsEnabled or not obj or obj == mapRoot then return end
+    if isProtectedMapObject(obj, mapRoot) then return end
+
+    if obj:IsA("BasePart") then
+        if isFloorPart(obj) then
             if hiddenMapOriginals[obj] == nil then
                 hiddenMapOriginals[obj] = {
                     kind = "floor",
                     transparency = obj.LocalTransparencyModifier,
-                    color = obj.Color
+                    color = obj.Color,
+                    material = obj.Material
                 }
             end
             obj.LocalTransparencyModifier = 0
             obj.Color = Color3.new(0, 0, 0)
+            obj.Material = Enum.Material.SmoothPlastic
+        else
+            if hiddenMapOriginals[obj] == nil then
+                hiddenMapOriginals[obj] = {kind = "part", value = obj.LocalTransparencyModifier}
+            end
+            obj.LocalTransparencyModifier = 1
         end
-        return
-    end
-
-    -- Turn map geometry black locally. Keep instances and all physics/query
-    -- properties intact so food interactions and floor collision continue.
-    if obj:IsA("BasePart") then
-        if hiddenMapOriginals[obj] == nil then
-            hiddenMapOriginals[obj] = {
-                kind = "part",
-                value = obj.LocalTransparencyModifier,
-                color = obj.Color
-            }
-        end
-        obj.LocalTransparencyModifier = 0
-        obj.Color = Color3.new(0, 0, 0)
     elseif obj:IsA("Decal") or obj:IsA("Texture") then
         if hiddenMapOriginals[obj] == nil then
-            hiddenMapOriginals[obj] = {
-                kind = "texture",
-                value = obj.Transparency
-            }
+            hiddenMapOriginals[obj] = {kind = "texture", value = obj.Transparency}
         end
         obj.Transparency = 1
     elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") then
         if hiddenMapOriginals[obj] == nil then
-            hiddenMapOriginals[obj] = {
-                kind = "effect",
-                value = obj.Enabled
-            }
+            hiddenMapOriginals[obj] = {kind = "effect", value = obj.Enabled}
         end
         obj.Enabled = false
     end
 end
 
-local hiddenMapRoot = nil
-local hiddenMapGeneration = 0
-local hiddenMapScanRunning = false
-
-local function disconnectHiddenMapListeners()
-    for _, connection in ipairs(hiddenMapConnections) do
-        pcall(function() connection:Disconnect() end)
+local function disconnectHiddenMapRoot()
+    if hiddenMapAddedConnection then
+        pcall(function() hiddenMapAddedConnection:Disconnect() end)
+        hiddenMapAddedConnection = nil
     end
-    table.clear(hiddenMapConnections)
+    hiddenMapRoot = nil
+    hiddenMapScanRunning = false
+    -- Clearing this table releases references to every object in the old map.
+    table.clear(hiddenMapOriginals)
 end
 
 local function restoreHiddenMap()
     hiddenMapGeneration = hiddenMapGeneration + 1
     hiddenMapScanRunning = false
-    disconnectHiddenMapListeners()
     for obj, saved in pairs(hiddenMapOriginals) do
         if obj and obj.Parent then
             pcall(function()
                 if saved.kind == "part" then
                     obj.LocalTransparencyModifier = saved.value
-                    obj.Color = saved.color
                 elseif saved.kind == "floor" then
                     obj.LocalTransparencyModifier = saved.transparency
                     obj.Color = saved.color
+                    obj.Material = saved.material
                 elseif saved.kind == "texture" then
                     obj.Transparency = saved.value
                 elseif saved.kind == "effect" then
@@ -790,53 +643,55 @@ local function restoreHiddenMap()
             end)
         end
     end
-    table.clear(hiddenMapOriginals)
-    hiddenMapRoot = nil
+    disconnectHiddenMapRoot()
 end
 
-local function bindSelectiveMap(mapRoot)
+local function bindHiddenMapRoot(mapRoot)
     if not hiddenMapsEnabled or not mapRoot then return false end
     if hiddenMapRoot == mapRoot then return true end
 
-    disconnectHiddenMapListeners()
-    -- Invalidate any scan for the previous Map root. Its task exits on the
-    -- generation check and cannot block the new root's scan.
-    hiddenMapGeneration = hiddenMapGeneration + 1
-    hiddenMapScanRunning = false
+    -- A map replacement invalidates the old cache and old event connection.
+    disconnectHiddenMapRoot()
     hiddenMapRoot = mapRoot
+    hiddenMapGeneration = hiddenMapGeneration + 1
     local generation = hiddenMapGeneration
 
-    -- Attach first, so objects arriving while the initial scan runs are not missed.
-    table.insert(hiddenMapConnections, mapRoot.DescendantAdded:Connect(function(obj)
+    -- Connect before scanning so objects added during the scan are not missed.
+    hiddenMapAddedConnection = mapRoot.DescendantAdded:Connect(function(obj)
         if not hiddenMapsEnabled or hiddenMapRoot ~= mapRoot then return end
+        -- Defer one object only; never launch a full rescan for each addition.
         task.defer(function()
             if hiddenMapsEnabled and hiddenMapRoot == mapRoot
                 and obj and obj.Parent and obj:IsDescendantOf(mapRoot) then
                 hideMapObject(obj, mapRoot)
             end
         end)
-    end))
+    end)
 
+    if hiddenMapScanRunning then return true end
     hiddenMapScanRunning = true
     task.spawn(function()
-        local descendants = mapRoot:GetDescendants()
         local processed = 0
+        -- Snapshot once. Small batches avoid a single large frame hitch.
+        local descendants = mapRoot:GetDescendants()
         for i = 1, #descendants do
             if not hiddenMapsEnabled or hiddenMapRoot ~= mapRoot
                 or hiddenMapGeneration ~= generation then
                 break
             end
             local obj = descendants[i]
-            if obj and obj.Parent then hideMapObject(obj, mapRoot) end
+            if obj and obj.Parent then
+                hideMapObject(obj, mapRoot)
+            end
             processed = processed + 1
-            if processed % 120 == 0 then
+            if processed % 250 == 0 then
                 RunService.Heartbeat:Wait()
             end
         end
         if hiddenMapGeneration == generation then
             hiddenMapScanRunning = false
-            print("[dEnzCreator V3.3.24] black Map visuals ready | checked:", processed,
-                "| Chunks untouched | food/floor protected")
+            print("[dEnzCreator V3.3.4] Hidden Map ready (black floor preserved):", mapRoot.Name,
+                "| objects checked:", processed)
         end
     end)
     return true
@@ -846,22 +701,133 @@ local function applyHiddenMap()
     if not hiddenMapsEnabled then return false end
     local mapRoot = Workspace:FindFirstChild("Map")
     if not mapRoot then return false end
-    return bindSelectiveMap(mapRoot)
+    return bindHiddenMapRoot(mapRoot)
 end
 
 local function setHiddenMaps(enabled)
     if enabled then
         hiddenMapsEnabled = true
         applyHiddenMap()
-        print("[dEnzCreator V3.3.24] Hidden Maps ON | black map visuals; Chunks untouched")
+        print("[dEnzCreator V3.3.4] Hidden Maps ON. Buildings hidden; floor black/visible; Chunks untouched.")
     else
         hiddenMapsEnabled = false
         restoreHiddenMap()
-        print("[dEnzCreator V3.3.24] Show Model ON | original Map visuals restored")
+        print("[dEnzCreator V3.3.4] Hidden Maps OFF. Original floor color/material and visuals restored.")
     end
 end
 
--- dEnzCreator compact mobile panel (120 px wide), anchored at the top-right.
+-- DYNAMIC COLLISION TEST (experimental)
+-- Map BaseParts that are not protected are non-collidable by default.
+-- A small set of surfaces directly beneath/around the character are restored
+-- to their original CanCollide state using downward raycasts. CanQuery and
+-- CanTouch are never changed. Food/chunk hierarchies are left untouched.
+local function saveAndDisableMapCollision(obj, mapRoot)
+    if not dynamicCollisionEnabled or not obj or not obj:IsA("BasePart") then return end
+    if isProtectedMapObject(obj, mapRoot) then return end
+    if collisionOriginals[obj] == nil then
+        collisionOriginals[obj] = obj.CanCollide
+    end
+    obj.CanCollide = false
+end
+
+local function restoreDynamicCollision()
+    dynamicCollisionEnabled = false
+    for obj, original in pairs(collisionOriginals) do
+        if obj and obj.Parent then
+            pcall(function() obj.CanCollide = original end)
+        end
+    end
+    table.clear(collisionOriginals)
+    table.clear(collisionGroundParts)
+    if collisionMapAddedConnection then
+        pcall(function() collisionMapAddedConnection:Disconnect() end)
+        collisionMapAddedConnection = nil
+    end
+    collisionMapRoot = nil
+end
+
+local function bindDynamicCollisionRoot(root)
+    if not dynamicCollisionEnabled or not root then return end
+    if collisionMapRoot == root then return end
+    -- Restore old-map parts before releasing their references.
+    if collisionMapAddedConnection then
+        pcall(function() collisionMapAddedConnection:Disconnect() end)
+        collisionMapAddedConnection = nil
+    end
+    for obj, original in pairs(collisionOriginals) do
+        if obj and obj.Parent then pcall(function() obj.CanCollide = original end) end
+    end
+    table.clear(collisionOriginals)
+    table.clear(collisionGroundParts)
+    collisionMapRoot = root
+    for _, obj in ipairs(root:GetDescendants()) do
+        saveAndDisableMapCollision(obj, root)
+    end
+    collisionMapAddedConnection = root.DescendantAdded:Connect(function(obj)
+        if dynamicCollisionEnabled and collisionMapRoot == root then
+            task.defer(function()
+                if dynamicCollisionEnabled and collisionMapRoot == root
+                    and obj and obj.Parent and obj:IsDescendantOf(root) then
+                    saveAndDisableMapCollision(obj, root)
+                end
+            end)
+        end
+    end)
+end
+
+local function updateDynamicCollision()
+    if not dynamicCollisionEnabled then return end
+    local now = os.clock()
+    if now - lastCollisionUpdate < collisionUpdateInterval then return end
+    lastCollisionUpdate = now
+    local char, hum, rootPart = getParts()
+    if not char or not rootPart then return end
+    local mapRoot = Workspace:FindFirstChild("Map")
+    if not mapRoot then return end
+    if collisionMapRoot ~= mapRoot then bindDynamicCollisionRoot(mapRoot) end
+
+    -- First disable any previously enabled support surfaces.
+    for part in pairs(collisionGroundParts) do
+        local original = collisionOriginals[part]
+        if part and part.Parent and original ~= nil then
+            pcall(function() part.CanCollide = false end)
+        end
+    end
+    table.clear(collisionGroundParts)
+
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Include
+    params.FilterDescendantsInstances = {mapRoot}
+    params.IgnoreWater = true
+    local offsets = {
+        Vector3.new(0, 0, 0),
+        Vector3.new(7, 0, 0), Vector3.new(-7, 0, 0),
+        Vector3.new(0, 0, 7), Vector3.new(0, 0, -7)
+    }
+    for _, offset in ipairs(offsets) do
+        local origin = rootPart.Position + offset + Vector3.new(0, 7, 0)
+        local result = Workspace:Raycast(origin, Vector3.new(0, -24, 0), params)
+        local part = result and result.Instance
+        if part and part:IsA("BasePart") and collisionOriginals[part] == true then
+            collisionGroundParts[part] = true
+            part.CanCollide = true
+        end
+    end
+end
+
+local function setDynamicCollision(enabled)
+    if enabled then
+        dynamicCollisionEnabled = true
+        lastCollisionUpdate = 0
+        bindDynamicCollisionRoot(Workspace:FindFirstChild("Map"))
+        print("[dEnzCreator V3.3.4] Dynamic Collision ON. Only raycast support surfaces retain original collision; test carefully.")
+    else
+        restoreDynamicCollision()
+        print("[dEnzCreator V3.3.4] Dynamic Collision OFF. Original CanCollide values restored.")
+    end
+end
+
+-- dEnzCreator compact mobile panel (140 px wide).
 local gui = Instance.new("ScreenGui")
 gui.Name = "dEnzCreator_ETW"
 gui.ResetOnSpawn = false
@@ -869,9 +835,9 @@ gui.Parent = player:WaitForChild("PlayerGui")
 
 local frame = Instance.new("Frame")
 frame.Name = "Main"
-frame.Size = UDim2.fromOffset(120, 0)
+frame.Size = UDim2.fromOffset(140, 0)
 frame.AutomaticSize = Enum.AutomaticSize.Y
-frame.Position = UDim2.new(1, -132, 0, 8)
+frame.Position = UDim2.new(0, 12, 0.42, 0)
 frame.BackgroundColor3 = Color3.fromRGB(20, 22, 38)
 frame.BorderSizePixel = 0
 frame.Parent = gui
@@ -888,11 +854,11 @@ padding.PaddingRight = UDim.new(0, 6)
 
 local layout = Instance.new("UIListLayout", frame)
 layout.SortOrder = Enum.SortOrder.LayoutOrder
-layout.Padding = UDim.new(0, 3)
+layout.Padding = UDim.new(0, 5)
 
 local header = Instance.new("Frame")
 header.LayoutOrder = 1
-header.Size = UDim2.new(1, 0, 0, 43)
+header.Size = UDim2.new(1, 0, 0, 64)
 header.BackgroundColor3 = Color3.fromRGB(37, 39, 62)
 header.BackgroundTransparency = 0
 header.BorderSizePixel = 0
@@ -903,12 +869,12 @@ headerStroke.Color = Color3.fromRGB(125, 105, 195)
 headerStroke.Thickness = 1
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(0, 66, 0, 17)
+title.Size = UDim2.new(1, -48, 0, 23)
 title.Position = UDim2.fromOffset(6, 1)
 title.BackgroundTransparency = 1
 title.Text = "dEnzCreator"
 title.TextColor3 = Color3.new(1, 1, 1)
-title.TextSize = 10
+title.TextSize = 11
 title.Font = Enum.Font.GothamBold
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = header
@@ -937,13 +903,13 @@ Instance.new("UICorner", close).CornerRadius = UDim.new(1, 0)
 
 local runtimeBlock = Instance.new("TextLabel")
 runtimeBlock.Name = "RuntimeBlock"
-runtimeBlock.Size = UDim2.new(0, 88, 0, 19)
-runtimeBlock.Position = UDim2.fromOffset(5, 21)
+runtimeBlock.Size = UDim2.new(1, -12, 0, 34)
+runtimeBlock.Position = UDim2.fromOffset(6, 27)
 runtimeBlock.BackgroundTransparency = 1
 runtimeBlock.BorderSizePixel = 0
 runtimeBlock.Text = "Runtime: 0m 0s\nSeason time: 0m 0s"
 runtimeBlock.TextColor3 = Color3.fromRGB(240, 243, 248)
-runtimeBlock.TextSize = 6
+runtimeBlock.TextSize = 8
 runtimeBlock.Font = Enum.Font.GothamMedium
 runtimeBlock.TextXAlignment = Enum.TextXAlignment.Left
 runtimeBlock.TextYAlignment = Enum.TextYAlignment.Center
@@ -953,12 +919,12 @@ runtimeBlock.Parent = header
 local function makeToggle(label, order, color, initial, callback)
     local b = Instance.new("TextButton")
     b.LayoutOrder = order
-    b.Size = UDim2.new(1, 0, 0, 24)
+    b.Size = UDim2.new(1, 0, 0, 30)
     b.BackgroundColor3 = initial and color or Color3.fromRGB(54, 52, 76)
     b.BorderSizePixel = 0
     b.Text = label .. (initial and ": ON" or ": OFF")
     b.TextColor3 = Color3.new(1, 1, 1)
-    b.TextSize = 8
+    b.TextSize = 9
     b.Font = Enum.Font.GothamSemibold
     b.TextWrapped = true
     b.Parent = frame
@@ -978,8 +944,12 @@ makeToggle("AUTOFARM", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
     print("[dEnzCreator] AutoFarm", on and "ON" or "OFF")
 end)
 
-makeToggle("SHOW MODEL", 3, Color3.fromRGB(65, 105, 190), not hiddenMapsEnabled, function(showModel)
-    setHiddenMaps(not showModel)
+makeToggle("HIDDEN MAPS", 3, Color3.fromRGB(65, 105, 190), hiddenMapsEnabled, function(on)
+    setHiddenMaps(on)
+end)
+
+makeToggle("DYNAMIC COLLISION TEST", 4, Color3.fromRGB(190, 115, 55), dynamicCollisionEnabled, function(on)
+    setDynamicCollision(on)
 end)
 
 local autoClaimEnabled = false
@@ -1012,7 +982,7 @@ local function claimRewardsStep()
     end
 end
 
-makeToggle("AUTO CLAIM REWARDS", 4, Color3.fromRGB(133, 89, 195), false, function(on)
+makeToggle("AUTO CLAIM REWARDS", 5, Color3.fromRGB(133, 89, 195), false, function(on)
     autoClaimEnabled = on
 end)
 
@@ -1107,13 +1077,13 @@ local function updateRuntimeMonitor()
 end
 
 
--- Re-apply only when the game replaces Workspace.Map; Chunks are not scanned.
+-- Bind exactly once to each new Map root; Chunks is not scanned or hooked.
 workspaceMapConnection = Workspace.ChildAdded:Connect(function(child)
-    if child.Name == "Map" and hiddenMapsEnabled then
+    if child.Name == "Map" then
         task.defer(function()
-            if hiddenMapsEnabled then
-                -- Do not rescan the still-existing root when only one root is replaced.
-                applyHiddenMap()
+            if child.Parent == Workspace then
+                if hiddenMapsEnabled then bindHiddenMapRoot(child) end
+                if dynamicCollisionEnabled then bindDynamicCollisionRoot(child) end
             end
         end)
     end
@@ -1144,8 +1114,8 @@ end)
 local connection = RunService.Heartbeat:Connect(function()
     if not running then return end
     pcall(updateRuntimeMonitor)
+    pcall(updateDynamicCollision)
     pcall(claimRewardsStep)
-    pcall(selectNonCentralMapStep)
     if CFG.Farm then
         pcall(monitorGrabEatAvailability)
         pcall(farmStep)
@@ -1156,38 +1126,23 @@ gui.AncestryChanged:Connect(function(_, parent)
         running, CFG.Farm = false, false
         autoClaimEnabled = false
         setHiddenMaps(false)
+        setDynamicCollision(false)
         if workspaceMapConnection then workspaceMapConnection:Disconnect() end
         connection:Disconnect()
     end
 end)
 
-print("[dEnzCreator V3.3.24] Loaded. Grab/Eat continuous during transitions; broken food scanner removed; Sell retry 0.05s; SkipMaps and HiddenMaps retained.")
-print("[dEnzCreator V3.3.24] 99.8% threshold loaded. AutoSell triggers at 99.99%; Sell runs at full during transition; default-map Z=0.")
+print("[dEnzCreator V3.3.4] Loaded. Grab and post-Grab delays target 0.04s/12 each; actual timing is Heartbeat-frame-limited; 5x named Grab/Eat animation acceleration; landing stabilizer retained.")
+print("[dEnzCreator V3.3.4] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
+print("[dEnzCreator V3.3.4] Dynamic Collision is OFF by default; enable only for a controlled test.")
 
--- V3.3.24: Removed undefined nearby-food scanner and unused RequestTeleport mode-switch path. Required Grab/Eat, Sell, and SetServerSettings remotes retained. KEDADA selective Map visuals; Chunks untouched.
+-- V3.3.4 keeps map floors black/visible while hiding non-floor map visuals.
 
--- V3.3.8: Default maps use Z=0; Studville uses Z=100; Central Robloxia uses Z=150. Grab/Eat body animation target is ~2.0s (8.75x adjustment); three Eat calls are spread across 0.02s total. Landing anchor remains X=0.
+-- V3.3.4: Central Robloxia farm Z set to 700 studs for retest; missing Grab/Eat watchdog requests map skip.
 
--- V3.3.3 retains the live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
-
-
--- V3.3.8: Combined title/timer header (140px), left-aligned title, 5x named Grab/Eat animation acceleration. Grab and post-Grab delays are each divided by 12.
-
--- V3.3.8: Season time starts when map food objects are detected and stops when the sell bar reaches full.
+-- V3.3.4 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
 
 
--- V3.3.8 changes: Central Robloxia name matching accepts English/Indonesian word orders;
--- post-Grab pause is 0.03s; title and runtime text blocks are narrower while panel remains top-right.
+-- V3.3.4: Combined title/timer header (140px), left-aligned title, 5x named Grab/Eat animation acceleration. Grab and post-Grab delays are each divided by 12.
 
--- V3.3.10: Robloxia Tengah landing targets a live Chunks food part instead of the empty map-center anchor. Header/runtime spacing tightened.
-
-
--- V3.3.15 transition update: at the Skip menu, activate the second visible card
--- from the left, avoiding the known leftmost Robloxia Tengah card. Selection is
--- attempted immediately at 0.10s scan intervals; no fixed post-Skip wait is added.
--- Grab/Eat/Chunk timing, 99.8% threshold, and map landing coordinates are unchanged.
-
--- V3.3.24 revision: use the same selective visual hiding method as KEDADA V3.0.8.
--- Non-food descendants of Workspace.Map are hidden with local transparency;
--- food/collectible-named descendants are protected and Workspace.Chunks is untouched.
--- No collision, touch, query, parenting, or deletion changes. Grab/Eat remains active.
+-- V3.3.4: Season time starts when map food objects are detected and stops when the sell bar reaches full.
