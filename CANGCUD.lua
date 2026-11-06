@@ -1020,52 +1020,75 @@ local function inspectMapReadOnly()
     local farmFloorObject = Workspace:FindFirstChild("dEnzCreator_FarmFloor")
     local chunksRoot = Workspace:FindFirstChild("Chunks")
     local mapDescendants = mapRoot and mapRoot:GetDescendants() or {}
-    local mapPartCount, darkFloorCandidates = 0, {}
+    local mapPartCount, floorCandidates = 0, {}
 
     for _, obj in ipairs(mapDescendants) do
         if obj:IsA("BasePart") then
             mapPartCount = mapPartCount + 1
-            local s, c = obj.Size, obj.Color
-            local isLargeFlat = s.X >= 500 and s.Z >= 500 and s.Y <= 30
-            local isDark = (c.R + c.G + c.B) / 3 <= 0.22
-            if isLargeFlat and isDark then
-                table.insert(darkFloorCandidates, obj)
+            local s = obj.Size
+            -- Record large, flat parts regardless of color. This avoids
+            -- assuming that the original floor must be dark/black.
+            if s.X >= 500 and s.Z >= 500 and s.Y <= 40 then
+                table.insert(floorCandidates, obj)
             end
         end
     end
 
-    table.sort(darkFloorCandidates, function(a, b)
+    table.sort(floorCandidates, function(a, b)
         return (a.Size.X * a.Size.Z) > (b.Size.X * b.Size.Z)
     end)
 
     local lines = {}
-    table.insert(lines, "MAP INSPECTOR | READ ONLY")
-    table.insert(lines, "Map: " .. (mapRoot and getInstancePath(mapRoot) or "NOT FOUND"))
+    table.insert(lines, "STAGE 3 | READ ONLY")
+    table.insert(lines, "Map: " .. (mapRoot and "FOUND" or "NOT FOUND"))
     table.insert(lines, "Map descendants: " .. tostring(mapRoot and #mapDescendants or 0)
         .. " | BaseParts: " .. tostring(mapPartCount))
 
     if farmFloorObject and farmFloorObject:IsA("BasePart") then
-        table.insert(lines, string.format("FarmFloor: Workspace (OUTSIDE Map)"))
-        table.insert(lines, string.format("  Size %.0f x %.0f x %.0f | Pos %.1f, %.1f, %.1f",
-            farmFloorObject.Size.X, farmFloorObject.Size.Y, farmFloorObject.Size.Z,
-            farmFloorObject.Position.X, farmFloorObject.Position.Y, farmFloorObject.Position.Z))
+        local p = farmFloorObject.Position
+        table.insert(lines, string.format("FarmFloor OUTSIDE Map"))
+        table.insert(lines, string.format("Size %.0f x %.0f x %.0f",
+            farmFloorObject.Size.X, farmFloorObject.Size.Y, farmFloorObject.Size.Z))
+        table.insert(lines, string.format("Pos %.1f, %.1f, %.1f | CanCollide %s",
+            p.X, p.Y, p.Z, tostring(farmFloorObject.CanCollide)))
     else
         table.insert(lines, "FarmFloor: NOT FOUND")
     end
 
-    table.insert(lines, "Dark large floor candidates inside Map: " .. tostring(#darkFloorCandidates))
-    for i = 1, math.min(#darkFloorCandidates, 2) do
-        local obj = darkFloorCandidates[i]
-        table.insert(lines, string.format("  %s | %.0f x %.0f x %.0f",
-            getInstancePath(obj), obj.Size.X, obj.Size.Y, obj.Size.Z))
+    table.insert(lines, "Large flat parts inside Map: " .. tostring(#floorCandidates))
+    for i = 1, math.min(#floorCandidates, 4) do
+        local obj = floorCandidates[i]
+        local p, s, c = obj.Position, obj.Size, obj.Color
+        table.insert(lines, string.format("#%d %s", i, obj.Name))
+        table.insert(lines, string.format(" Size %.0f x %.0f x %.0f",
+            s.X, s.Y, s.Z))
+        table.insert(lines, string.format(" Pos %.1f, %.1f, %.1f",
+            p.X, p.Y, p.Z))
+        table.insert(lines, string.format(" RGB %.2f %.2f %.2f | Collide %s",
+            c.R, c.G, c.B, tostring(obj.CanCollide)))
     end
 
-    table.insert(lines, "Chunks: " .. (chunksRoot and "FOUND" or "NOT FOUND"))
+    if chunksRoot then
+        local chunkDescendants = chunksRoot:GetDescendants()
+        local chunkParts = 0
+        for _, obj in ipairs(chunkDescendants) do
+            if obj:IsA("BasePart") then
+                chunkParts = chunkParts + 1
+            end
+        end
+        table.insert(lines, "Chunks: FOUND")
+        table.insert(lines, " Descendants: " .. tostring(#chunkDescendants)
+            .. " | BaseParts: " .. tostring(chunkParts))
+    else
+        table.insert(lines, "Chunks: NOT FOUND")
+    end
+
     local char = player.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if root then
         local p = root.Position
-        table.insert(lines, string.format("Character: %.1f, %.1f, %.1f", p.X, p.Y, p.Z))
+        table.insert(lines, string.format("Character: %.1f, %.1f, %.1f",
+            p.X, p.Y, p.Z))
     else
         table.insert(lines, "Character: not ready")
     end
@@ -1075,7 +1098,7 @@ end
 local inspectorPanel = Instance.new("Frame")
 inspectorPanel.Name = "MapInspectorPanel"
 inspectorPanel.LayoutOrder = 4
-inspectorPanel.Size = UDim2.new(1, 0, 0, 156)
+inspectorPanel.Size = UDim2.new(1, 0, 0, 220)
 inspectorPanel.BackgroundColor3 = Color3.fromRGB(28, 30, 45)
 inspectorPanel.BorderSizePixel = 0
 inspectorPanel.Parent = frame
@@ -1086,7 +1109,7 @@ inspectorButton.Size = UDim2.new(1, -8, 0, 24)
 inspectorButton.Position = UDim2.fromOffset(4, 4)
 inspectorButton.BackgroundColor3 = Color3.fromRGB(65, 83, 120)
 inspectorButton.BorderSizePixel = 0
-inspectorButton.Text = "MAP INSPECTOR: ON / REFRESH"
+inspectorButton.Text = "STAGE 3 INSPECTOR: ON / REFRESH"
 inspectorButton.TextColor3 = Color3.new(1, 1, 1)
 inspectorButton.TextSize = 8
 inspectorButton.Font = Enum.Font.GothamBold
@@ -1116,7 +1139,7 @@ end
 inspectorButton.Activated:Connect(function()
     inspectorEnabled = not inspectorEnabled
     inspectorText.Visible = inspectorEnabled
-    inspectorButton.Text = inspectorEnabled and "MAP INSPECTOR: ON / REFRESH" or "MAP INSPECTOR: OFF"
+    inspectorButton.Text = inspectorEnabled and "STAGE 3 INSPECTOR: ON / REFRESH" or "STAGE 3 INSPECTOR: OFF"
     if inspectorEnabled then refreshMapInspector() end
 end)
 inspectorButton.Activated:Connect(function()
