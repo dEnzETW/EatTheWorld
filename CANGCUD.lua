@@ -702,7 +702,7 @@ local function farmStep()
 end
 
 
--- HIDDEN MAPS: DISTANCE-PRIORITY EXPERIMENT / LOW VISUAL LOAD / BLACK FLOOR
+-- HIDDEN MAPS: FRONT-50 FOOD PRIORITY + 4-MINUTE STAGED HIDE / BLACK FLOOR
 -- KEDADA-style: hide non-food visuals under Workspace.Map only.
 -- Workspace.Chunks is deliberately untouched so food/chunk gameplay remains safe.
 -- Map visuals are hidden only; map object physics properties are unchanged.
@@ -865,46 +865,85 @@ local function bindHiddenMapRoot(mapRoot)
     if hiddenMapScanRunning then return true end
     hiddenMapScanRunning = true
     task.spawn(function()
-        local processed = 0
         local descendants = mapRoot:GetDescendants()
         local rootPart = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
         local origin = rootPart and rootPart.Position or Vector3.new(FARM_LANDING_X, 0, FARM_LANDING_Z)
+        local forward = rootPart and rootPart.CFrame.LookVector or Vector3.new(0, 0, -1)
 
-        -- EXPERIMENT: hide distant map decoration first; nearby visuals are
-        -- processed later in small batches so the active farming area gets
-        -- less immediate work during map transition. Food/chunks stay protected.
-        local sortable = {}
+        -- PRIORITY PASS: identify food objects in the forward 50-stud cone.
+        -- Food remains protected from map hiding; this pass records availability
+        -- without changing physics, touch, query, or the game's Grab/Eat remotes.
+        local frontFoodCount = 0
+        local background = {}
         for _, obj in ipairs(descendants) do
-            if obj and obj.Parent and obj:IsA("BasePart") then
-                local distance = (obj.Position - origin).Magnitude
-                table.insert(sortable, {object = obj, distance = distance})
-            else
-                table.insert(sortable, {object = obj, distance = 0})
+            if obj and obj.Parent then
+                if isProtectedMapObject(obj, mapRoot) then
+                    if obj:IsA("BasePart") then
+                        local offset = obj.Position - origin
+                        local distance = offset.Magnitude
+                        if distance <= 50 and distance > 0
+                            and offset.Unit:Dot(forward) >= 0.25 then
+                            frontFoodCount = frontFoodCount + 1
+                        end
+                    end
+                else
+                    local distance = 0
+                    if obj:IsA("BasePart") then
+                        distance = (obj.Position - origin).Magnitude
+                    end
+                    table.insert(background, {object = obj, distance = distance})
+                end
             end
         end
-        table.sort(sortable, function(a, b)
+
+        -- Distant decoration is hidden first. Remaining non-food visuals are
+        -- processed gradually across four minutes, in small batches.
+        table.sort(background, function(a, b)
             return a.distance > b.distance
         end)
 
+        local total = #background
+        local duration = 240
         local batchSize = 120
-        for i = 1, #sortable do
+        local batchCount = math.max(1, math.ceil(total / batchSize))
+        local pausePerBatch = duration / batchCount
+        local processed = 0
+        local startedAt = os.clock()
+
+        print("[dEnzCreator] Front-50 priority:", mapRoot.Name,
+            "| food parts in forward cone:", frontFoodCount,
+            "| background objects:", total,
+            "| staged hide window: 240s")
+
+        for i = 1, total do
             if not hiddenMapsEnabled or hiddenMapRoot ~= mapRoot
                 or hiddenMapGeneration ~= generation then
                 break
             end
-            local obj = sortable[i].object
-            if obj and obj.Parent then
+            local obj = background[i].object
+            if obj and obj.Parent and obj:IsDescendantOf(mapRoot) then
                 hideMapObject(obj, mapRoot)
             end
             processed = processed + 1
+
             if processed % batchSize == 0 then
-                task.wait()
+                local elapsed = os.clock() - startedAt
+                local targetElapsed = math.min(duration,
+                    math.ceil(processed / batchSize) * pausePerBatch)
+                local waitTime = targetElapsed - elapsed
+                if waitTime > 0 then
+                    task.wait(waitTime)
+                else
+                    task.wait()
+                end
             end
         end
+
         if hiddenMapGeneration == generation then
             hiddenMapScanRunning = false
-            print("[dEnzCreator] Distance-priority Hide test complete:", mapRoot.Name,
-                "| objects checked:", processed, "| batch:", batchSize)
+            print("[dEnzCreator] Front-50 / 4-minute Hide test complete:",
+                mapRoot.Name, "| objects processed:", processed,
+                "| elapsed:", math.floor(os.clock() - startedAt), "s")
         end
     end)
     return true
