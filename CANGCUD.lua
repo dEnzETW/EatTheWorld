@@ -472,10 +472,10 @@ local function monitorLandingEatProgress(char, hum, root)
     return false
 end
 
--- Conservative 5x animation acceleration.
--- Restore the earlier narrow behavior: only tracks explicitly named Grab/Eat.
--- Do not hook AnimationPlayed, defer repeated speed changes, or affect other actions.
-local ACTION_ANIMATION_SPEED = 5.0
+-- Separate animation speeds: Grab is accelerated to 10x until the
+-- pre-Eat standing phase; Eat animation remains at 5x. Other tracks untouched.
+local GRAB_ANIMATION_SPEED = 10.0
+local EAT_ANIMATION_SPEED = 5.0
 local function accelerateActionAnimations(hum)
     if not hum then return end
     local ok, tracks = pcall(function()
@@ -485,9 +485,15 @@ local function accelerateActionAnimations(hum)
 
     for _, track in ipairs(tracks) do
         local trackName = string.lower(tostring(track.Name or ""))
-        if trackName:find("grab", 1, true) or trackName:find("eat", 1, true) then
+        local speed = nil
+        if trackName:find("grab", 1, true) then
+            speed = GRAB_ANIMATION_SPEED
+        elseif trackName:find("eat", 1, true) then
+            speed = EAT_ANIMATION_SPEED
+        end
+        if speed then
             pcall(function()
-                track:AdjustSpeed(ACTION_ANIMATION_SPEED)
+                track:AdjustSpeed(speed)
             end)
         end
     end
@@ -1125,7 +1131,7 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator] Loaded. All maps use landing X=0, Z=50 with Y grounded to the floor; Grab and post-Grab delays target 0.02s/12 each; actual timing is Heartbeat-frame-limited; 5x named Grab/Eat animation acceleration; continuous floor hold retained through map transitions.")
+print("[dEnzCreator] Loaded. All maps use landing X=0, Z=50 with Y grounded to the floor; Grab and post-Grab delays target 0.02s/12 each; actual timing is Heartbeat-frame-limited; 10x Grab animation acceleration and 5x Eat animation acceleration; continuous floor hold retained through map transitions.")
 print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
 -- V3.3.6 keeps the character seated on the dedicated floor through map transitions; Grab/Eat never waits for food detection.
