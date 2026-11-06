@@ -14,9 +14,9 @@ if not player then return end
 
 local CFG = {
     Farm = false,
-    DefaultZ = 0,
-    MegaMapZ = 350,
-    CentralRobloxiaZ = 700,
+    DefaultZ = 100,
+    MegaMapZ = 100,
+    CentralRobloxiaZ = 100,
     StudvilleZ = 100,
     AutoSkipAfterSell = true,
     UseMappedSkipRemote = true,
@@ -159,13 +159,8 @@ local function farmAnchor()
     if not char then return false end
 
     local mapName, key = getMapName()
-    local isCentral = key == "central robloxia" or key == "robloxia tengah"
-        or key == "central robloxia map"
-    local isStudville = key == "studville"
-    local isMegaMap = CFG.SmallMaps[key] == true
-    local z = isCentral and CFG.CentralRobloxiaZ
-        or (isStudville and CFG.StudvilleZ
-        or (isMegaMap and CFG.MegaMapZ or CFG.DefaultZ))
+    -- Unified landing point: every map uses X=0, Z=100.
+    local z = 100
     local mapChanged = mapName ~= lastMap
 
     -- On every map change, immediately re-seat the character on the persistent
@@ -1072,7 +1067,7 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator] Loaded. Mega maps use Z=350; Grab and post-Grab delays target 0.02s/12 each; actual timing is Heartbeat-frame-limited; 5x named Grab/Eat animation acceleration; continuous floor hold retained through map transitions.")
+print("[dEnzCreator] Loaded. All maps use landing Z=100; Grab and post-Grab delays target 0.02s/12 each; actual timing is Heartbeat-frame-limited; 5x named Grab/Eat animation acceleration; continuous floor hold retained through map transitions.")
 print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
 -- V3.3.6 keeps the character seated on the dedicated floor through map transitions; Grab/Eat never waits for food detection.
