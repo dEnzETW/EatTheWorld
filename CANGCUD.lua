@@ -1026,8 +1026,6 @@ local function inspectMapReadOnly()
         if obj:IsA("BasePart") then
             mapPartCount = mapPartCount + 1
             local s = obj.Size
-            -- Record large, flat parts regardless of color. This avoids
-            -- assuming that the original floor must be dark/black.
             if s.X >= 500 and s.Z >= 500 and s.Y <= 40 then
                 table.insert(floorCandidates, obj)
             end
@@ -1038,34 +1036,29 @@ local function inspectMapReadOnly()
         return (a.Size.X * a.Size.Z) > (b.Size.X * b.Size.Z)
     end)
 
-    local lines = {}
-    table.insert(lines, "STAGE 3 | READ ONLY")
-    table.insert(lines, "Map: " .. (mapRoot and "FOUND" or "NOT FOUND"))
-    table.insert(lines, "Map descendants: " .. tostring(mapRoot and #mapDescendants or 0)
-        .. " | BaseParts: " .. tostring(mapPartCount))
+    local lines = {
+        "STAGE 3.1 | READ ONLY",
+        "Map: " .. (mapRoot and "FOUND" or "NOT FOUND"),
+        string.format("Map: %d descendants | %d BaseParts",
+            mapRoot and #mapDescendants or 0, mapPartCount)
+    }
 
     if farmFloorObject and farmFloorObject:IsA("BasePart") then
-        local p = farmFloorObject.Position
-        table.insert(lines, string.format("FarmFloor OUTSIDE Map"))
-        table.insert(lines, string.format("Size %.0f x %.0f x %.0f",
-            farmFloorObject.Size.X, farmFloorObject.Size.Y, farmFloorObject.Size.Z))
-        table.insert(lines, string.format("Pos %.1f, %.1f, %.1f | CanCollide %s",
-            p.X, p.Y, p.Z, tostring(farmFloorObject.CanCollide)))
+        local p, s = farmFloorObject.Position, farmFloorObject.Size
+        table.insert(lines, string.format("FarmFloor OUTSIDE: %.0fx%.0fx%.0f @ %.0f,%.0f,%.0f",
+            s.X, s.Y, s.Z, p.X, p.Y, p.Z))
     else
         table.insert(lines, "FarmFloor: NOT FOUND")
     end
 
-    table.insert(lines, "Large flat parts inside Map: " .. tostring(#floorCandidates))
-    for i = 1, math.min(#floorCandidates, 4) do
+    table.insert(lines, "Map floor candidates: " .. tostring(#floorCandidates))
+    for i = 1, math.min(#floorCandidates, 3) do
         local obj = floorCandidates[i]
         local p, s, c = obj.Position, obj.Size, obj.Color
-        table.insert(lines, string.format("#%d %s", i, obj.Name))
-        table.insert(lines, string.format(" Size %.0f x %.0f x %.0f",
-            s.X, s.Y, s.Z))
-        table.insert(lines, string.format(" Pos %.1f, %.1f, %.1f",
-            p.X, p.Y, p.Z))
-        table.insert(lines, string.format(" RGB %.2f %.2f %.2f | Collide %s",
-            c.R, c.G, c.B, tostring(obj.CanCollide)))
+        table.insert(lines, string.format("%d) %s | %.0fx%.0fx%.0f",
+            i, obj.Name, s.X, s.Y, s.Z))
+        table.insert(lines, string.format("   Pos %.0f,%.0f,%.0f | RGB %.2f/%.2f/%.2f | C:%s",
+            p.X, p.Y, p.Z, c.R, c.G, c.B, tostring(obj.CanCollide)))
     end
 
     if chunksRoot then
@@ -1076,9 +1069,8 @@ local function inspectMapReadOnly()
                 chunkParts = chunkParts + 1
             end
         end
-        table.insert(lines, "Chunks: FOUND")
-        table.insert(lines, " Descendants: " .. tostring(#chunkDescendants)
-            .. " | BaseParts: " .. tostring(chunkParts))
+        table.insert(lines, string.format("Chunks: FOUND | %d descendants | %d BaseParts",
+            #chunkDescendants, chunkParts))
     else
         table.insert(lines, "Chunks: NOT FOUND")
     end
@@ -1087,7 +1079,7 @@ local function inspectMapReadOnly()
     local root = char and char:FindFirstChild("HumanoidRootPart")
     if root then
         local p = root.Position
-        table.insert(lines, string.format("Character: %.1f, %.1f, %.1f",
+        table.insert(lines, string.format("Character: %.0f, %.0f, %.0f",
             p.X, p.Y, p.Z))
     else
         table.insert(lines, "Character: not ready")
@@ -1098,7 +1090,7 @@ end
 local inspectorPanel = Instance.new("Frame")
 inspectorPanel.Name = "MapInspectorPanel"
 inspectorPanel.LayoutOrder = 4
-inspectorPanel.Size = UDim2.new(1, 0, 0, 220)
+inspectorPanel.Size = UDim2.new(1, 0, 0, 228)
 inspectorPanel.BackgroundColor3 = Color3.fromRGB(28, 30, 45)
 inspectorPanel.BorderSizePixel = 0
 inspectorPanel.Parent = frame
@@ -1109,7 +1101,7 @@ inspectorButton.Size = UDim2.new(1, -8, 0, 24)
 inspectorButton.Position = UDim2.fromOffset(4, 4)
 inspectorButton.BackgroundColor3 = Color3.fromRGB(65, 83, 120)
 inspectorButton.BorderSizePixel = 0
-inspectorButton.Text = "STAGE 3 INSPECTOR: ON / REFRESH"
+inspectorButton.Text = "STAGE 3.1 INSPECTOR: ON / REFRESH"
 inspectorButton.TextColor3 = Color3.new(1, 1, 1)
 inspectorButton.TextSize = 8
 inspectorButton.Font = Enum.Font.GothamBold
@@ -1121,7 +1113,7 @@ inspectorText.Size = UDim2.new(1, -10, 1, -34)
 inspectorText.Position = UDim2.fromOffset(5, 30)
 inspectorText.BackgroundTransparency = 1
 inspectorText.TextColor3 = Color3.fromRGB(230, 235, 245)
-inspectorText.TextSize = 7
+inspectorText.TextSize = 8
 inspectorText.Font = Enum.Font.Code
 inspectorText.TextXAlignment = Enum.TextXAlignment.Left
 inspectorText.TextYAlignment = Enum.TextYAlignment.Top
@@ -1139,7 +1131,7 @@ end
 inspectorButton.Activated:Connect(function()
     inspectorEnabled = not inspectorEnabled
     inspectorText.Visible = inspectorEnabled
-    inspectorButton.Text = inspectorEnabled and "STAGE 3 INSPECTOR: ON / REFRESH" or "STAGE 3 INSPECTOR: OFF"
+    inspectorButton.Text = inspectorEnabled and "STAGE 3.1 INSPECTOR: ON / REFRESH" or "STAGE 3.1 INSPECTOR: OFF"
     if inspectorEnabled then refreshMapInspector() end
 end)
 inspectorButton.Activated:Connect(function()
