@@ -108,13 +108,20 @@ local function getParts()
 end
 
 
--- One persistent farm floor, matching the KEDADA bedrock dimensions
--- recorded during the earlier script audit: 2048 x 10 x 2048 at (0, 0, 0).
--- Workspace.Chunks is deliberately left untouched so food can still spawn/be collected.
+-- One persistent anchored farm floor. Its height is matched to the active map's
+-- detected walkable surface; Workspace.Chunks is deliberately left untouched.
 local FARM_FLOOR_NAME = "dEnzCreator_FarmFloor"
 local FARM_FLOOR_SIZE = Vector3.new(2048, 10, 2048)
-local FARM_FLOOR_CFRAME = CFrame.new(0, 0, 0)
+local FARM_FLOOR_HALF_HEIGHT = FARM_FLOOR_SIZE.Y / 2
+local FARM_LANDING_X = 0
+local FARM_LANDING_Z = 50
+local FARM_SURFACE_RAY_TOP = 5000
+local FARM_SURFACE_RAY_LENGTH = 10000
+local FARM_SURFACE_SCAN_INTERVAL = 0.35
 local farmFloor = nil
+local farmSurfaceMapKey = ""
+local farmSurfaceTopY = nil
+local lastFarmSurfaceScan = 0
 
 local function ensureFarmFloor()
     if farmFloor and farmFloor.Parent == Workspace then
@@ -124,13 +131,17 @@ local function ensureFarmFloor()
     local existing = Workspace:FindFirstChild(FARM_FLOOR_NAME)
     if existing and existing:IsA("BasePart") then
         farmFloor = existing
+        farmFloor.Anchored = true
+        farmFloor.CanCollide = true
+        farmFloor.CanTouch = true
+        farmFloor.CanQuery = true
         return farmFloor
     end
 
     local floor = Instance.new("Part")
     floor.Name = FARM_FLOOR_NAME
     floor.Size = FARM_FLOOR_SIZE
-    floor.CFrame = FARM_FLOOR_CFRAME
+    floor.CFrame = CFrame.new(0, -FARM_FLOOR_HALF_HEIGHT, 0)
     floor.Anchored = true
     floor.CanCollide = true
     floor.CanTouch = true
@@ -145,11 +156,87 @@ local function ensureFarmFloor()
     return floor
 end
 
+-- Find a broad, walkable map surface under the shared X=0, Z=50 landing point.
+-- Original map parts are only hidden with LocalTransparencyModifier, so they
+-- remain queryable and can still provide their actual height for this scan.
+local function detectMapSurfaceTopY()
+    local mapRoot = Workspace:FindFirstChild("Map")
+    if not mapRoot then return nil end
+
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Include
+    params.FilterDescendantsInstances = {mapRoot, Workspace.Terrain}
+    params.IgnoreWater = true
+
+    local offsets = {
+        {0, 0}, {4, 0}, {-4, 0}, {0, 4}, {0, -4},
+        {8, 8}, {-8, 8}, {8, -8}, {-8, -8}
+    }
+    local heights = {}
+
+    for _, offset in ipairs(offsets) do
+        local origin = Vector3.new(FARM_LANDING_X + offset[1], FARM_SURFACE_RAY_TOP,
+            FARM_LANDING_Z + offset[2])
+        local result = Workspace:Raycast(origin, Vector3.new(0, -FARM_SURFACE_RAY_LENGTH, 0), params)
+        if result and result.Normal.Y >= 0.82 then
+            local hit = result.Instance
+            local acceptable = hit == Workspace.Terrain
+            if hit:IsA("BasePart") then
+                acceptable = hit.CanCollide and hit.CanQuery
+                    and hit.CFrame.UpVector.Y >= 0.82
+                    and hit.Size.X >= 12 and hit.Size.Z >= 12
+            end
+            if acceptable then
+                table.insert(heights, result.Position.Y)
+            end
+        end
+    end
+
+    if #heights == 0 then return nil end
+    table.sort(heights)
+    -- Median rejects isolated raised props while tolerating small terrain variation.
+    local middle = math.floor((#heights + 1) / 2)
+    if #heights % 2 == 0 then
+        return (heights[middle] + heights[middle + 1]) / 2
+    end
+    return heights[middle]
+end
+
+local function positionFarmFloorForMap(mapKey)
+    if farmSurfaceMapKey ~= mapKey then
+        farmSurfaceMapKey = mapKey
+        farmSurfaceTopY = nil
+        lastFarmSurfaceScan = 0
+    end
+
+    if farmSurfaceTopY then return true end
+    local now = os.clock()
+    if now - lastFarmSurfaceScan < FARM_SURFACE_SCAN_INTERVAL then
+        return false
+    end
+    lastFarmSurfaceScan = now
+
+    local mapTopY = detectMapSurfaceTopY()
+    if mapTopY == nil then return false end
+
+    -- Keep the black anchored floor just above the actual map surface.
+    farmSurfaceTopY = mapTopY + 0.05
+    local floor = ensureFarmFloor()
+    floor.CFrame = CFrame.new(0, farmSurfaceTopY - FARM_FLOOR_HALF_HEIGHT, 0)
+    floor.Anchored = true
+    print("[dEnzCreator] Anchored farm floor matched map surface:", mapKey,
+        "topY:", math.floor(farmSurfaceTopY * 100 + 0.5) / 100)
+    return true
+end
+
 local function removeFarmFloor()
     if farmFloor then
         pcall(function() farmFloor:Destroy() end)
         farmFloor = nil
     end
+    farmSurfaceMapKey = ""
+    farmSurfaceTopY = nil
+    lastFarmSurfaceScan = 0
     local existing = Workspace:FindFirstChild(FARM_FLOOR_NAME)
     if existing then pcall(function() existing:Destroy() end) end
 end
@@ -159,10 +246,8 @@ local function farmAnchor()
     if not char then return false end
 
     local mapName, key = getMapName()
-    -- Unified landing point: every map uses X=0, Z=50.
-    -- Y remains calculated from the floor top and character dimensions so the
-    -- HumanoidRootPart stands safely on the floor instead of clipping into it.
-    local z = 50
+    -- Unified horizontal landing point; the floor height is detected per map.
+    local z = FARM_LANDING_Z
     local mapChanged = mapName ~= lastMap
 
     -- On every map change, immediately re-seat the character on the persistent
@@ -184,15 +269,19 @@ local function farmAnchor()
     end
 
     local floor = ensureFarmFloor()
+    if not positionFarmFloorForMap(key) then
+        -- Do not teleport to an old map's Y while the new map is still loading.
+        return false
+    end
     local floorTop = floor.Position.Y + floor.Size.Y / 2
     local targetY = floorTop + hum.HipHeight + root.Size.Y / 2 + 0.08
-    local targetCFrame = CFrame.new(0, targetY, z)
+    local targetCFrame = CFrame.new(FARM_LANDING_X, targetY, z)
 
     -- Do not let map-transition impulses launch the character above the floor.
     -- Correct only meaningful drift, avoiding needless CFrame writes each frame.
     local position = root.Position
     local horizontalDrift = (Vector3.new(position.X, 0, position.Z)
-        - Vector3.new(0, 0, z)).Magnitude
+        - Vector3.new(FARM_LANDING_X, 0, z)).Magnitude
     local verticalDrift = math.abs(position.Y - targetY)
 
     if mapChanged or horizontalDrift > 2.0 or verticalDrift > 0.35 then
@@ -425,6 +514,9 @@ local function monitorLandingEatProgress(char, hum, root)
     end
 
     local now = os.clock()
+    if not farmSurfaceTopY then
+        return false
+    end
     if not landingConfirmedAt then
         local floor = ensureFarmFloor()
         local floorTop = floor.Position.Y + floor.Size.Y / 2
@@ -1135,7 +1227,7 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator] Loaded. All maps use landing X=0, Z=50 with Y grounded to the floor; Grab and post-Grab delays target 0.02s/12 each; actual timing is Heartbeat-frame-limited; 10x Grab animation acceleration and 5x Eat animation acceleration; continuous floor hold retained through map transitions.")
+print("[dEnzCreator] Loaded. All maps use landing X=0, Z=50; anchored floor Y is detected from each map surface; Grab/Eat animation acceleration 5x; Grab and post-Grab delays target 0.02s/12 each.")
 print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
 -- V3.3.6 keeps the character seated on the dedicated floor through map transitions; Grab/Eat never waits for food detection.
