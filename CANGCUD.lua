@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM V3.3.5 - BLACK FLOOR / TRANSITION
+-- dEnzCreator ETW AUTOFARM V3.3.6 - BLACK FLOOR / TRANSITION
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -161,38 +161,48 @@ local function farmAnchor()
         or (isStudville and CFG.StudvilleZ or CFG.DefaultZ)
     local mapChanged = mapName ~= lastMap
 
-    -- Do not continuously overwrite the character CFrame every Heartbeat.
-    -- Place the character once on the dedicated farm floor; do not chase map geometry.
+    -- On every map change, immediately re-seat the character on the persistent
+    -- farm floor. Keep the transition state until the next map's food is seen.
     if mapChanged then
         lastMap = mapName
         pendingLandingMap = mapName
         lastLandingAttempt = 0
-        print("[dEnzCreator V3.3.5] Map changed; searching for floor:", mapName)
+        print("[dEnzCreator V3.3.6] Map transition detected; holding character at floor:", mapName)
     end
-
-    if not pendingLandingMap then
-        return true
-    end
-
-    -- Retry only while the destination floor is not available; no fixed wait.
-    if os.clock() - lastLandingAttempt < 0.10 then
-        return false
-    end
-    lastLandingAttempt = os.clock()
 
     local floor = ensureFarmFloor()
-    local targetY = floor.Position.Y + floor.Size.Y / 2
-        + hum.HipHeight + root.Size.Y / 2 + 0.15
-    root.AssemblyLinearVelocity = Vector3.zero
-    root.AssemblyAngularVelocity = Vector3.zero
-    root.CFrame = CFrame.new(0, targetY, z)
-    pcall(function()
-        hum:ChangeState(Enum.HumanoidStateType.GettingUp)
-    end)
+    local floorTop = floor.Position.Y + floor.Size.Y / 2
+    local targetY = floorTop + hum.HipHeight + root.Size.Y / 2 + 0.08
+    local targetCFrame = CFrame.new(0, targetY, z)
 
-    print("[dEnzCreator V3.3.5] Landed on map floor:", pendingLandingMap,
-        "| X=0 Y=", targetY, "Z=", z)
-    pendingLandingMap = nil
+    -- Do not let map-transition impulses launch the character above the floor.
+    -- Correct only meaningful drift, avoiding needless CFrame writes each frame.
+    local position = root.Position
+    local horizontalDrift = (Vector3.new(position.X, 0, position.Z)
+        - Vector3.new(0, 0, z)).Magnitude
+    local verticalDrift = math.abs(position.Y - targetY)
+
+    if mapChanged or horizontalDrift > 2.0 or verticalDrift > 0.35 then
+        root.CFrame = targetCFrame
+        root.AssemblyLinearVelocity = Vector3.zero
+        root.AssemblyAngularVelocity = Vector3.zero
+        pcall(function()
+            hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end)
+        lastLandingAttempt = os.clock()
+    else
+        -- Kill upward/downward momentum while leaving the character seated.
+        local velocity = root.AssemblyLinearVelocity
+        if math.abs(velocity.Y) > 0.5 then
+            root.AssemblyLinearVelocity = Vector3.new(velocity.X, 0, velocity.Z)
+        end
+        if root.AssemblyAngularVelocity.Magnitude > 0.5 then
+            root.AssemblyAngularVelocity = Vector3.zero
+        end
+    end
+
+    -- Keep pendingLandingMap until food is detected by farmStep; this is a
+    -- transition marker, not a wait gate for Grab/Eat.
     return true
 end
 
@@ -210,7 +220,7 @@ local function requestSkip()
     local folder = ReplicatedStorage:FindFirstChild("Events")
     local remote = folder and folder:FindFirstChild("SetServerSettings")
     if not remote or not remote:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.3.5] SetServerSettings RemoteEvent not found.")
+        warn("[dEnzCreator V3.3.6] SetServerSettings RemoteEvent not found.")
         return false
     end
 
@@ -220,11 +230,11 @@ local function requestSkip()
         remote:FireServer(unpack(args))
     end)
     if ok then
-        print("[dEnzCreator V3.3.5] AutoSkip request sent (timer not paused).")
+        print("[dEnzCreator V3.3.6] AutoSkip request sent (timer not paused).")
         return true
     end
 
-    warn("[dEnzCreator V3.3.5] AutoSkip error:", err)
+    warn("[dEnzCreator V3.3.6] AutoSkip error:", err)
     return false
 end
 
@@ -260,7 +270,7 @@ local function monitorGrabEatAvailability()
     end
 
     if not missingActionSkipSent and os.clock() - missingActionSince >= 3.0 then
-        warn("[dEnzCreator V3.3.5] Grab/Eat missing on", mapName,
+        warn("[dEnzCreator V3.3.6] Grab/Eat missing on", mapName,
             "- requesting automatic map skip.")
         missingActionSkipSent = true
         requestSkip()
@@ -277,7 +287,7 @@ local function switchModeIfEnabled(mapName)
         local mode = CFG.SmallMaps[key] and "Mega" or "Normal"
         if pcall(function() remote:FireServer(mode) end) then
             lastMode = key
-            print("[dEnzCreator V3.3.5] RequestTeleport:", mode, mapName)
+            print("[dEnzCreator V3.3.6] RequestTeleport:", mode, mapName)
         end
     end
 end
@@ -353,11 +363,11 @@ end
 local function sendAutoSell(events)
     local sell = events and events:FindFirstChild("Sell")
     if not sell then
-        warn("[dEnzCreator V3.3.5] Character.Events.Sell not found.")
+        warn("[dEnzCreator V3.3.6] Character.Events.Sell not found.")
         return false
     end
     if not sell:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.3.5] Sell exists but is not a RemoteEvent:", sell.ClassName)
+        warn("[dEnzCreator V3.3.6] Sell exists but is not a RemoteEvent:", sell.ClassName)
         return false
     end
 
@@ -365,11 +375,11 @@ local function sendAutoSell(events)
         sell:FireServer()
     end)
     if not ok then
-        warn("[dEnzCreator V3.3.5] AutoSell error:", err)
+        warn("[dEnzCreator V3.3.6] AutoSell error:", err)
         return false
     end
 
-    print("[dEnzCreator V3.3.5] AutoSell request sent.")
+    print("[dEnzCreator V3.3.6] AutoSell request sent.")
     return true
 end
 
@@ -453,6 +463,13 @@ local function farmStep()
     accelerateActionAnimations(hum)
 
     local foodNearby = monitorNearbyFood(char, root)
+    if foodNearby and pendingLandingMap then
+        print("[dEnzCreator V3.3.6] Food detected after transition; character remained on farm floor:",
+            pendingLandingMap)
+        pendingLandingMap = nil
+    end
+    -- Re-assert the floor lock after food detection, without pausing Grab/Eat.
+    farmAnchor()
 
     -- X12 delay tuning: Grab and the post-Grab Eat phase each use 1/12
     -- of the former 0.04s interval. Heartbeat frame rate is the practical
@@ -467,7 +484,7 @@ local function farmStep()
         if grabEvent and eatEvent and cycleStartedAt == nil then
             cycleStartedAt = now
             completedCycleSeconds = 0
-            print("[dEnzCreator V3.3.5] Season time started: Grab/Eat menu active.")
+            print("[dEnzCreator V3.3.6] Season time started: Grab/Eat menu active.")
         end
 
         if grabEvent and eatEvent and now >= nextGrabEatActionAt then
@@ -507,13 +524,13 @@ local function farmStep()
         if barFull and cycleStartedAt ~= nil then
             completedCycleSeconds = math.max(0, os.clock() - cycleStartedAt)
             cycleStartedAt = nil
-            print("[dEnzCreator V3.3.5] Season time stopped: sell bar detected full.")
+            print("[dEnzCreator V3.3.6] Season time stopped: sell bar detected full.")
         end
         if not wasFull then
             wasFull = true
             skipSentForCycle = false
             lastSellAttempt = 0
-            print("[dEnzCreator V3.3.5] FULL detected | Size:", size,
+            print("[dEnzCreator V3.3.6] FULL detected | Size:", size,
                 "| Live MaxSize:", maxSize, "| Bar:", barProgress)
         end
         -- Retry at a measured interval if the server has not processed a sale.
@@ -531,13 +548,13 @@ local function farmStep()
             or sizeDrop or barDrop
 
         if sold then
-            print("[dEnzCreator V3.3.5] Sale/reset detected; requesting AutoSkip.")
+            print("[dEnzCreator V3.3.6] Sale/reset detected; requesting AutoSkip.")
             if not skipSentForCycle then
                 skipSentForCycle = requestSkip()
             end
             wasFull = false
             lastSellAttempt = 0
-            print("[dEnzCreator V3.3.5] AutoSell cycle re-armed.")
+            print("[dEnzCreator V3.3.6] AutoSell cycle re-armed.")
         end
     end
 
@@ -677,7 +694,7 @@ local function bindHiddenMapRoot(mapRoot)
         end
         if hiddenMapGeneration == generation then
             hiddenMapScanRunning = false
-            print("[dEnzCreator V3.3.5] Map visuals hidden; dedicated farm floor active:", mapRoot.Name,
+            print("[dEnzCreator V3.3.6] Map visuals hidden; dedicated farm floor active:", mapRoot.Name,
                 "| objects checked:", processed)
         end
     end)
@@ -695,11 +712,11 @@ local function setHiddenMaps(enabled)
     if enabled then
         hiddenMapsEnabled = true
         applyHiddenMap()
-        print("[dEnzCreator V3.3.5] Hidden Maps ON. Original map visuals hidden; food/chunks preserved.")
+        print("[dEnzCreator V3.3.6] Hidden Maps ON. Original map visuals hidden; food/chunks preserved.")
     else
         hiddenMapsEnabled = false
         restoreHiddenMap()
-        print("[dEnzCreator V3.3.5] Hidden Maps OFF. Original map visuals restored.")
+        print("[dEnzCreator V3.3.6] Hidden Maps OFF. Original map visuals restored.")
     end
 end
 
@@ -831,7 +848,7 @@ makeToggle("AUTOFARM", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
         removeFarmFloor()
         pendingLandingMap = nil
     end
-    print("[dEnzCreator V3.3.5] AutoFarm", on and "ON" or "OFF")
+    print("[dEnzCreator V3.3.6] AutoFarm", on and "ON" or "OFF")
 end)
 
 -- Map hiding is now automatic with AutoFarm; no separate toggle is needed.
@@ -1015,16 +1032,16 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator V3.3.5] Loaded. Grab and post-Grab delays target 0.04s/12 each; actual timing is Heartbeat-frame-limited; 5x named Grab/Eat animation acceleration; landing stabilizer retained.")
-print("[dEnzCreator V3.3.5] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
+print("[dEnzCreator V3.3.6] Loaded. Grab and post-Grab delays target 0.04s/12 each; actual timing is Heartbeat-frame-limited; 5x named Grab/Eat animation acceleration; continuous floor hold retained through map transitions.")
+print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
--- V3.3.5 creates one dedicated 2048x10x2048 black studded farm floor; original map floors/visuals are hidden.
+-- V3.3.6 keeps the character seated on the dedicated floor through map transitions; Grab/Eat never waits for food detection.
 
--- V3.3.5: Food/chunk hierarchy is intentionally preserved; original map visuals are hidden.
+-- V3.3.6: Transition floor lock corrects upward impulses and holds position until new food is detected.
 
--- V3.3.5 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
+-- V3.3.6 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
 
 
--- V3.3.5: Combined title/timer header (140px), left-aligned title, 5x named Grab/Eat animation acceleration. Grab and post-Grab delays are each divided by 12.
+-- V3.3.6: Combined title/timer header (140px), left-aligned title, 5x named Grab/Eat animation acceleration. Grab and post-Grab delays are each divided by 12.
 
--- V3.3.5: Season time starts when map food objects are detected and stops when the sell bar reaches full.
+-- V3.3.6: Season time starts when map food objects are detected and stops when the sell bar reaches full.
