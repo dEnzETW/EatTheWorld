@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM V3.3.4 - BLACK FLOOR / TRANSITION
+-- dEnzCreator ETW AUTOFARM V3.3.5 - BLACK FLOOR / TRANSITION
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -63,13 +63,6 @@ local hiddenMapsEnabled = false
 local hiddenMapOriginals = {}
 local hiddenMapConnections = {}
 local workspaceMapConnection = nil
-local dynamicCollisionEnabled = false
-local collisionOriginals = {}
-local collisionMapRoot = nil
-local collisionMapAddedConnection = nil
-local lastCollisionUpdate = 0
-local collisionUpdateInterval = 0.15
-local collisionGroundParts = {}
 
 local function norm(v)
     return string.lower(tostring(v or "")):gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " ")
@@ -109,6 +102,53 @@ local function getParts()
     if hum and root then return char, hum, root, events end
 end
 
+
+-- One persistent farm floor, matching the KEDADA bedrock dimensions
+-- recorded during the earlier script audit: 2048 x 10 x 2048 at (0, -5, 0).
+-- Workspace.Chunks is deliberately left untouched so food can still spawn/be collected.
+local FARM_FLOOR_NAME = "dEnzCreator_FarmFloor"
+local FARM_FLOOR_SIZE = Vector3.new(2048, 10, 2048)
+local FARM_FLOOR_CFRAME = CFrame.new(0, -5, 0)
+local farmFloor = nil
+
+local function ensureFarmFloor()
+    if farmFloor and farmFloor.Parent == Workspace then
+        return farmFloor
+    end
+
+    local existing = Workspace:FindFirstChild(FARM_FLOOR_NAME)
+    if existing and existing:IsA("BasePart") then
+        farmFloor = existing
+        return farmFloor
+    end
+
+    local floor = Instance.new("Part")
+    floor.Name = FARM_FLOOR_NAME
+    floor.Size = FARM_FLOOR_SIZE
+    floor.CFrame = FARM_FLOOR_CFRAME
+    floor.Anchored = true
+    floor.CanCollide = true
+    floor.CanTouch = true
+    floor.CanQuery = true
+    floor.CastShadow = false
+    floor.Color = Color3.fromRGB(5, 5, 7)
+    floor.Material = Enum.Material.SmoothPlastic
+    floor.TopSurface = Enum.SurfaceType.Studs
+    floor.BottomSurface = Enum.SurfaceType.Smooth
+    floor.Parent = Workspace
+    farmFloor = floor
+    return floor
+end
+
+local function removeFarmFloor()
+    if farmFloor then
+        pcall(function() farmFloor:Destroy() end)
+        farmFloor = nil
+    end
+    local existing = Workspace:FindFirstChild(FARM_FLOOR_NAME)
+    if existing then pcall(function() existing:Destroy() end) end
+end
+
 local function farmAnchor()
     local char, hum, root = getParts()
     if not char then return false end
@@ -122,12 +162,12 @@ local function farmAnchor()
     local mapChanged = mapName ~= lastMap
 
     -- Do not continuously overwrite the character CFrame every Heartbeat.
-    -- Wait for actual map floor collision, then teleport once onto that floor.
+    -- Place the character once on the dedicated farm floor; do not chase map geometry.
     if mapChanged then
         lastMap = mapName
         pendingLandingMap = mapName
         lastLandingAttempt = 0
-        print("[dEnzCreator V3.3.4] Map changed; searching for floor:", mapName)
+        print("[dEnzCreator V3.3.5] Map changed; searching for floor:", mapName)
     end
 
     if not pendingLandingMap then
@@ -140,26 +180,9 @@ local function farmAnchor()
     end
     lastLandingAttempt = os.clock()
 
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = {char}
-    params.IgnoreWater = true
-
-    local origin = Vector3.new(0, 5000, z)
-    local result = Workspace:Raycast(origin, Vector3.new(0, -10000, 0), params)
-
-    -- Ignore the script's own artificial bedrock if present.
-    local bedrock = Workspace:FindFirstChild("bedrock")
-    if result and bedrock and result.Instance == bedrock then
-        params.FilterDescendantsInstances = {char, bedrock}
-        result = Workspace:Raycast(origin, Vector3.new(0, -10000, 0), params)
-    end
-
-    if not result then
-        return false
-    end
-
-    local targetY = result.Position.Y + hum.HipHeight + root.Size.Y / 2 + 0.15
+    local floor = ensureFarmFloor()
+    local targetY = floor.Position.Y + floor.Size.Y / 2
+        + hum.HipHeight + root.Size.Y / 2 + 0.15
     root.AssemblyLinearVelocity = Vector3.zero
     root.AssemblyAngularVelocity = Vector3.zero
     root.CFrame = CFrame.new(0, targetY, z)
@@ -167,7 +190,7 @@ local function farmAnchor()
         hum:ChangeState(Enum.HumanoidStateType.GettingUp)
     end)
 
-    print("[dEnzCreator V3.3.4] Landed on map floor:", pendingLandingMap,
+    print("[dEnzCreator V3.3.5] Landed on map floor:", pendingLandingMap,
         "| X=0 Y=", targetY, "Z=", z)
     pendingLandingMap = nil
     return true
@@ -187,7 +210,7 @@ local function requestSkip()
     local folder = ReplicatedStorage:FindFirstChild("Events")
     local remote = folder and folder:FindFirstChild("SetServerSettings")
     if not remote or not remote:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.3.4] SetServerSettings RemoteEvent not found.")
+        warn("[dEnzCreator V3.3.5] SetServerSettings RemoteEvent not found.")
         return false
     end
 
@@ -197,11 +220,11 @@ local function requestSkip()
         remote:FireServer(unpack(args))
     end)
     if ok then
-        print("[dEnzCreator V3.3.4] AutoSkip request sent (timer not paused).")
+        print("[dEnzCreator V3.3.5] AutoSkip request sent (timer not paused).")
         return true
     end
 
-    warn("[dEnzCreator V3.3.4] AutoSkip error:", err)
+    warn("[dEnzCreator V3.3.5] AutoSkip error:", err)
     return false
 end
 
@@ -237,7 +260,7 @@ local function monitorGrabEatAvailability()
     end
 
     if not missingActionSkipSent and os.clock() - missingActionSince >= 3.0 then
-        warn("[dEnzCreator V3.3.4] Grab/Eat missing on", mapName,
+        warn("[dEnzCreator V3.3.5] Grab/Eat missing on", mapName,
             "- requesting automatic map skip.")
         missingActionSkipSent = true
         requestSkip()
@@ -254,7 +277,7 @@ local function switchModeIfEnabled(mapName)
         local mode = CFG.SmallMaps[key] and "Mega" or "Normal"
         if pcall(function() remote:FireServer(mode) end) then
             lastMode = key
-            print("[dEnzCreator V3.3.4] RequestTeleport:", mode, mapName)
+            print("[dEnzCreator V3.3.5] RequestTeleport:", mode, mapName)
         end
     end
 end
@@ -330,11 +353,11 @@ end
 local function sendAutoSell(events)
     local sell = events and events:FindFirstChild("Sell")
     if not sell then
-        warn("[dEnzCreator V3.3.4] Character.Events.Sell not found.")
+        warn("[dEnzCreator V3.3.5] Character.Events.Sell not found.")
         return false
     end
     if not sell:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.3.4] Sell exists but is not a RemoteEvent:", sell.ClassName)
+        warn("[dEnzCreator V3.3.5] Sell exists but is not a RemoteEvent:", sell.ClassName)
         return false
     end
 
@@ -342,11 +365,11 @@ local function sendAutoSell(events)
         sell:FireServer()
     end)
     if not ok then
-        warn("[dEnzCreator V3.3.4] AutoSell error:", err)
+        warn("[dEnzCreator V3.3.5] AutoSell error:", err)
         return false
     end
 
-    print("[dEnzCreator V3.3.4] AutoSell request sent.")
+    print("[dEnzCreator V3.3.5] AutoSell request sent.")
     return true
 end
 
@@ -444,7 +467,7 @@ local function farmStep()
         if grabEvent and eatEvent and cycleStartedAt == nil then
             cycleStartedAt = now
             completedCycleSeconds = 0
-            print("[dEnzCreator V3.3.4] Season time started: Grab/Eat menu active.")
+            print("[dEnzCreator V3.3.5] Season time started: Grab/Eat menu active.")
         end
 
         if grabEvent and eatEvent and now >= nextGrabEatActionAt then
@@ -484,13 +507,13 @@ local function farmStep()
         if barFull and cycleStartedAt ~= nil then
             completedCycleSeconds = math.max(0, os.clock() - cycleStartedAt)
             cycleStartedAt = nil
-            print("[dEnzCreator V3.3.4] Season time stopped: sell bar detected full.")
+            print("[dEnzCreator V3.3.5] Season time stopped: sell bar detected full.")
         end
         if not wasFull then
             wasFull = true
             skipSentForCycle = false
             lastSellAttempt = 0
-            print("[dEnzCreator V3.3.4] FULL detected | Size:", size,
+            print("[dEnzCreator V3.3.5] FULL detected | Size:", size,
                 "| Live MaxSize:", maxSize, "| Bar:", barProgress)
         end
         -- Retry at a measured interval if the server has not processed a sale.
@@ -508,13 +531,13 @@ local function farmStep()
             or sizeDrop or barDrop
 
         if sold then
-            print("[dEnzCreator V3.3.4] Sale/reset detected; requesting AutoSkip.")
+            print("[dEnzCreator V3.3.5] Sale/reset detected; requesting AutoSkip.")
             if not skipSentForCycle then
                 skipSentForCycle = requestSkip()
             end
             wasFull = false
             lastSellAttempt = 0
-            print("[dEnzCreator V3.3.4] AutoSell cycle re-armed.")
+            print("[dEnzCreator V3.3.5] AutoSell cycle re-armed.")
         end
     end
 
@@ -530,7 +553,7 @@ end
 -- HIDDEN MAPS: FAST TRANSITION / LOW VISUAL LOAD / BLACK FLOOR
 -- KEDADA-style: hide non-food visuals under Workspace.Map only.
 -- Workspace.Chunks is deliberately untouched so food/chunk gameplay remains safe.
--- No objects are destroyed/unparented; collision/query/touch properties are unchanged.
+-- Map visuals are hidden only; map object physics properties are unchanged.
 -- One active Map root, one DescendantAdded connection, bounded scan batches.
 
 local hiddenMapRoot = nil
@@ -555,50 +578,17 @@ local function isProtectedMapObject(obj, mapRoot)
     return false
 end
 
--- Keep large horizontal floor surfaces visible and black while hiding
--- buildings/decorations. This is visual-only: collision/query/touch are untouched.
-local function isFloorPart(obj)
-    if not obj or not obj:IsA("BasePart") then return false end
-
-    local name = norm(obj.Name)
-    if name:find("floor", 1, true)
-        or name:find("ground", 1, true)
-        or name:find("baseplate", 1, true)
-        or name:find("bedrock", 1, true)
-        or name:find("platform", 1, true) then
-        return true
-    end
-
-    -- Fallback for unnamed map floors: broad, thin, mostly-horizontal parts.
-    local size = obj.Size
-    return size.X >= 100 and size.Z >= 100
-        and size.Y <= 18
-        and size.Y < math.min(size.X, size.Z) * 0.08
-end
-
 local function hideMapObject(obj, mapRoot)
     if not hiddenMapsEnabled or not obj or obj == mapRoot then return end
     if isProtectedMapObject(obj, mapRoot) then return end
 
     if obj:IsA("BasePart") then
-        if isFloorPart(obj) then
-            if hiddenMapOriginals[obj] == nil then
-                hiddenMapOriginals[obj] = {
-                    kind = "floor",
-                    transparency = obj.LocalTransparencyModifier,
-                    color = obj.Color,
-                    material = obj.Material
-                }
-            end
-            obj.LocalTransparencyModifier = 0
-            obj.Color = Color3.new(0, 0, 0)
-            obj.Material = Enum.Material.SmoothPlastic
-        else
-            if hiddenMapOriginals[obj] == nil then
-                hiddenMapOriginals[obj] = {kind = "part", value = obj.LocalTransparencyModifier}
-            end
-            obj.LocalTransparencyModifier = 1
+        -- Hide original map floors too: the dedicated black studded bedrock
+        -- is the single visible/collidable farm surface.
+        if hiddenMapOriginals[obj] == nil then
+            hiddenMapOriginals[obj] = {kind = "part", value = obj.LocalTransparencyModifier}
         end
+        obj.LocalTransparencyModifier = 1
     elseif obj:IsA("Decal") or obj:IsA("Texture") then
         if hiddenMapOriginals[obj] == nil then
             hiddenMapOriginals[obj] = {kind = "texture", value = obj.Transparency}
@@ -684,13 +674,10 @@ local function bindHiddenMapRoot(mapRoot)
                 hideMapObject(obj, mapRoot)
             end
             processed = processed + 1
-            if processed % 250 == 0 then
-                RunService.Heartbeat:Wait()
-            end
         end
         if hiddenMapGeneration == generation then
             hiddenMapScanRunning = false
-            print("[dEnzCreator V3.3.4] Hidden Map ready (black floor preserved):", mapRoot.Name,
+            print("[dEnzCreator V3.3.5] Map visuals hidden; dedicated farm floor active:", mapRoot.Name,
                 "| objects checked:", processed)
         end
     end)
@@ -708,122 +695,11 @@ local function setHiddenMaps(enabled)
     if enabled then
         hiddenMapsEnabled = true
         applyHiddenMap()
-        print("[dEnzCreator V3.3.4] Hidden Maps ON. Buildings hidden; floor black/visible; Chunks untouched.")
+        print("[dEnzCreator V3.3.5] Hidden Maps ON. Original map visuals hidden; food/chunks preserved.")
     else
         hiddenMapsEnabled = false
         restoreHiddenMap()
-        print("[dEnzCreator V3.3.4] Hidden Maps OFF. Original floor color/material and visuals restored.")
-    end
-end
-
--- DYNAMIC COLLISION TEST (experimental)
--- Map BaseParts that are not protected are non-collidable by default.
--- A small set of surfaces directly beneath/around the character are restored
--- to their original CanCollide state using downward raycasts. CanQuery and
--- CanTouch are never changed. Food/chunk hierarchies are left untouched.
-local function saveAndDisableMapCollision(obj, mapRoot)
-    if not dynamicCollisionEnabled or not obj or not obj:IsA("BasePart") then return end
-    if isProtectedMapObject(obj, mapRoot) then return end
-    if collisionOriginals[obj] == nil then
-        collisionOriginals[obj] = obj.CanCollide
-    end
-    obj.CanCollide = false
-end
-
-local function restoreDynamicCollision()
-    dynamicCollisionEnabled = false
-    for obj, original in pairs(collisionOriginals) do
-        if obj and obj.Parent then
-            pcall(function() obj.CanCollide = original end)
-        end
-    end
-    table.clear(collisionOriginals)
-    table.clear(collisionGroundParts)
-    if collisionMapAddedConnection then
-        pcall(function() collisionMapAddedConnection:Disconnect() end)
-        collisionMapAddedConnection = nil
-    end
-    collisionMapRoot = nil
-end
-
-local function bindDynamicCollisionRoot(root)
-    if not dynamicCollisionEnabled or not root then return end
-    if collisionMapRoot == root then return end
-    -- Restore old-map parts before releasing their references.
-    if collisionMapAddedConnection then
-        pcall(function() collisionMapAddedConnection:Disconnect() end)
-        collisionMapAddedConnection = nil
-    end
-    for obj, original in pairs(collisionOriginals) do
-        if obj and obj.Parent then pcall(function() obj.CanCollide = original end) end
-    end
-    table.clear(collisionOriginals)
-    table.clear(collisionGroundParts)
-    collisionMapRoot = root
-    for _, obj in ipairs(root:GetDescendants()) do
-        saveAndDisableMapCollision(obj, root)
-    end
-    collisionMapAddedConnection = root.DescendantAdded:Connect(function(obj)
-        if dynamicCollisionEnabled and collisionMapRoot == root then
-            task.defer(function()
-                if dynamicCollisionEnabled and collisionMapRoot == root
-                    and obj and obj.Parent and obj:IsDescendantOf(root) then
-                    saveAndDisableMapCollision(obj, root)
-                end
-            end)
-        end
-    end)
-end
-
-local function updateDynamicCollision()
-    if not dynamicCollisionEnabled then return end
-    local now = os.clock()
-    if now - lastCollisionUpdate < collisionUpdateInterval then return end
-    lastCollisionUpdate = now
-    local char, hum, rootPart = getParts()
-    if not char or not rootPart then return end
-    local mapRoot = Workspace:FindFirstChild("Map")
-    if not mapRoot then return end
-    if collisionMapRoot ~= mapRoot then bindDynamicCollisionRoot(mapRoot) end
-
-    -- First disable any previously enabled support surfaces.
-    for part in pairs(collisionGroundParts) do
-        local original = collisionOriginals[part]
-        if part and part.Parent and original ~= nil then
-            pcall(function() part.CanCollide = false end)
-        end
-    end
-    table.clear(collisionGroundParts)
-
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Include
-    params.FilterDescendantsInstances = {mapRoot}
-    params.IgnoreWater = true
-    local offsets = {
-        Vector3.new(0, 0, 0),
-        Vector3.new(7, 0, 0), Vector3.new(-7, 0, 0),
-        Vector3.new(0, 0, 7), Vector3.new(0, 0, -7)
-    }
-    for _, offset in ipairs(offsets) do
-        local origin = rootPart.Position + offset + Vector3.new(0, 7, 0)
-        local result = Workspace:Raycast(origin, Vector3.new(0, -24, 0), params)
-        local part = result and result.Instance
-        if part and part:IsA("BasePart") and collisionOriginals[part] == true then
-            collisionGroundParts[part] = true
-            part.CanCollide = true
-        end
-    end
-end
-
-local function setDynamicCollision(enabled)
-    if enabled then
-        dynamicCollisionEnabled = true
-        lastCollisionUpdate = 0
-        bindDynamicCollisionRoot(Workspace:FindFirstChild("Map"))
-        print("[dEnzCreator V3.3.4] Dynamic Collision ON. Only raycast support surfaces retain original collision; test carefully.")
-    else
-        restoreDynamicCollision()
-        print("[dEnzCreator V3.3.4] Dynamic Collision OFF. Original CanCollide values restored.")
+        print("[dEnzCreator V3.3.5] Hidden Maps OFF. Original map visuals restored.")
     end
 end
 
@@ -941,16 +817,24 @@ end
 
 makeToggle("AUTOFARM", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
     CFG.Farm = on
-    print("[dEnzCreator] AutoFarm", on and "ON" or "OFF")
+    if on then
+        -- Prepare the single floor and remove map visuals in the same activation.
+        ensureFarmFloor()
+        setHiddenMaps(true)
+        pendingLandingMap = getMapName()
+        lastLandingAttempt = 0
+        farmAnchor()
+        -- Do not wait for the next Heartbeat before the first Grab/Eat attempt.
+        pcall(farmStep)
+    else
+        setHiddenMaps(false)
+        removeFarmFloor()
+        pendingLandingMap = nil
+    end
+    print("[dEnzCreator V3.3.5] AutoFarm", on and "ON" or "OFF")
 end)
 
-makeToggle("HIDDEN MAPS", 3, Color3.fromRGB(65, 105, 190), hiddenMapsEnabled, function(on)
-    setHiddenMaps(on)
-end)
-
-makeToggle("DYNAMIC COLLISION TEST", 4, Color3.fromRGB(190, 115, 55), dynamicCollisionEnabled, function(on)
-    setDynamicCollision(on)
-end)
+-- Map hiding is now automatic with AutoFarm; no separate toggle is needed.
 
 local autoClaimEnabled = false
 local lastRewardClaim = 0
@@ -1001,6 +885,7 @@ close.Activated:Connect(function()
     running, CFG.Farm = false, false
     autoClaimEnabled = false
     setHiddenMaps(false)
+    removeFarmFloor()
     gui:Destroy()
 end)
 
@@ -1083,7 +968,6 @@ workspaceMapConnection = Workspace.ChildAdded:Connect(function(child)
         task.defer(function()
             if child.Parent == Workspace then
                 if hiddenMapsEnabled then bindHiddenMapRoot(child) end
-                if dynamicCollisionEnabled then bindDynamicCollisionRoot(child) end
             end
         end)
     end
@@ -1114,7 +998,6 @@ end)
 local connection = RunService.Heartbeat:Connect(function()
     if not running then return end
     pcall(updateRuntimeMonitor)
-    pcall(updateDynamicCollision)
     pcall(claimRewardsStep)
     if CFG.Farm then
         pcall(monitorGrabEatAvailability)
@@ -1126,23 +1009,22 @@ gui.AncestryChanged:Connect(function(_, parent)
         running, CFG.Farm = false, false
         autoClaimEnabled = false
         setHiddenMaps(false)
-        setDynamicCollision(false)
+        removeFarmFloor()
         if workspaceMapConnection then workspaceMapConnection:Disconnect() end
         connection:Disconnect()
     end
 end)
 
-print("[dEnzCreator V3.3.4] Loaded. Grab and post-Grab delays target 0.04s/12 each; actual timing is Heartbeat-frame-limited; 5x named Grab/Eat animation acceleration; landing stabilizer retained.")
-print("[dEnzCreator V3.3.4] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
-print("[dEnzCreator V3.3.4] Dynamic Collision is OFF by default; enable only for a controlled test.")
+print("[dEnzCreator V3.3.5] Loaded. Grab and post-Grab delays target 0.04s/12 each; actual timing is Heartbeat-frame-limited; 5x named Grab/Eat animation acceleration; landing stabilizer retained.")
+print("[dEnzCreator V3.3.5] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
--- V3.3.4 keeps map floors black/visible while hiding non-floor map visuals.
+-- V3.3.5 creates one dedicated 2048x10x2048 black studded farm floor; original map floors/visuals are hidden.
 
--- V3.3.4: Central Robloxia farm Z set to 700 studs for retest; missing Grab/Eat watchdog requests map skip.
+-- V3.3.5: Food/chunk hierarchy is intentionally preserved; original map visuals are hidden.
 
--- V3.3.4 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
+-- V3.3.5 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
 
 
--- V3.3.4: Combined title/timer header (140px), left-aligned title, 5x named Grab/Eat animation acceleration. Grab and post-Grab delays are each divided by 12.
+-- V3.3.5: Combined title/timer header (140px), left-aligned title, 5x named Grab/Eat animation acceleration. Grab and post-Grab delays are each divided by 12.
 
--- V3.3.4: Season time starts when map food objects are detected and stops when the sell bar reaches full.
+-- V3.3.5: Season time starts when map food objects are detected and stops when the sell bar reaches full.
