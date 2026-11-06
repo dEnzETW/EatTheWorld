@@ -15,6 +15,7 @@ if not player then return end
 local CFG = {
     Farm = false,
     DefaultZ = 0,
+    MegaMapZ = 350,
     CentralRobloxiaZ = 700,
     StudvilleZ = 100,
     AutoSkipAfterSell = true,
@@ -37,8 +38,8 @@ local running, lastMap, lastMode = true, "", ""
 local lastFoodAction = 0
 local grabEatPhase = "grab"
 local nextGrabEatActionAt = 0
-local GRAB_DELAY_BASE = 0.04
-local POST_GRAB_DELAY_BASE = 0.04
+local GRAB_DELAY_BASE = 0.02
+local POST_GRAB_DELAY_BASE = 0.02
 local DELAY_ACCELERATION = 12
 local GRAB_DELAY = GRAB_DELAY_BASE / DELAY_ACCELERATION
 local POST_GRAB_DELAY = POST_GRAB_DELAY_BASE / DELAY_ACCELERATION
@@ -161,8 +162,10 @@ local function farmAnchor()
     local isCentral = key == "central robloxia" or key == "robloxia tengah"
         or key == "central robloxia map"
     local isStudville = key == "studville"
+    local isMegaMap = CFG.SmallMaps[key] == true
     local z = isCentral and CFG.CentralRobloxiaZ
-        or (isStudville and CFG.StudvilleZ or CFG.DefaultZ)
+        or (isStudville and CFG.StudvilleZ
+        or (isMegaMap and CFG.MegaMapZ or CFG.DefaultZ))
     local mapChanged = mapName ~= lastMap
 
     -- On every map change, immediately re-seat the character on the persistent
@@ -502,7 +505,7 @@ local function farmStep()
     farmAnchor()
 
     -- X12 delay tuning: Grab and the post-Grab Eat phase each use 1/12
-    -- of the former 0.04s interval. Heartbeat frame rate is the practical
+    -- of the former 0.02s interval. Heartbeat frame rate is the practical
     -- lower bound; this does not spawn a high-frequency remote spam loop.
     if events then
         local now = os.clock()
@@ -1069,7 +1072,7 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator V3.3.6] Loaded. Grab and post-Grab delays target 0.04s/12 each; actual timing is Heartbeat-frame-limited; 5x named Grab/Eat animation acceleration; continuous floor hold retained through map transitions.")
+print("[dEnzCreator] Loaded. Mega maps use Z=350; Grab and post-Grab delays target 0.02s/12 each; actual timing is Heartbeat-frame-limited; 5x named Grab/Eat animation acceleration; continuous floor hold retained through map transitions.")
 print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
 -- V3.3.6 keeps the character seated on the dedicated floor through map transitions; Grab/Eat never waits for food detection.
