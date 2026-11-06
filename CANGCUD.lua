@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM - STAGE 1 MAP DIAGNOSTIC (NO MAP DETACHMENT)
+-- dEnzCreator ETW AUTOFARM - TRANSITION FLOOR LOCK + NO-FOOD AUTOSKIP
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -122,87 +122,6 @@ local farmFloor = nil
 local farmSurfaceMapKey = ""
 local farmSurfaceTopY = nil
 local lastFarmSurfaceScan = 0
-
--- STAGE 1 DIAGNOSTIC ONLY: observe map/floor structure during transitions.
--- This does not detach, reparent, hide, destroy, or modify any map object.
-local stage1LastMapRoot = nil
-local stage1LastMapName = ""
-local stage1LastReportAt = 0
-local STAGE1_REPORT_INTERVAL = 2.0
-local function stage1MapDiagnostic()
-    local now = os.clock()
-    local mapRoot = Workspace:FindFirstChild("Map")
-    local mapName = getMapName()
-    if now - stage1LastReportAt < STAGE1_REPORT_INTERVAL then return end
-    if mapRoot == stage1LastMapRoot and mapName == stage1LastMapName then return end
-    stage1LastReportAt = now
-    stage1LastMapRoot = mapRoot
-    stage1LastMapName = mapName
-
-    local _, _, root = getParts()
-    local charPos = root and root.Position or Vector3.zero
-    print("[STAGE1 MAP DIAG] ----- TRANSITION SNAPSHOT -----")
-    print("[STAGE1 MAP DIAG] mapName:", mapName, "Map instance:", mapRoot and mapRoot:GetFullName() or "MISSING",
-        "Map parent:", mapRoot and mapRoot.Parent and mapRoot.Parent:GetFullName() or "nil")
-    print("[STAGE1 MAP DIAG] character position:", charPos)
-
-    if mapRoot then
-        local descendants = mapRoot:GetDescendants()
-        print("[STAGE1 MAP DIAG] Map descendant count:", #descendants)
-        local candidates = {}
-        for _, obj in ipairs(descendants) do
-            if obj:IsA("BasePart") then
-                local size = obj.Size
-                local area = size.X * size.Z
-                local n = string.lower(obj.Name)
-                if area >= 10000 or n:find("floor", 1, true) or n:find("bedrock", 1, true)
-                    or n:find("ground", 1, true) then
-                    table.insert(candidates, {part = obj, area = area})
-                end
-            end
-        end
-        table.sort(candidates, function(a, b) return a.area > b.area end)
-        local limit = math.min(#candidates, 15)
-        print("[STAGE1 MAP DIAG] Large/named floor candidates:", #candidates, "showing:", limit)
-        for i = 1, limit do
-            local part = candidates[i].part
-            print("[STAGE1 MAP DIAG] MAP PART", i, part:GetFullName(),
-                "Size:", part.Size, "Position:", part.Position,
-                "Color:", part.Color, "Transparency:", part.Transparency,
-                "LocalTransparencyModifier:", part.LocalTransparencyModifier,
-                "Anchored:", part.Anchored, "CanCollide:", part.CanCollide)
-        end
-    else
-        print("[STAGE1 MAP DIAG] Workspace.Map is not present yet.")
-    end
-
-    -- Also list large floor-like parts outside Workspace.Map (e.g. a separate black base).
-    local outside = {}
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("BasePart") and obj ~= farmFloor and not (mapRoot and obj:IsDescendantOf(mapRoot))
-            and not (player.Character and obj:IsDescendantOf(player.Character)) then
-            local area = obj.Size.X * obj.Size.Z
-            local n = string.lower(obj.Name)
-            if area >= 10000 or n:find("floor", 1, true) or n:find("bedrock", 1, true)
-                or n:find("ground", 1, true) then
-                table.insert(outside, {part = obj, area = area})
-            end
-        end
-    end
-    table.sort(outside, function(a, b) return a.area > b.area end)
-    local outsideLimit = math.min(#outside, 10)
-    print("[STAGE1 MAP DIAG] Outside-Map floor candidates:", #outside, "showing:", outsideLimit)
-    for i = 1, outsideLimit do
-        local part = outside[i].part
-        print("[STAGE1 MAP DIAG] OUTSIDE PART", i, part:GetFullName(),
-            "Size:", part.Size, "Position:", part.Position,
-            "Color:", part.Color, "Transparency:", part.Transparency,
-            "LocalTransparencyModifier:", part.LocalTransparencyModifier,
-            "Anchored:", part.Anchored, "CanCollide:", part.CanCollide)
-    end
-    print("[STAGE1 MAP DIAG] ----- END SNAPSHOT -----")
-end
-
 
 local function ensureFarmFloor()
     if farmFloor and farmFloor.Parent == Workspace then
@@ -1078,6 +997,132 @@ runtimeBlock.TextYAlignment = Enum.TextYAlignment.Center
 -- Important: timer label is parented directly to header and has no background of its own.
 runtimeBlock.Parent = header
 
+-- STAGE 2 MAP INSPECTOR: read-only diagnostics shown on-screen (no console required).
+-- This section does not hide, move, reparent, or delete any game objects.
+local inspectorEnabled = true
+local inspectorLastScan = 0
+local inspectorText = nil
+local inspectorButton = nil
+
+local function getInstancePath(obj)
+    if not obj then return "not found" end
+    local names = {}
+    local current = obj
+    while current and current ~= game do
+        table.insert(names, 1, current.Name)
+        current = current.Parent
+    end
+    return table.concat(names, ".")
+end
+
+local function inspectMapReadOnly()
+    local mapRoot = Workspace:FindFirstChild("Map")
+    local farmFloorObject = Workspace:FindFirstChild("dEnzCreator_FarmFloor")
+    local chunksRoot = Workspace:FindFirstChild("Chunks")
+    local mapDescendants = mapRoot and mapRoot:GetDescendants() or {}
+    local mapPartCount, darkFloorCandidates = 0, {}
+
+    for _, obj in ipairs(mapDescendants) do
+        if obj:IsA("BasePart") then
+            mapPartCount = mapPartCount + 1
+            local s, c = obj.Size, obj.Color
+            local isLargeFlat = s.X >= 500 and s.Z >= 500 and s.Y <= 30
+            local isDark = (c.R + c.G + c.B) / 3 <= 0.22
+            if isLargeFlat and isDark then
+                table.insert(darkFloorCandidates, obj)
+            end
+        end
+    end
+
+    table.sort(darkFloorCandidates, function(a, b)
+        return (a.Size.X * a.Size.Z) > (b.Size.X * b.Size.Z)
+    end)
+
+    local lines = {}
+    table.insert(lines, "MAP INSPECTOR | READ ONLY")
+    table.insert(lines, "Map: " .. (mapRoot and getInstancePath(mapRoot) or "NOT FOUND"))
+    table.insert(lines, "Map descendants: " .. tostring(mapRoot and #mapDescendants or 0)
+        .. " | BaseParts: " .. tostring(mapPartCount))
+
+    if farmFloorObject and farmFloorObject:IsA("BasePart") then
+        table.insert(lines, string.format("FarmFloor: Workspace (OUTSIDE Map)"))
+        table.insert(lines, string.format("  Size %.0f x %.0f x %.0f | Pos %.1f, %.1f, %.1f",
+            farmFloorObject.Size.X, farmFloorObject.Size.Y, farmFloorObject.Size.Z,
+            farmFloorObject.Position.X, farmFloorObject.Position.Y, farmFloorObject.Position.Z))
+    else
+        table.insert(lines, "FarmFloor: NOT FOUND")
+    end
+
+    table.insert(lines, "Dark large floor candidates inside Map: " .. tostring(#darkFloorCandidates))
+    for i = 1, math.min(#darkFloorCandidates, 2) do
+        local obj = darkFloorCandidates[i]
+        table.insert(lines, string.format("  %s | %.0f x %.0f x %.0f",
+            getInstancePath(obj), obj.Size.X, obj.Size.Y, obj.Size.Z))
+    end
+
+    table.insert(lines, "Chunks: " .. (chunksRoot and "FOUND" or "NOT FOUND"))
+    local char = player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    if root then
+        local p = root.Position
+        table.insert(lines, string.format("Character: %.1f, %.1f, %.1f", p.X, p.Y, p.Z))
+    else
+        table.insert(lines, "Character: not ready")
+    end
+    return table.concat(lines, "\n")
+end
+
+local inspectorPanel = Instance.new("Frame")
+inspectorPanel.Name = "MapInspectorPanel"
+inspectorPanel.LayoutOrder = 4
+inspectorPanel.Size = UDim2.new(1, 0, 0, 156)
+inspectorPanel.BackgroundColor3 = Color3.fromRGB(28, 30, 45)
+inspectorPanel.BorderSizePixel = 0
+inspectorPanel.Parent = frame
+Instance.new("UICorner", inspectorPanel).CornerRadius = UDim.new(0, 7)
+
+inspectorButton = Instance.new("TextButton")
+inspectorButton.Size = UDim2.new(1, -8, 0, 24)
+inspectorButton.Position = UDim2.fromOffset(4, 4)
+inspectorButton.BackgroundColor3 = Color3.fromRGB(65, 83, 120)
+inspectorButton.BorderSizePixel = 0
+inspectorButton.Text = "MAP INSPECTOR: ON / REFRESH"
+inspectorButton.TextColor3 = Color3.new(1, 1, 1)
+inspectorButton.TextSize = 8
+inspectorButton.Font = Enum.Font.GothamBold
+inspectorButton.Parent = inspectorPanel
+Instance.new("UICorner", inspectorButton).CornerRadius = UDim.new(0, 5)
+
+inspectorText = Instance.new("TextLabel")
+inspectorText.Size = UDim2.new(1, -10, 1, -34)
+inspectorText.Position = UDim2.fromOffset(5, 30)
+inspectorText.BackgroundTransparency = 1
+inspectorText.TextColor3 = Color3.fromRGB(230, 235, 245)
+inspectorText.TextSize = 7
+inspectorText.Font = Enum.Font.Code
+inspectorText.TextXAlignment = Enum.TextXAlignment.Left
+inspectorText.TextYAlignment = Enum.TextYAlignment.Top
+inspectorText.TextWrapped = true
+inspectorText.Text = "Reading Workspace structure..."
+inspectorText.Parent = inspectorPanel
+
+local function refreshMapInspector()
+    if not inspectorEnabled or not inspectorText then return end
+    inspectorLastScan = os.clock()
+    local ok, result = pcall(inspectMapReadOnly)
+    inspectorText.Text = ok and result or ("Inspector error: " .. tostring(result))
+end
+
+inspectorButton.Activated:Connect(function()
+    inspectorEnabled = not inspectorEnabled
+    inspectorText.Visible = inspectorEnabled
+    inspectorButton.Text = inspectorEnabled and "MAP INSPECTOR: ON / REFRESH" or "MAP INSPECTOR: OFF"
+    if inspectorEnabled then refreshMapInspector() end
+end)
+inspectorButton.Activated:Connect(function()
+    if inspectorEnabled then refreshMapInspector() end
+end)
+
 local function makeToggle(label, order, color, initial, callback)
     local b = Instance.new("TextButton")
     b.LayoutOrder = order
@@ -1290,8 +1335,10 @@ end)
 
 local connection = RunService.Heartbeat:Connect(function()
     if not running then return end
-    pcall(stage1MapDiagnostic)
     pcall(updateRuntimeMonitor)
+    if inspectorEnabled and os.clock() - inspectorLastScan >= 4 then
+        pcall(refreshMapInspector)
+    end
     pcall(claimRewardsStep)
     if CFG.Farm then
         pcall(monitorGrabEatAvailability)
@@ -1309,7 +1356,7 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator] Loaded. STAGE 1 diagnostics enabled (observe only; no map detachment). Landing X=0, Z=100; anchored floor Y is detected from each map surface; Grab/Eat animation acceleration 5x; Grab and post-Grab delays target 0.02s/12 each.")
+print("[dEnzCreator] Loaded. All maps use landing X=0, Z=100; anchored floor Y is detected from each map surface; Grab/Eat animation acceleration 5x; Grab and post-Grab delays target 0.02s/12 each.")
 print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
 -- V3.3.6 keeps the character seated on the dedicated floor through map transitions; Grab/Eat never waits for food detection.
