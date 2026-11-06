@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM - FRONT 50 STREAM PRIORITY + 4-MINUTE BACKGROUND STREAM
+-- dEnzCreator ETW AUTOFARM - STAGE 1 MAP DIAGNOSTIC (NO MAP DETACHMENT)
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -107,72 +107,6 @@ local function getParts()
     if hum and root then return char, hum, root, events end
 end
 
--- STREAMING PRIORITY EXPERIMENT:
--- Request the region immediately in front of the player first, then request
--- surrounding regions gradually over four minutes. This does not change Hide.
-local streamPriorityGeneration = 0
-local STREAM_FRONT_DISTANCE = 50
-local STREAM_BACKGROUND_DURATION = 240
-local STREAM_RING_DISTANCES = {100, 175, 250, 325, 400}
-local STREAM_DIRECTIONS = 8
-
-local function requestStreamAt(position)
-    if not player or not player.Parent then return false end
-    local ok = pcall(function()
-        player:RequestStreamAroundAsync(position, 2)
-    end)
-    return ok
-end
-
-local function startMapStreamingPriority()
-    streamPriorityGeneration = streamPriorityGeneration + 1
-    local generation = streamPriorityGeneration
-
-    task.spawn(function()
-        local _, _, root = getParts()
-        if not root then
-            root = player.Character and player.Character:WaitForChild("HumanoidRootPart", 5)
-        end
-        if not root or generation ~= streamPriorityGeneration then return end
-
-        -- First request: a point 50 studs ahead of the current facing direction.
-        local basePosition = root.Position
-        local forward = root.CFrame.LookVector
-        local frontPosition = basePosition + forward * STREAM_FRONT_DISTANCE
-        requestStreamAt(frontPosition)
-
-        if generation ~= streamPriorityGeneration then return end
-
-        -- Background requests are deliberately spread over 240 seconds.
-        -- These are streaming requests, not Hide operations or object edits.
-        local targets = {}
-        local right = root.CFrame.RightVector
-        for _, distance in ipairs(STREAM_RING_DISTANCES) do
-            for index = 0, STREAM_DIRECTIONS - 1 do
-                local angle = (2 * math.pi * index) / STREAM_DIRECTIONS
-                local direction = (forward * math.cos(angle) + right * math.sin(angle))
-                if direction.Magnitude > 0 then
-                    table.insert(targets, basePosition + direction.Unit * distance)
-                end
-            end
-        end
-
-        local interval = STREAM_BACKGROUND_DURATION / math.max(1, #targets)
-        local startedAt = os.clock()
-        for index, target in ipairs(targets) do
-            if generation ~= streamPriorityGeneration then break end
-            local dueAt = startedAt + (index - 1) * interval
-            local waitFor = dueAt - os.clock()
-            if waitFor > 0 then task.wait(waitFor) end
-            if generation ~= streamPriorityGeneration then break end
-            requestStreamAt(target)
-        end
-        if generation == streamPriorityGeneration then
-            print("[dEnzCreator] Streaming priority pass complete: front 50 first; surrounding regions requested over 240s.")
-        end
-    end)
-end
-
 
 -- One persistent anchored farm floor. Its height is matched to the active map's
 -- detected walkable surface; Workspace.Chunks is deliberately left untouched.
@@ -188,6 +122,87 @@ local farmFloor = nil
 local farmSurfaceMapKey = ""
 local farmSurfaceTopY = nil
 local lastFarmSurfaceScan = 0
+
+-- STAGE 1 DIAGNOSTIC ONLY: observe map/floor structure during transitions.
+-- This does not detach, reparent, hide, destroy, or modify any map object.
+local stage1LastMapRoot = nil
+local stage1LastMapName = ""
+local stage1LastReportAt = 0
+local STAGE1_REPORT_INTERVAL = 2.0
+local function stage1MapDiagnostic()
+    local now = os.clock()
+    local mapRoot = Workspace:FindFirstChild("Map")
+    local mapName = getMapName()
+    if now - stage1LastReportAt < STAGE1_REPORT_INTERVAL then return end
+    if mapRoot == stage1LastMapRoot and mapName == stage1LastMapName then return end
+    stage1LastReportAt = now
+    stage1LastMapRoot = mapRoot
+    stage1LastMapName = mapName
+
+    local _, _, root = getParts()
+    local charPos = root and root.Position or Vector3.zero
+    print("[STAGE1 MAP DIAG] ----- TRANSITION SNAPSHOT -----")
+    print("[STAGE1 MAP DIAG] mapName:", mapName, "Map instance:", mapRoot and mapRoot:GetFullName() or "MISSING",
+        "Map parent:", mapRoot and mapRoot.Parent and mapRoot.Parent:GetFullName() or "nil")
+    print("[STAGE1 MAP DIAG] character position:", charPos)
+
+    if mapRoot then
+        local descendants = mapRoot:GetDescendants()
+        print("[STAGE1 MAP DIAG] Map descendant count:", #descendants)
+        local candidates = {}
+        for _, obj in ipairs(descendants) do
+            if obj:IsA("BasePart") then
+                local size = obj.Size
+                local area = size.X * size.Z
+                local n = string.lower(obj.Name)
+                if area >= 10000 or n:find("floor", 1, true) or n:find("bedrock", 1, true)
+                    or n:find("ground", 1, true) then
+                    table.insert(candidates, {part = obj, area = area})
+                end
+            end
+        end
+        table.sort(candidates, function(a, b) return a.area > b.area end)
+        local limit = math.min(#candidates, 15)
+        print("[STAGE1 MAP DIAG] Large/named floor candidates:", #candidates, "showing:", limit)
+        for i = 1, limit do
+            local part = candidates[i].part
+            print("[STAGE1 MAP DIAG] MAP PART", i, part:GetFullName(),
+                "Size:", part.Size, "Position:", part.Position,
+                "Color:", part.Color, "Transparency:", part.Transparency,
+                "LocalTransparencyModifier:", part.LocalTransparencyModifier,
+                "Anchored:", part.Anchored, "CanCollide:", part.CanCollide)
+        end
+    else
+        print("[STAGE1 MAP DIAG] Workspace.Map is not present yet.")
+    end
+
+    -- Also list large floor-like parts outside Workspace.Map (e.g. a separate black base).
+    local outside = {}
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("BasePart") and obj ~= farmFloor and not (mapRoot and obj:IsDescendantOf(mapRoot))
+            and not (player.Character and obj:IsDescendantOf(player.Character)) then
+            local area = obj.Size.X * obj.Size.Z
+            local n = string.lower(obj.Name)
+            if area >= 10000 or n:find("floor", 1, true) or n:find("bedrock", 1, true)
+                or n:find("ground", 1, true) then
+                table.insert(outside, {part = obj, area = area})
+            end
+        end
+    end
+    table.sort(outside, function(a, b) return a.area > b.area end)
+    local outsideLimit = math.min(#outside, 10)
+    print("[STAGE1 MAP DIAG] Outside-Map floor candidates:", #outside, "showing:", outsideLimit)
+    for i = 1, outsideLimit do
+        local part = outside[i].part
+        print("[STAGE1 MAP DIAG] OUTSIDE PART", i, part:GetFullName(),
+            "Size:", part.Size, "Position:", part.Position,
+            "Color:", part.Color, "Transparency:", part.Transparency,
+            "LocalTransparencyModifier:", part.LocalTransparencyModifier,
+            "Anchored:", part.Anchored, "CanCollide:", part.CanCollide)
+    end
+    print("[STAGE1 MAP DIAG] ----- END SNAPSHOT -----")
+end
+
 
 local function ensureFarmFloor()
     if farmFloor and farmFloor.Parent == Workspace then
@@ -1089,9 +1104,6 @@ end
 makeToggle("AUTOFARM", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
     CFG.Farm = on
     if on then
-        if Workspace:FindFirstChild("Map") then
-            startMapStreamingPriority()
-        end
         -- Prepare the single floor and remove map visuals in the same activation.
         ensureFarmFloor()
         setHiddenMaps(true)
@@ -1107,7 +1119,6 @@ makeToggle("AUTOFARM", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
         -- Do not wait for the next Heartbeat before the first Grab/Eat attempt.
         pcall(farmStep)
     else
-        streamPriorityGeneration = streamPriorityGeneration + 1
         setHiddenMaps(false)
         removeFarmFloor()
         pendingLandingMap = nil
@@ -1249,18 +1260,9 @@ workspaceMapConnection = Workspace.ChildAdded:Connect(function(child)
     if child.Name == "Map" then
         task.defer(function()
             if child.Parent == Workspace then
-                -- Keep existing Hide behavior unchanged; only add streaming requests.
                 if hiddenMapsEnabled then bindHiddenMapRoot(child) end
-                if CFG.Farm then startMapStreamingPriority() end
             end
         end)
-    end
-end)
-
--- Also prioritize the current map if it already exists when the script starts.
-task.defer(function()
-    if CFG.Farm and Workspace:FindFirstChild("Map") then
-        startMapStreamingPriority()
     end
 end)
 
@@ -1288,6 +1290,7 @@ end)
 
 local connection = RunService.Heartbeat:Connect(function()
     if not running then return end
+    pcall(stage1MapDiagnostic)
     pcall(updateRuntimeMonitor)
     pcall(claimRewardsStep)
     if CFG.Farm then
@@ -1306,7 +1309,7 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator] Loaded. Front-50 streaming request first; surrounding regions requested gradually over 240s; Hide behavior unchanged; landing X=0, Z=100.")
+print("[dEnzCreator] Loaded. STAGE 1 diagnostics enabled (observe only; no map detachment). Landing X=0, Z=100; anchored floor Y is detected from each map surface; Grab/Eat animation acceleration 5x; Grab and post-Grab delays target 0.02s/12 each.")
 print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
 -- V3.3.6 keeps the character seated on the dedicated floor through map transitions; Grab/Eat never waits for food detection.
