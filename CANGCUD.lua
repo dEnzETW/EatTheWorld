@@ -97,11 +97,9 @@ local function applyKedadaTransitionToCharacter(char, hum)
     setKedadaScriptDisabled(char:FindFirstChild("LocalChunkManager"), true)
     setKedadaScriptDisabled(char:FindFirstChild("Animate"), true)
 
-    if hum then
-        pcall(function()
-            hum:ChangeState(Enum.HumanoidStateType.Physics)
-        end)
-    end
+    -- Physics state is intentionally NOT forced here.
+    -- farmAnchor() uses GettingUp after seating the character on FarmFloor;
+    -- forcing Physics every Heartbeat would immediately fight that recovery.
 end
 
 local function restoreKedadaTransition()
