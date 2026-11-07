@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM - STAGE 8 KEDADA-STYLE TRANSITION + FLOOR LOCK
+-- dEnzCreator ETW AUTOFARM - STAGE 8 KEDADA-STYLE TRANSITION + FLOOR LOCK FIX 2
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -227,6 +227,7 @@ local lastFarmSurfaceScan = 0
 
 -- Stage 5 monitor: lightweight client-side timing and transition observations.
 local monitorEvents = {}
+local monitorEnabled = true
 local monitorLastMapName = ""
 local monitorLastMapChildren = nil
 local monitorLastChunksChildren = nil
@@ -239,6 +240,7 @@ local monitorLastResetAt = nil
 local monitorLastLandingAt = nil
 local monitorLastSurfaceScanMs = nil
 local monitorLastSurfaceScanAt = 0
+local monitorLastRefresh = 0
 local transitionStartedAt = nil
 local transitionMapKey = ""
 local transitionSurfaceReadyAt = nil
@@ -252,29 +254,45 @@ local function monitorLog(label, detail)
     while #monitorEvents > 12 do table.remove(monitorEvents) end
 end
 
+-- Re-normalize even an already-existing FarmFloor. Older instances may have
+-- been left with a stale size, CFrame, or collision flags by a prior run.
+local function lockFarmFloor(floor)
+    if not floor or not floor:IsA("BasePart") then return nil end
+
+    local fixedCFrame = CFrame.new(
+        0,
+        FARM_FIXED_SURFACE_TOP_Y - FARM_FLOOR_HALF_HEIGHT,
+        0
+    )
+
+    -- Repair only mismatched properties; avoid redundant physics writes when
+    -- the floor is already correct on the next Heartbeat.
+    if floor.Size ~= FARM_FLOOR_SIZE then
+        floor.Size = FARM_FLOOR_SIZE
+    end
+    if floor.CFrame ~= fixedCFrame then
+        floor.CFrame = fixedCFrame
+    end
+    if not floor.Anchored then floor.Anchored = true end
+    if not floor.CanCollide then floor.CanCollide = true end
+    if not floor.CanTouch then floor.CanTouch = true end
+    if not floor.CanQuery then floor.CanQuery = true end
+    return floor
+end
+
 local function ensureFarmFloor()
     if farmFloor and farmFloor.Parent == Workspace then
-        return farmFloor
+        return lockFarmFloor(farmFloor)
     end
 
     local existing = Workspace:FindFirstChild(FARM_FLOOR_NAME)
     if existing and existing:IsA("BasePart") then
         farmFloor = existing
-        farmFloor.Anchored = true
-        farmFloor.CanCollide = true
-        farmFloor.CanTouch = true
-        farmFloor.CanQuery = true
-        return farmFloor
+        return lockFarmFloor(farmFloor)
     end
 
     local floor = Instance.new("Part")
     floor.Name = FARM_FLOOR_NAME
-    floor.Size = FARM_FLOOR_SIZE
-    floor.CFrame = CFrame.new(0, -FARM_FLOOR_HALF_HEIGHT, 0)
-    floor.Anchored = true
-    floor.CanCollide = true
-    floor.CanTouch = true
-    floor.CanQuery = true
     floor.CastShadow = false
     floor.Color = Color3.fromRGB(5, 5, 7)
     floor.Material = Enum.Material.SmoothPlastic
@@ -282,12 +300,12 @@ local function ensureFarmFloor()
     floor.BottomSurface = Enum.SurfaceType.Smooth
     floor.Parent = Workspace
     farmFloor = floor
-    return floor
+    return lockFarmFloor(farmFloor)
 end
 
 -- No raycast is used here: Map and Chunks are intentionally detached.
 -- The persistent floor follows KEDADA's fixed bedrock top at Y=0.
-local function positionFarmFloorForMap(mapKey)
+local function positionFarmFloorForMap(mapKey, floor)
     if farmSurfaceMapKey ~= mapKey then
         farmSurfaceMapKey = mapKey
         farmSurfaceTopY = FARM_FIXED_SURFACE_TOP_Y
@@ -301,11 +319,11 @@ local function positionFarmFloorForMap(mapKey)
             elapsed and string.format("%.2fs", elapsed) or "n/a"))
     end
 
-    local floor = ensureFarmFloor()
-    floor.CFrame = CFrame.new(0,
-        FARM_FIXED_SURFACE_TOP_Y - FARM_FLOOR_HALF_HEIGHT, 0)
-    floor.Anchored = true
-    return true
+    -- ensureFarmFloor() has already restored size, exact position, and flags.
+    -- Accept its instance to avoid a second normalization pass in this cycle.
+    floor = floor or ensureFarmFloor()
+    farmSurfaceTopY = FARM_FIXED_SURFACE_TOP_Y
+    return floor ~= nil
 end
 
 local function removeFarmFloor()
@@ -355,7 +373,7 @@ local function farmAnchor()
     local floor = ensureFarmFloor()
     -- The fixed Y=0 FarmFloor remains available while Map/Chunks are detached.
     -- On map changes, the same floor is reaffirmed without waiting for map geometry.
-    local newSurfaceReady = positionFarmFloorForMap(key)
+    local newSurfaceReady = positionFarmFloorForMap(key, floor)
     local floorTop = floor.Position.Y + floor.Size.Y / 2
     if not newSurfaceReady then
         monitorLog("FLOOR HOLD", string.format("waiting for new surface; holding Y %.2f", floorTop))
@@ -727,12 +745,11 @@ local function farmStep()
     -- without waiting for the next map scan.
     applyKedadaTransitionToCharacter(char, hum)
 
+    -- Exactly one floor-lock pass per farmStep cycle; it runs before Grab/Eat.
     farmAnchor()
     accelerateActionAnimations(hum)
 
     monitorLandingEatProgress(char, hum, root)
-    -- Re-assert the floor lock after food detection, without pausing Grab/Eat.
-    farmAnchor()
 
     -- X12 delay tuning: Grab and the post-Grab Eat phase each use 1/12
     -- of the former 0.02s interval. Heartbeat frame rate is the practical
@@ -995,7 +1012,8 @@ local function scanTreeInBatches(root, isCurrent, hideCallback, batchSize, onFin
         if isCurrent() and onFinished then
             onFinished()
         end
-    end)end
+    end)
+end
 
 local function bindHiddenChunks(chunksArg)
     local chunks = chunksArg or Workspace:FindFirstChild("Chunks")
@@ -1241,6 +1259,116 @@ runtimeBlock.TextYAlignment = Enum.TextYAlignment.Center
 -- Important: timer label is parented directly to header and has no background of its own.
 runtimeBlock.Parent = header
 
+-- Floating Stage 5 Inspector: visible in-game; no executor console required.
+local monitorPanel = Instance.new("Frame")
+monitorPanel.Name = "Stage5Inspector"
+monitorPanel.Size = UDim2.fromOffset(236, 190)
+monitorPanel.Position = UDim2.new(1, -244, 0, 90)
+monitorPanel.BackgroundColor3 = Color3.fromRGB(13, 15, 22)
+monitorPanel.BackgroundTransparency = 0.08
+monitorPanel.BorderSizePixel = 0
+monitorPanel.Parent = gui
+Instance.new("UICorner", monitorPanel).CornerRadius = UDim.new(0, 8)
+
+local monitorTitle = Instance.new("TextLabel")
+monitorTitle.Size = UDim2.new(1, -48, 0, 24)
+monitorTitle.Position = UDim2.fromOffset(7, 3)
+monitorTitle.BackgroundTransparency = 1
+monitorTitle.Text = "STAGE 5 INSPECTOR"
+monitorTitle.TextColor3 = Color3.fromRGB(120, 220, 180)
+monitorTitle.TextSize = 10
+monitorTitle.Font = Enum.Font.GothamBold
+monitorTitle.TextXAlignment = Enum.TextXAlignment.Left
+monitorTitle.Parent = monitorPanel
+
+local monitorToggle = Instance.new("TextButton")
+monitorToggle.Size = UDim2.fromOffset(34, 22)
+monitorToggle.Position = UDim2.new(1, -40, 0, 3)
+monitorToggle.BackgroundColor3 = Color3.fromRGB(55, 75, 105)
+monitorToggle.Text = "ON"
+monitorToggle.TextColor3 = Color3.new(1,1,1)
+monitorToggle.TextSize = 9
+monitorToggle.Font = Enum.Font.GothamBold
+monitorToggle.Parent = monitorPanel
+Instance.new("UICorner", monitorToggle).CornerRadius = UDim.new(0, 5)
+
+local monitorText = Instance.new("TextLabel")
+monitorText.Size = UDim2.new(1, -12, 1, -32)
+monitorText.Position = UDim2.fromOffset(6, 28)
+monitorText.BackgroundTransparency = 1
+monitorText.TextColor3 = Color3.fromRGB(225, 230, 240)
+monitorText.TextSize = 8
+monitorText.Font = Enum.Font.Code
+monitorText.TextXAlignment = Enum.TextXAlignment.Left
+monitorText.TextYAlignment = Enum.TextYAlignment.Top
+monitorText.TextWrapped = true
+monitorText.Text = "Waiting for telemetry..."
+monitorText.Parent = monitorPanel
+
+monitorToggle.Activated:Connect(function()
+    monitorEnabled = not monitorEnabled
+    monitorText.Visible = monitorEnabled
+    monitorToggle.Text = monitorEnabled and "ON" or "OFF"
+end)
+
+local function refreshStage5Inspector()
+    if not monitorEnabled or not monitorText then return end
+    local map = Workspace:FindFirstChild("Map") or latestDetachedMapRoot
+    local chunks = Workspace:FindFirstChild("Chunks")
+    if not chunks and worldRootsDetached then
+        local bucket = detachedWorldRoots.Chunks
+        chunks = bucket[#bucket]
+    end
+    local mapChildren = map and #map:GetChildren() or 0
+    local chunkChildren = chunks and #chunks:GetChildren() or 0
+    local mapName = getMapName()
+    local char, hum, root = getParts()
+    local size, maxSize = getCapacityState(char)
+    local bar = getSellBarProgress()
+    local floor = Workspace:FindFirstChild(FARM_FLOOR_NAME)
+    local now = os.clock()
+
+    if mapName ~= monitorLastMapName then
+        if monitorLastMapName ~= "" then monitorLog("MAP name", mapName) end
+        monitorLastMapName = mapName
+    end
+    if monitorLastMapChildren ~= mapChildren then
+        monitorLog("MAP children", tostring(mapChildren))
+        monitorLastMapChildren = mapChildren
+    end
+    if monitorLastChunksChildren ~= chunkChildren then
+        monitorLog("CHUNKS children", tostring(chunkChildren))
+        monitorLastChunksChildren = chunkChildren
+    end
+
+    local grabGap = monitorLastGrabAt and (now - monitorLastGrabAt) * 1000 or nil
+    local eatGap = monitorLastEatAt and (now - monitorLastEatAt) * 1000 or nil
+    local landingGap = monitorLastLandingAt and (now - monitorLastLandingAt) or nil
+    local lines = {
+        "Farm: " .. (CFG.Farm and "ON" or "OFF") .. " | " .. monitorLastActionLabel,
+        "Map: " .. tostring(mapName) .. " | children " .. tostring(mapChildren),
+        "Chunks: " .. (chunks and tostring(chunkChildren) or "NOT FOUND"),
+        "Size: " .. (size and string.format("%.0f/%s", size, maxSize and string.format("%.0f", maxSize) or "?") or "n/a")
+            .. " | Bar: " .. (bar and string.format("%.0f%%", bar * 100) or "n/a"),
+        "Grab age: " .. (grabGap and string.format("%.0fms", grabGap) or "n/a")
+            .. " | Eat age: " .. (eatGap and string.format("%.0fms", eatGap) or "n/a"),
+        "Landing age: " .. (landingGap and string.format("%.1fs", landingGap) or "waiting"),
+        "FarmFloor: " .. (floor and "FOUND" or "MISSING")
+            .. " | Floor mode: " .. (worldRootsDetached and "FIXED Y=0" or "OFF"),
+        "Map mode: " .. (hiddenMapsEnabled and "HIDDEN (persistent)" or "VISIBLE")
+            .. " | map batch: " .. (hiddenMapScanRunning and tostring(hiddenMapScanProcessed) or "done")
+            .. " | chunks batch: " .. (hiddenChunksScanRunning and tostring(hiddenChunksScanProcessed) or "done"),
+        "Transition: " .. (transitionStartedAt and string.format("%.2fs", now - transitionStartedAt) or "waiting")
+            .. " | surface: " .. (transitionSurfaceReadyAt and string.format("%.2fs", transitionSurfaceReadyAt - transitionStartedAt) or "pending")
+            .. " | first action: " .. (transitionFirstActionAt and string.format("%.2fs", transitionFirstActionAt - transitionStartedAt) or "pending"),
+        "Recent events:"
+    }
+    for i = 1, math.min(#monitorEvents, 7) do
+        table.insert(lines, monitorEvents[i])
+    end
+    monitorText.Text = table.concat(lines, "\n")
+end
+
 local function makeToggle(label, order, color, initial, callback)
     local b = Instance.new("TextButton")
     b.LayoutOrder = order
@@ -1281,7 +1409,7 @@ makeToggle("AUTOFARM", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
         cachedFoodNearby = false
         lastNoFoodSkipAttemptAt = 0
         lastLandingAttempt = 0
-        farmAnchor()
+        -- farmStep performs the one initial floor-lock pass before Grab/Eat.
         -- Do not wait for the next Heartbeat before the first Grab/Eat attempt.
         pcall(farmStep)
     else
@@ -1479,6 +1607,10 @@ end)
 local connection = RunService.Heartbeat:Connect(function()
     if not running then return end
     pcall(updateRuntimeMonitor)
+    if monitorEnabled and os.clock() - (monitorLastRefresh or 0) >= 0.5 then
+        monitorLastRefresh = os.clock()
+        pcall(refreshStage5Inspector)
+    end
     pcall(claimRewardsStep)
     if CFG.Farm then
         pcall(monitorGrabEatAvailability)
@@ -1499,10 +1631,10 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator STAGE 8 KEDADA TRANSITION + FLOOR LOCK] LocalChunkManager/Animate disabled + Humanoid Physics; Map/Chunks detached locally while AutoFarm is ON; fixed anchored bedrock floor top Y=0; roots restored when AutoFarm turns OFF; Grab/Eat animation 5x; Grab/post-Grab delays 0.02s/12.")
+print("[dEnzCreator STAGE 8 FLOOR LOCK FIX 2] LocalChunkManager/Animate disabled + Humanoid Physics; Map/Chunks detached locally while AutoFarm is ON; fixed anchored bedrock floor top Y=0; roots restored when AutoFarm turns OFF; Grab/Eat animation 5x; Grab/post-Grab delays 0.02s/12.")
 print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
--- V3.3.6 keeps the character seated on the dedicated floor through map transitions; Grab/Eat never waits for food detection.
+-- FLOOR LOCK FIX 2 re-normalizes existing FarmFloor size, Y=0 surface, and collision flags once per farmStep cycle; Grab/Eat behavior is unchanged.
 
 -- V3.3.6: Transition floor lock corrects upward impulses and holds position
 -- on the fixed Y=0 FarmFloor while map roots are detached; Grab/Eat continue.
