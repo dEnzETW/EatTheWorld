@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM - STAGE 8 KEDADA-STYLE TRANSITION + FLOOR LOCK FIX 2
+-- dEnzCreator ETW AUTOFARM - STAGE 8 CHARACTER-TRANSITION TRANSITION + FLOOR LOCK FIX 2
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -69,68 +69,68 @@ local hiddenMapOriginals = {}
 local hiddenMapConnections = {}
 local workspaceMapConnection = nil
 
--- STAGE 8 KEDADA-STYLE TRANSITION.
+-- STAGE 8 CHARACTER-TRANSITION TRANSITION.
 -- AutoFarm locally detaches Map/Chunks and uses a fixed bedrock floor.
 -- Also disable LocalChunkManager and Animate while farming, and keep the
 -- Humanoid in Physics state.
-local kedadaTransitionEnabled = false
-local kedadaBoundCharacter = nil
-local kedadaDisabledScripts = {}
-local kedadaCharacterConnection = nil
+local characterTransitionEnabled = false
+local transitionBoundCharacter = nil
+local transitionDisabledScripts = {}
+local characterTransitionConnection = nil
 
-local function setKedadaScriptDisabled(scriptObject, disabled)
+local function setCharacterScriptDisabled(scriptObject, disabled)
     if not scriptObject or not scriptObject:IsA("LocalScript") then return end
-    if kedadaDisabledScripts[scriptObject] == nil then
-        kedadaDisabledScripts[scriptObject] = scriptObject.Disabled
+    if transitionDisabledScripts[scriptObject] == nil then
+        transitionDisabledScripts[scriptObject] = scriptObject.Disabled
     end
     pcall(function()
         scriptObject.Disabled = disabled
     end)
 end
 
-local function applyKedadaTransitionToCharacter(char, hum)
-    if not kedadaTransitionEnabled or not char then return end
-    if kedadaBoundCharacter ~= char then
-        kedadaBoundCharacter = char
+local function applyCharacterTransitionToCharacter(char, hum)
+    if not characterTransitionEnabled or not char then return end
+    if transitionBoundCharacter ~= char then
+        transitionBoundCharacter = char
     end
 
-    setKedadaScriptDisabled(char:FindFirstChild("LocalChunkManager"), true)
-    setKedadaScriptDisabled(char:FindFirstChild("Animate"), true)
+    setCharacterScriptDisabled(char:FindFirstChild("LocalChunkManager"), true)
+    setCharacterScriptDisabled(char:FindFirstChild("Animate"), true)
 
     -- Physics state is intentionally NOT forced here.
     -- farmAnchor() uses GettingUp after seating the character on FarmFloor;
     -- forcing Physics every Heartbeat would immediately fight that recovery.
 end
 
-local function restoreKedadaTransition()
-    kedadaTransitionEnabled = false
-    kedadaBoundCharacter = nil
-    for scriptObject, wasDisabled in pairs(kedadaDisabledScripts) do
+local function restoreCharacterTransition()
+    characterTransitionEnabled = false
+    transitionBoundCharacter = nil
+    for scriptObject, wasDisabled in pairs(transitionDisabledScripts) do
         if scriptObject then
             pcall(function()
                 scriptObject.Disabled = wasDisabled
             end)
         end
     end
-    table.clear(kedadaDisabledScripts)
+    table.clear(transitionDisabledScripts)
 end
 
-local function setKedadaTransition(enabled)
-    kedadaTransitionEnabled = enabled and true or false
-    if not kedadaTransitionEnabled then
-        restoreKedadaTransition()
+local function setCharacterTransition(enabled)
+    characterTransitionEnabled = enabled and true or false
+    if not characterTransitionEnabled then
+        restoreCharacterTransition()
         return
     end
     local char, hum = player.Character, nil
     if char then hum = char:FindFirstChildOfClass("Humanoid") end
-    applyKedadaTransitionToCharacter(char, hum)
+    applyCharacterTransitionToCharacter(char, hum)
 end
 
 local function norm(v)
     return string.lower(tostring(v or "")):gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " ")
 end
 
--- KEDADA-style local detachment: keep references so roots can be restored
+-- character-transition local detachment: keep references so roots can be restored
 -- when AutoFarm is disabled. A list is used because a new map/chunk root can
 -- arrive during a transition while an older root is already detached.
 local worldRootsDetached = false
@@ -651,7 +651,7 @@ local function sendAutoSell(events)
     return true
 end
 
--- KEDADA-style no-object detector.
+-- character-transition no-object detector.
 -- Start the 3-second window only after the new map key is active AND the
 -- character has confirmed contact with the farm floor. Map/Chunks are detached
 -- locally, so scan the retained detached Chunks root instead of Workspace.
@@ -800,9 +800,9 @@ local function farmStep()
     local char, hum, root, events = getParts()
     if not char then return end
 
-    -- KEDADA transition controls are re-applied to a replacement character
+    -- character transition controls are re-applied to a replacement character
     -- without waiting for the next map scan.
-    applyKedadaTransitionToCharacter(char, hum)
+    applyCharacterTransitionToCharacter(char, hum)
 
     -- Exactly one floor-lock pass per farmStep cycle; it runs before Grab/Eat.
     local surfaceReady = farmAnchor()
@@ -1463,7 +1463,7 @@ makeToggle("AUTOFARM", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
         -- Prepare the single floor and remove map visuals in the same activation.
         ensureFarmFloor()
         setHiddenMaps(true)
-        setKedadaTransition(true)
+        setCharacterTransition(true)
         -- Keep Map available for Raycast first. farmStep detaches Map/Chunks
         -- only after a valid walkable surface has been detected.
         pendingLandingMap = getMapName()
@@ -1478,7 +1478,7 @@ makeToggle("AUTOFARM", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
         -- Do not wait for the next Heartbeat before the first Grab/Eat attempt.
         pcall(farmStep)
     else
-        setKedadaTransition(false)
+        setCharacterTransition(false)
         restoreWorldRoots()
         setHiddenMaps(false)
         removeFarmFloor()
@@ -1541,7 +1541,7 @@ close.Activated:Connect(function()
     restoreWorldRoots()
     setHiddenMaps(false)
     removeFarmFloor()
-    setKedadaTransition(false)
+    setCharacterTransition(false)
     gui:Destroy()
 end)
 
@@ -1619,12 +1619,12 @@ end
 
 
 -- Bind each replacement Map/Chunks root before local detachment.
-kedadaCharacterConnection = player.CharacterAdded:Connect(function(char)
-    if not kedadaTransitionEnabled then return end
+characterTransitionConnection = player.CharacterAdded:Connect(function(char)
+    if not characterTransitionEnabled then return end
     task.defer(function()
-        if kedadaTransitionEnabled and player.Character == char then
+        if characterTransitionEnabled and player.Character == char then
             local hum = char:WaitForChild("Humanoid", 5)
-            applyKedadaTransitionToCharacter(char, hum)
+            applyCharacterTransitionToCharacter(char, hum)
         end
     end)
 end)
@@ -1689,12 +1689,12 @@ gui.AncestryChanged:Connect(function(_, parent)
     if parent == nil then
         running, CFG.Farm = false, false
         autoClaimEnabled = false
-        setKedadaTransition(false)
+        setCharacterTransition(false)
         restoreWorldRoots()
         setHiddenMaps(false)
         removeFarmFloor()
         if workspaceMapConnection then workspaceMapConnection:Disconnect() end
-        if kedadaCharacterConnection then kedadaCharacterConnection:Disconnect() end
+        if characterTransitionConnection then characterTransitionConnection:Disconnect() end
         connection:Disconnect()
     end
 end)
@@ -1718,7 +1718,7 @@ print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active;
 -- Stage 8 fix: farmAnchor does not wait for map geometry; fixed floor is ready immediately.
 
 
--- STAGE 8 REVISION: FULL KEDADA-STYLE LOCAL WORLD DETACH.
+-- STAGE 8 REVISION: FULL CHARACTER-TRANSITION LOCAL WORLD DETACH.
 -- AutoFarm ON: LocalChunkManager + Animate disabled; Humanoid uses Physics;
 -- Workspace.Map and Workspace.Chunks are cached and reparented to nil.
 -- New Map/Chunks roots arriving during transitions are detached as well.
