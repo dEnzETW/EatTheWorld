@@ -212,8 +212,8 @@ local function getParts()
 end
 
 
--- KEDADA-style bedrock floor: fixed 2048x10 with its top at Y=0.
--- Map/Chunks are detached locally, so surface raycasts are intentionally removed.
+-- Anchored 2048x10 farm floor. Raycast moves it to the detected map surface.
+-- Map/Chunks are detached only after the current map surface has been detected.
 local FARM_FLOOR_NAME = "dEnzCreator_FarmFloor"
 local FARM_FLOOR_SIZE = Vector3.new(2048, 10, 2048)
 local FARM_FLOOR_HALF_HEIGHT = FARM_FLOOR_SIZE.Y / 2
@@ -262,19 +262,12 @@ end
 local function lockFarmFloor(floor)
     if not floor or not floor:IsA("BasePart") then return nil end
 
-    local fixedCFrame = CFrame.new(
-        0,
-        FARM_FIXED_SURFACE_TOP_Y - FARM_FLOOR_HALF_HEIGHT,
-        0
-    )
-
-    -- Repair only mismatched properties; avoid redundant physics writes when
-    -- the floor is already correct on the next Heartbeat.
+    -- Keep the floor anchored, but DO NOT force it back to Y=0 here.
+    -- Raycast positions this same floor at the detected map surface. Resetting
+    -- its CFrame on every farmStep fights that placement and can trap/drop the
+    -- character between the farm floor and the actual map surface.
     if floor.Size ~= FARM_FLOOR_SIZE then
         floor.Size = FARM_FLOOR_SIZE
-    end
-    if floor.CFrame ~= fixedCFrame then
-        floor.CFrame = fixedCFrame
     end
     if not floor.Anchored then floor.Anchored = true end
     if not floor.CanCollide then floor.CanCollide = true end
@@ -815,7 +808,10 @@ local function farmStep()
 
     -- Exactly one floor-lock pass per farmStep cycle; it runs before Grab/Eat.
     local surfaceReady = farmAnchor()
-    if surfaceReady and CFG.Farm and not worldRootsDetached then
+    -- Re-check roots after EVERY successful surface scan, not only the first.
+    -- During a map transition, the replacement Map must remain in Workspace
+    -- long enough for Raycast; once detected, detach that Map and its Chunks.
+    if surfaceReady and CFG.Farm then
         detachCurrentWorldRoots()
     end
     accelerateActionAnimations(hum)
@@ -1624,7 +1620,7 @@ local function updateRuntimeMonitor()
 end
 
 
--- Bind exactly once to each new Map root; Chunks is not scanned or hooked.
+-- Bind each replacement Map/Chunks root before local detachment.
 kedadaCharacterConnection = player.CharacterAdded:Connect(function(char)
     if not kedadaTransitionEnabled then return end
     task.defer(function()
@@ -1649,7 +1645,7 @@ workspaceMapConnection = Workspace.ChildAdded:Connect(function(child)
 
     if CFG.Farm and worldRootsDetached then
         -- Chunks can be detached immediately. Keep a replacement Map in
-        -- Workspace until farmStep raycasts its surface, then detach it.
+        -- Workspace until farmStep raycasts its surface, then detach both roots.
         if child.Name == "Chunks" then
             detachWorldRoot(child)
         end
