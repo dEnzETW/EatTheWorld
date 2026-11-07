@@ -228,7 +228,6 @@ local lastFarmSurfaceScan = 0
 
 -- Stage 5 monitor: lightweight client-side timing and transition observations.
 local monitorEvents = {}
-local monitorEnabled = true
 local monitorLastMapName = ""
 local monitorLastMapChildren = nil
 local monitorLastChunksChildren = nil
@@ -241,7 +240,6 @@ local monitorLastResetAt = nil
 local monitorLastLandingAt = nil
 local monitorLastSurfaceScanMs = nil
 local monitorLastSurfaceScanAt = 0
-local monitorLastRefresh = 0
 local transitionStartedAt = nil
 local transitionMapKey = ""
 local transitionSurfaceReadyAt = nil
@@ -647,6 +645,11 @@ local function sendAutoSell(events)
         return false
     end
 
+    if cycleStartedAt ~= nil then
+        completedCycleSeconds = math.max(0, os.clock() - cycleStartedAt)
+        cycleStartedAt = nil
+        print("[dEnzCreator] Season Time stopped and saved: Sell sent.")
+    end
     print("[dEnzCreator V3.3.6] AutoSell request sent.")
     return true
 end
@@ -824,14 +827,6 @@ local function farmStep()
         local grabEvent = events:FindFirstChild("Grab")
         local eatEvent = events:FindFirstChild("Eat")
 
-        -- Start Season Time only once both controls are present and the first
-        -- Grab/Eat sequence is about to be sent.
-        if grabEvent and eatEvent and cycleStartedAt == nil then
-            cycleStartedAt = now
-            completedCycleSeconds = 0
-            print("[dEnzCreator V3.3.6] Season time started: Grab/Eat menu active.")
-        end
-
         if grabEvent and eatEvent and now >= nextGrabEatActionAt then
             if grabEatPhase == "grab" then
                 fire(grabEvent)
@@ -851,6 +846,11 @@ local function farmStep()
                 grabEatPhase = "eat"
                 nextGrabEatActionAt = now + POST_GRAB_DELAY
             else
+                if cycleStartedAt == nil then
+                    cycleStartedAt = now
+                    completedCycleSeconds = 0
+                    print("[dEnzCreator] Season Time started: first Eat action.")
+                end
                 fire(eatEvent)
                 fire(eatEvent)
                 fire(eatEvent)
@@ -891,12 +891,6 @@ local function farmStep()
     end
 
     if full then
-        -- Season timer stops only on the actual visual sell-bar full signal.
-        if barFull and cycleStartedAt ~= nil then
-            completedCycleSeconds = math.max(0, os.clock() - cycleStartedAt)
-            cycleStartedAt = nil
-            print("[dEnzCreator V3.3.6] Season time stopped: sell bar detected full.")
-        end
         if not wasFull then
             wasFull = true
             monitorLastMaxAt = os.clock()
@@ -1324,116 +1318,6 @@ runtimeBlock.TextYAlignment = Enum.TextYAlignment.Center
 -- Important: timer label is parented directly to header and has no background of its own.
 runtimeBlock.Parent = header
 
--- Floating Stage 5 Inspector: visible in-game; no executor console required.
-local monitorPanel = Instance.new("Frame")
-monitorPanel.Name = "Stage5Inspector"
-monitorPanel.Size = UDim2.fromOffset(236, 190)
-monitorPanel.Position = UDim2.new(1, -244, 0, 90)
-monitorPanel.BackgroundColor3 = Color3.fromRGB(13, 15, 22)
-monitorPanel.BackgroundTransparency = 0.08
-monitorPanel.BorderSizePixel = 0
-monitorPanel.Parent = gui
-Instance.new("UICorner", monitorPanel).CornerRadius = UDim.new(0, 8)
-
-local monitorTitle = Instance.new("TextLabel")
-monitorTitle.Size = UDim2.new(1, -48, 0, 24)
-monitorTitle.Position = UDim2.fromOffset(7, 3)
-monitorTitle.BackgroundTransparency = 1
-monitorTitle.Text = "STAGE 5 INSPECTOR"
-monitorTitle.TextColor3 = Color3.fromRGB(120, 220, 180)
-monitorTitle.TextSize = 10
-monitorTitle.Font = Enum.Font.GothamBold
-monitorTitle.TextXAlignment = Enum.TextXAlignment.Left
-monitorTitle.Parent = monitorPanel
-
-local monitorToggle = Instance.new("TextButton")
-monitorToggle.Size = UDim2.fromOffset(34, 22)
-monitorToggle.Position = UDim2.new(1, -40, 0, 3)
-monitorToggle.BackgroundColor3 = Color3.fromRGB(55, 75, 105)
-monitorToggle.Text = "ON"
-monitorToggle.TextColor3 = Color3.new(1,1,1)
-monitorToggle.TextSize = 9
-monitorToggle.Font = Enum.Font.GothamBold
-monitorToggle.Parent = monitorPanel
-Instance.new("UICorner", monitorToggle).CornerRadius = UDim.new(0, 5)
-
-local monitorText = Instance.new("TextLabel")
-monitorText.Size = UDim2.new(1, -12, 1, -32)
-monitorText.Position = UDim2.fromOffset(6, 28)
-monitorText.BackgroundTransparency = 1
-monitorText.TextColor3 = Color3.fromRGB(225, 230, 240)
-monitorText.TextSize = 8
-monitorText.Font = Enum.Font.Code
-monitorText.TextXAlignment = Enum.TextXAlignment.Left
-monitorText.TextYAlignment = Enum.TextYAlignment.Top
-monitorText.TextWrapped = true
-monitorText.Text = "Waiting for telemetry..."
-monitorText.Parent = monitorPanel
-
-monitorToggle.Activated:Connect(function()
-    monitorEnabled = not monitorEnabled
-    monitorText.Visible = monitorEnabled
-    monitorToggle.Text = monitorEnabled and "ON" or "OFF"
-end)
-
-local function refreshStage5Inspector()
-    if not monitorEnabled or not monitorText then return end
-    local map = Workspace:FindFirstChild("Map") or latestDetachedMapRoot
-    local chunks = Workspace:FindFirstChild("Chunks")
-    if not chunks and worldRootsDetached then
-        local bucket = detachedWorldRoots.Chunks
-        chunks = bucket[#bucket]
-    end
-    local mapChildren = map and #map:GetChildren() or 0
-    local chunkChildren = chunks and #chunks:GetChildren() or 0
-    local mapName = getMapName()
-    local char, hum, root = getParts()
-    local size, maxSize = getCapacityState(char)
-    local bar = getSellBarProgress()
-    local floor = Workspace:FindFirstChild(FARM_FLOOR_NAME)
-    local now = os.clock()
-
-    if mapName ~= monitorLastMapName then
-        if monitorLastMapName ~= "" then monitorLog("MAP name", mapName) end
-        monitorLastMapName = mapName
-    end
-    if monitorLastMapChildren ~= mapChildren then
-        monitorLog("MAP children", tostring(mapChildren))
-        monitorLastMapChildren = mapChildren
-    end
-    if monitorLastChunksChildren ~= chunkChildren then
-        monitorLog("CHUNKS children", tostring(chunkChildren))
-        monitorLastChunksChildren = chunkChildren
-    end
-
-    local grabGap = monitorLastGrabAt and (now - monitorLastGrabAt) * 1000 or nil
-    local eatGap = monitorLastEatAt and (now - monitorLastEatAt) * 1000 or nil
-    local landingGap = monitorLastLandingAt and (now - monitorLastLandingAt) or nil
-    local lines = {
-        "Farm: " .. (CFG.Farm and "ON" or "OFF") .. " | " .. monitorLastActionLabel,
-        "Map: " .. tostring(mapName) .. " | children " .. tostring(mapChildren),
-        "Chunks: " .. (chunks and tostring(chunkChildren) or "NOT FOUND"),
-        "Size: " .. (size and string.format("%.0f/%s", size, maxSize and string.format("%.0f", maxSize) or "?") or "n/a")
-            .. " | Bar: " .. (bar and string.format("%.0f%%", bar * 100) or "n/a"),
-        "Grab age: " .. (grabGap and string.format("%.0fms", grabGap) or "n/a")
-            .. " | Eat age: " .. (eatGap and string.format("%.0fms", eatGap) or "n/a"),
-        "Landing age: " .. (landingGap and string.format("%.1fs", landingGap) or "waiting"),
-        "FarmFloor: " .. (floor and "FOUND" or "MISSING")
-            .. " | Floor mode: " .. (worldRootsDetached and "FIXED Y=0" or "OFF"),
-        "Map mode: " .. (hiddenMapsEnabled and "HIDDEN (persistent)" or "VISIBLE")
-            .. " | map batch: " .. (hiddenMapScanRunning and tostring(hiddenMapScanProcessed) or "done")
-            .. " | chunks batch: " .. (hiddenChunksScanRunning and tostring(hiddenChunksScanProcessed) or "done"),
-        "Transition: " .. (transitionStartedAt and string.format("%.2fs", now - transitionStartedAt) or "waiting")
-            .. " | surface: " .. (transitionSurfaceReadyAt and string.format("%.2fs", transitionSurfaceReadyAt - transitionStartedAt) or "pending")
-            .. " | first action: " .. (transitionFirstActionAt and string.format("%.2fs", transitionFirstActionAt - transitionStartedAt) or "pending"),
-        "Recent events:"
-    }
-    for i = 1, math.min(#monitorEvents, 7) do
-        table.insert(lines, monitorEvents[i])
-    end
-    monitorText.Text = table.concat(lines, "\n")
-end
-
 local function makeToggle(label, order, color, initial, callback)
     local b = Instance.new("TextButton")
     b.LayoutOrder = order
@@ -1549,7 +1433,6 @@ end)
 -- Runtime is retained across script re-execution if the executor keeps its environment.
 -- Same os.clock() timer basis as the first working runtime panel.
 local scriptStartedAt = os.clock()
-local sessionStartedAt = os.clock()
 local function formatDuration(seconds)
     seconds = math.max(0, math.floor(tonumber(seconds) or 0))
     local hours = math.floor(seconds / 3600)
@@ -1675,10 +1558,6 @@ end)
 local connection = RunService.Heartbeat:Connect(function()
     if not running then return end
     pcall(updateRuntimeMonitor)
-    if monitorEnabled and os.clock() - (monitorLastRefresh or 0) >= 0.5 then
-        monitorLastRefresh = os.clock()
-        pcall(refreshStage5Inspector)
-    end
     pcall(claimRewardsStep)
     if CFG.Farm then
         pcall(monitorGrabEatAvailability)
@@ -1699,7 +1578,7 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator STAGE 8 RAYCAST FLOOR] LocalChunkManager/Animate disabled + Humanoid Physics; Raycast detects map surface before Map/Chunks detach; roots restored when AutoFarm turns OFF; Grab/Eat animation 5x; Grab/post-Grab delays 0.02s/12.")
+print("[dEnzCreator STAGE 8 RAYCAST FLOOR] LocalChunkManager/Animate transition handling; Raycast detects map surface before Map/Chunks detach; roots restored when AutoFarm turns OFF; Grab/Eat animation 5x; Grab/post-Grab delays 0.02s/12.")
 print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
 -- FLOOR LOCK FIX 2 re-normalizes existing FarmFloor size, Y=0 surface, and collision flags once per farmStep cycle; Grab/Eat behavior is unchanged.
@@ -1713,7 +1592,7 @@ print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active;
 
 -- V3.3.6: Combined title/timer header (140px), left-aligned title, 5x named Grab/Eat animation acceleration. Grab and post-Grab delays are each divided by 12.
 
--- V3.3.6: Season time starts when map food objects are detected and stops when the sell bar reaches full.
+-- Season Time: starts on the first Eat action, stops and saves when Sell is successfully sent; remains stopped during map transition.
 
 -- Stage 8 fix: farmAnchor does not wait for map geometry; fixed floor is ready immediately.
 
