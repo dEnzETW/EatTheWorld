@@ -220,6 +220,9 @@ local FARM_FLOOR_HALF_HEIGHT = FARM_FLOOR_SIZE.Y / 2
 local FARM_LANDING_X = 0
 local FARM_LANDING_Z = 100
 local FARM_FIXED_SURFACE_TOP_Y = 0
+local FARM_SURFACE_SCAN_INTERVAL = 0.20
+local FARM_SURFACE_RAY_TOP = 10000
+local FARM_SURFACE_RAY_LENGTH = 20000
 local farmFloor = nil
 local farmSurfaceMapKey = ""
 local farmSurfaceTopY = nil
@@ -303,27 +306,79 @@ local function ensureFarmFloor()
     return lockFarmFloor(farmFloor)
 end
 
--- No raycast is used here: Map and Chunks are intentionally detached.
--- The persistent floor follows KEDADA's fixed bedrock top at Y=0.
+-- Raycast surface detection: scan the real map before locally detaching Map/Chunks.
+-- LocalTransparencyModifier does not disable CanQuery, so hidden map geometry remains raycastable.
+local function detectMapSurfaceTopY()
+    local mapRoot = Workspace:FindFirstChild("Map")
+    if not mapRoot then return nil end
+
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Include
+    params.FilterDescendantsInstances = {mapRoot, Workspace.Terrain}
+    params.IgnoreWater = true
+
+    local offsets = {
+        {0, 0}, {4, 0}, {-4, 0}, {0, 4}, {0, -4},
+        {8, 8}, {-8, 8}, {8, -8}, {-8, -8}
+    }
+    local heights = {}
+    for _, offset in ipairs(offsets) do
+        local origin = Vector3.new(FARM_LANDING_X + offset[1], FARM_SURFACE_RAY_TOP,
+            FARM_LANDING_Z + offset[2])
+        local result = Workspace:Raycast(origin,
+            Vector3.new(0, -FARM_SURFACE_RAY_LENGTH, 0), params)
+        if result and result.Normal.Y >= 0.82 then
+            local hit = result.Instance
+            local acceptable = hit == Workspace.Terrain
+            if hit:IsA("BasePart") then
+                acceptable = hit.CanCollide and hit.CanQuery
+                    and hit.CFrame.UpVector.Y >= 0.82
+                    and hit.Size.X >= 12 and hit.Size.Z >= 12
+            end
+            if acceptable then table.insert(heights, result.Position.Y) end
+        end
+    end
+    if #heights == 0 then return nil end
+    table.sort(heights)
+    local middle = math.floor((#heights + 1) / 2)
+    if #heights % 2 == 0 then
+        return (heights[middle] + heights[middle + 1]) / 2
+    end
+    return heights[middle]
+end
+
 local function positionFarmFloorForMap(mapKey, floor)
     if farmSurfaceMapKey ~= mapKey then
         farmSurfaceMapKey = mapKey
-        farmSurfaceTopY = FARM_FIXED_SURFACE_TOP_Y
-        lastFarmSurfaceScan = os.clock()
-        transitionSurfaceReadyAt = os.clock()
-        local elapsed = transitionStartedAt and (transitionSurfaceReadyAt - transitionStartedAt) or nil
-        monitorLastSurfaceScanMs = 0
-        monitorLastSurfaceScanAt = os.clock()
-        monitorLog("FLOOR ready", string.format("fixed top Y %.2f | transition %s",
-            FARM_FIXED_SURFACE_TOP_Y,
-            elapsed and string.format("%.2fs", elapsed) or "n/a"))
+        farmSurfaceTopY = nil
+        lastFarmSurfaceScan = 0
+    end
+    if farmSurfaceTopY ~= nil then return true end
+
+    local now = os.clock()
+    if now - lastFarmSurfaceScan < FARM_SURFACE_SCAN_INTERVAL then return false end
+    lastFarmSurfaceScan = now
+    local scanStarted = os.clock()
+    local mapTopY = detectMapSurfaceTopY()
+    monitorLastSurfaceScanMs = (os.clock() - scanStarted) * 1000
+    monitorLastSurfaceScanAt = os.clock()
+    if mapTopY == nil then
+        monitorLog("SURFACE", "not ready; scan " .. string.format("%.1fms", monitorLastSurfaceScanMs))
+        return false
     end
 
-    -- ensureFarmFloor() has already restored size, exact position, and flags.
-    -- Accept its instance to avoid a second normalization pass in this cycle.
+    farmSurfaceTopY = mapTopY + 0.05
     floor = floor or ensureFarmFloor()
-    farmSurfaceTopY = FARM_FIXED_SURFACE_TOP_Y
-    return floor ~= nil
+    floor.CFrame = CFrame.new(0, farmSurfaceTopY - FARM_FLOOR_HALF_HEIGHT, 0)
+    floor.Anchored = true
+    transitionSurfaceReadyAt = os.clock()
+    local elapsed = transitionStartedAt and (transitionSurfaceReadyAt - transitionStartedAt) or nil
+    monitorLog("SURFACE ready", string.format("Y %.2f | scan %.1fms | transition %s",
+        farmSurfaceTopY, monitorLastSurfaceScanMs,
+        elapsed and string.format("%.2fs", elapsed) or "n/a"))
+    print("[dEnzCreator] Raycast floor matched map surface:", mapKey,
+        "topY:", math.floor(farmSurfaceTopY * 100 + 0.5) / 100)
+    return true
 end
 
 local function removeFarmFloor()
@@ -374,10 +429,23 @@ local function farmAnchor()
     -- The fixed Y=0 FarmFloor remains available while Map/Chunks are detached.
     -- On map changes, the same floor is reaffirmed without waiting for map geometry.
     local newSurfaceReady = positionFarmFloorForMap(key, floor)
-    local floorTop = floor.Position.Y + floor.Size.Y / 2
     if not newSurfaceReady then
-        monitorLog("FLOOR HOLD", string.format("waiting for new surface; holding Y %.2f", floorTop))
+        -- Hold the previous safe position while the new map streams in.
+        -- Do not detach Map/Chunks until Raycast has found a valid surface.
+        local safeTop = floor.Position.Y + floor.Size.Y / 2
+        local safeRootY = safeTop + hum.HipHeight + root.Size.Y / 2 + 0.08
+        local p = root.Position
+        local horizontalDrift = (Vector3.new(p.X, 0, p.Z)
+            - Vector3.new(FARM_LANDING_X, 0, z)).Magnitude
+        if horizontalDrift > 2.0 or p.Y < safeRootY - 3.0 or p.Y > safeRootY + 8.0 then
+            root.CFrame = CFrame.new(FARM_LANDING_X, safeRootY, z)
+            root.AssemblyLinearVelocity = Vector3.zero
+            root.AssemblyAngularVelocity = Vector3.zero
+            lastLandingAttempt = os.clock()
+        end
+        return false
     end
+    local floorTop = floor.Position.Y + floor.Size.Y / 2
     local targetY = floorTop + hum.HipHeight + root.Size.Y / 2 + 0.08
     local targetCFrame = CFrame.new(FARM_LANDING_X, targetY, z)
 
@@ -746,7 +814,10 @@ local function farmStep()
     applyKedadaTransitionToCharacter(char, hum)
 
     -- Exactly one floor-lock pass per farmStep cycle; it runs before Grab/Eat.
-    farmAnchor()
+    local surfaceReady = farmAnchor()
+    if surfaceReady and CFG.Farm and not worldRootsDetached then
+        detachCurrentWorldRoots()
+    end
     accelerateActionAnimations(hum)
 
     monitorLandingEatProgress(char, hum, root)
@@ -1399,8 +1470,8 @@ makeToggle("AUTOFARM", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
         ensureFarmFloor()
         setHiddenMaps(true)
         setKedadaTransition(true)
-        -- Cache and locally detach current Map/Chunks, matching KEDADA.
-        detachCurrentWorldRoots()
+        -- Keep Map available for Raycast first. farmStep detaches Map/Chunks
+        -- only after a valid walkable surface has been detected.
         pendingLandingMap = getMapName()
         landingConfirmedAt = nil
         noFoodMapKey = select(2, getMapName())
@@ -1577,8 +1648,11 @@ workspaceMapConnection = Workspace.ChildAdded:Connect(function(child)
     end
 
     if CFG.Farm and worldRootsDetached then
-        -- Detach newly streamed/replaced roots as well as the initial roots.
-        detachWorldRoot(child)
+        -- Chunks can be detached immediately. Keep a replacement Map in
+        -- Workspace until farmStep raycasts its surface, then detach it.
+        if child.Name == "Chunks" then
+            detachWorldRoot(child)
+        end
     end
 end)
 
@@ -1631,7 +1705,7 @@ gui.AncestryChanged:Connect(function(_, parent)
     end
 end)
 
-print("[dEnzCreator STAGE 8 FLOOR LOCK FIX 2] LocalChunkManager/Animate disabled + Humanoid Physics; Map/Chunks detached locally while AutoFarm is ON; fixed anchored bedrock floor top Y=0; roots restored when AutoFarm turns OFF; Grab/Eat animation 5x; Grab/post-Grab delays 0.02s/12.")
+print("[dEnzCreator STAGE 8 RAYCAST FLOOR] LocalChunkManager/Animate disabled + Humanoid Physics; Raycast detects map surface before Map/Chunks detach; roots restored when AutoFarm turns OFF; Grab/Eat animation 5x; Grab/post-Grab delays 0.02s/12.")
 print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
 -- FLOOR LOCK FIX 2 re-normalizes existing FarmFloor size, Y=0 surface, and collision flags once per farmStep cycle; Grab/Eat behavior is unchanged.
@@ -1654,8 +1728,8 @@ print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active;
 -- AutoFarm ON: LocalChunkManager + Animate disabled; Humanoid uses Physics;
 -- Workspace.Map and Workspace.Chunks are cached and reparented to nil.
 -- New Map/Chunks roots arriving during transitions are detached as well.
--- Dynamic map-surface raycasts are removed; the persistent anchored floor
--- uses KEDADA's fixed bedrock top at Y=0 and landing X=0, Z=100.
+-- Raycast detects each map's walkable surface before Map/Chunks are detached;
+-- the anchored farm floor follows that detected height at landing X=0, Z=100.
 -- AutoFarm OFF / GUI cleanup restores cached Map/Chunks roots and original
 -- LocalScript Disabled states. This is a test adaptation; verify floor height
 -- on every Mega map because maps with playable surfaces below/above Y=0 may
