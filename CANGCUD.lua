@@ -227,7 +227,6 @@ local lastFarmSurfaceScan = 0
 
 -- Stage 5 monitor: lightweight client-side timing and transition observations.
 local monitorEvents = {}
-local monitorEnabled = true
 local monitorLastMapName = ""
 local monitorLastMapChildren = nil
 local monitorLastChunksChildren = nil
@@ -240,7 +239,6 @@ local monitorLastResetAt = nil
 local monitorLastLandingAt = nil
 local monitorLastSurfaceScanMs = nil
 local monitorLastSurfaceScanAt = 0
-local monitorLastRefresh = 0
 local transitionStartedAt = nil
 local transitionMapKey = ""
 local transitionSurfaceReadyAt = nil
@@ -997,4 +995,536 @@ local function scanTreeInBatches(root, isCurrent, hideCallback, batchSize, onFin
         if isCurrent() and onFinished then
             onFinished()
         end
+    end)end
+
+local function bindHiddenChunks(chunksArg)
+    local chunks = chunksArg or Workspace:FindFirstChild("Chunks")
+    if not chunks then return false end
+    if hiddenChunksRoot == chunks then return true end
+
+    if hiddenChunksAddedConnection then
+        pcall(function() hiddenChunksAddedConnection:Disconnect() end)
+        hiddenChunksAddedConnection = nil
+    end
+
+    hiddenChunksRoot = chunks
+    hiddenChunksGeneration = hiddenChunksGeneration + 1
+    local generation = hiddenChunksGeneration
+
+    -- No task.defer here: hide every incoming chunk visual on the event itself.
+    hiddenChunksAddedConnection = chunks.DescendantAdded:Connect(function(obj)
+        if hiddenMapsEnabled and hiddenChunksRoot == chunks
+            and hiddenChunksGeneration == generation then
+            hideFoodVisual(obj)
+        end
     end)
+
+    hiddenChunksScanRunning = true
+    hiddenChunksScanProcessed = 0
+    scanTreeInBatches(chunks,
+        function()
+            return hiddenMapsEnabled and hiddenChunksRoot == chunks
+                and hiddenChunksGeneration == generation
+        end,
+        function(obj)
+            hideFoodVisual(obj)
+            hiddenChunksScanProcessed = hiddenChunksScanProcessed + 1
+        end,
+        HIDDEN_CHUNKS_BATCH_SIZE,
+        function()
+            hiddenChunksScanRunning = false
+        end
+    )
+    return true
+end
+
+local function disconnectHiddenMapRoot()
+    if hiddenMapAddedConnection then
+        pcall(function() hiddenMapAddedConnection:Disconnect() end)
+        hiddenMapAddedConnection = nil
+    end
+    hiddenMapGeneration = hiddenMapGeneration + 1
+    hiddenMapRoot = nil
+    hiddenMapScanRunning = false
+end
+
+local function disconnectHiddenChunksRoot()
+    if hiddenChunksAddedConnection then
+        pcall(function() hiddenChunksAddedConnection:Disconnect() end)
+        hiddenChunksAddedConnection = nil
+    end
+    hiddenChunksGeneration = hiddenChunksGeneration + 1
+    hiddenChunksRoot = nil
+    hiddenChunksScanRunning = false
+end
+
+local function restoreHiddenMap()
+    hiddenMapsEnabled = false
+    disconnectHiddenMapRoot()
+    disconnectHiddenChunksRoot()
+
+    for obj, saved in pairs(hiddenMapOriginals) do
+        if obj then
+            pcall(function()
+                if saved.kind == "part" then
+                    obj.LocalTransparencyModifier = saved.value
+                elseif saved.kind == "floor" then
+                    obj.LocalTransparencyModifier = saved.transparency
+                    obj.Color = saved.color
+                    obj.Material = saved.material
+                elseif saved.kind == "texture" then
+                    obj.Transparency = saved.value
+                elseif saved.kind == "effect" then
+                    obj.Enabled = saved.value
+                end
+            end)
+        end
+    end
+    table.clear(hiddenMapOriginals)
+end
+
+local function pruneDestroyedHiddenObjects()
+    for obj in pairs(hiddenMapOriginals) do
+        local hasParent = false
+        pcall(function() hasParent = obj.Parent ~= nil end)
+        if not hasParent then
+            hiddenMapOriginals[obj] = nil
+        end
+    end
+end
+
+local function bindHiddenMapRoot(mapRoot)
+    if not hiddenMapsEnabled or not mapRoot then return false end
+    if hiddenMapRoot == mapRoot then return true end
+
+    pruneDestroyedHiddenObjects()
+    -- Disconnect only the previous Map listener. Keep the Chunks listener alive.
+    disconnectHiddenMapRoot()
+    hiddenMapRoot = mapRoot
+    hiddenMapGeneration = hiddenMapGeneration + 1
+    local generation = hiddenMapGeneration
+
+    -- Connect before walking existing descendants to close the scan race window.
+    hiddenMapAddedConnection = mapRoot.DescendantAdded:Connect(function(obj)
+        if hiddenMapsEnabled and hiddenMapRoot == mapRoot
+            and hiddenMapGeneration == generation then
+            hideMapObject(obj, mapRoot)
+        end
+    end)
+
+    hiddenMapScanRunning = true
+    hiddenMapScanProcessed = 0
+    scanTreeInBatches(mapRoot,
+        function()
+            return hiddenMapsEnabled and hiddenMapRoot == mapRoot
+                and hiddenMapGeneration == generation
+        end,
+        function(obj)
+            hideMapObject(obj, mapRoot)
+            hiddenMapScanProcessed = hiddenMapScanProcessed + 1
+        end,
+        HIDDEN_MAP_BATCH_SIZE,
+        function()
+            hiddenMapScanRunning = false
+            print("[dEnzCreator STAGE 7] Map hidden in background:", mapRoot.Name,
+                "| descendants processed:", hiddenMapScanProcessed)
+        end
+    )
+    return true
+end
+
+local function applyHiddenMap()
+    if not hiddenMapsEnabled then return false end
+    local mapRoot = Workspace:FindFirstChild("Map")
+    if not mapRoot then return false end
+    return bindHiddenMapRoot(mapRoot)
+end
+
+local function setHiddenMaps(enabled)
+    if enabled then
+        hiddenMapsEnabled = true
+        applyHiddenMap()
+        bindHiddenChunks()
+        print("[dEnzCreator STAGE 7] Hidden Maps ON. New map objects are hidden immediately; existing objects are processed in background batches.")
+    else
+        restoreHiddenMap()
+        print("[dEnzCreator STAGE 7] Hidden Maps OFF. Original map/chunk visuals restored.")
+    end
+end
+
+-- dEnzCreator compact mobile panel (140 px wide).
+local gui = Instance.new("ScreenGui")
+gui.Name = "dEnzCreator_ETW"
+gui.ResetOnSpawn = false
+gui.Parent = player:WaitForChild("PlayerGui")
+
+local frame = Instance.new("Frame")
+frame.Name = "Main"
+frame.Size = UDim2.fromOffset(140, 0)
+frame.AutomaticSize = Enum.AutomaticSize.Y
+frame.Position = UDim2.new(0, 12, 0.42, 0)
+frame.BackgroundColor3 = Color3.fromRGB(20, 22, 38)
+frame.BorderSizePixel = 0
+frame.Parent = gui
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+local frameStroke = Instance.new("UIStroke", frame)
+frameStroke.Color = Color3.fromRGB(104, 93, 160)
+frameStroke.Thickness = 1
+
+local padding = Instance.new("UIPadding", frame)
+padding.PaddingTop = UDim.new(0, 6)
+padding.PaddingBottom = UDim.new(0, 7)
+padding.PaddingLeft = UDim.new(0, 6)
+padding.PaddingRight = UDim.new(0, 6)
+
+local layout = Instance.new("UIListLayout", frame)
+layout.SortOrder = Enum.SortOrder.LayoutOrder
+layout.Padding = UDim.new(0, 5)
+
+local header = Instance.new("Frame")
+header.LayoutOrder = 1
+header.Size = UDim2.new(1, 0, 0, 64)
+header.BackgroundColor3 = Color3.fromRGB(37, 39, 62)
+header.BackgroundTransparency = 0
+header.BorderSizePixel = 0
+header.Parent = frame
+Instance.new("UICorner", header).CornerRadius = UDim.new(0, 7)
+local headerStroke = Instance.new("UIStroke", header)
+headerStroke.Color = Color3.fromRGB(125, 105, 195)
+headerStroke.Thickness = 1
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -48, 0, 23)
+title.Position = UDim2.fromOffset(6, 1)
+title.BackgroundTransparency = 1
+title.Text = "dEnzCreator"
+title.TextColor3 = Color3.new(1, 1, 1)
+title.TextSize = 11
+title.Font = Enum.Font.GothamBold
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.Parent = header
+
+local minimize = Instance.new("TextButton")
+minimize.Size = UDim2.fromOffset(20, 20)
+minimize.Position = UDim2.new(1, -42, 0, 1)
+minimize.Text = "–"
+minimize.TextSize = 16
+minimize.Font = Enum.Font.GothamBold
+minimize.TextColor3 = Color3.new(1, 1, 1)
+minimize.BackgroundColor3 = Color3.fromRGB(49, 48, 76)
+minimize.Parent = header
+Instance.new("UICorner", minimize).CornerRadius = UDim.new(1, 0)
+
+local close = Instance.new("TextButton")
+close.Size = UDim2.fromOffset(20, 20)
+close.Position = UDim2.new(1, -21, 0, 1)
+close.Text = "×"
+close.TextSize = 16
+close.Font = Enum.Font.GothamBold
+close.TextColor3 = Color3.new(1, 1, 1)
+close.BackgroundColor3 = Color3.fromRGB(49, 48, 76)
+close.Parent = header
+Instance.new("UICorner", close).CornerRadius = UDim.new(1, 0)
+
+local runtimeBlock = Instance.new("TextLabel")
+runtimeBlock.Name = "RuntimeBlock"
+runtimeBlock.Size = UDim2.new(1, -12, 0, 34)
+runtimeBlock.Position = UDim2.fromOffset(6, 27)
+runtimeBlock.BackgroundTransparency = 1
+runtimeBlock.BorderSizePixel = 0
+runtimeBlock.Text = "Runtime: 0m 0s\nSeason time: 0m 0s"
+runtimeBlock.TextColor3 = Color3.fromRGB(240, 243, 248)
+runtimeBlock.TextSize = 8
+runtimeBlock.Font = Enum.Font.GothamMedium
+runtimeBlock.TextXAlignment = Enum.TextXAlignment.Left
+runtimeBlock.TextYAlignment = Enum.TextYAlignment.Center
+-- Important: timer label is parented directly to header and has no background of its own.
+runtimeBlock.Parent = header
+
+local function makeToggle(label, order, color, initial, callback)
+    local b = Instance.new("TextButton")
+    b.LayoutOrder = order
+    b.Size = UDim2.new(1, 0, 0, 30)
+    b.BackgroundColor3 = initial and color or Color3.fromRGB(54, 52, 76)
+    b.BorderSizePixel = 0
+    b.Text = label .. (initial and ": ON" or ": OFF")
+    b.TextColor3 = Color3.new(1, 1, 1)
+    b.TextSize = 9
+    b.Font = Enum.Font.GothamSemibold
+    b.TextWrapped = true
+    b.Parent = frame
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 7)
+    local enabled = initial
+    b.Activated:Connect(function()
+        enabled = not enabled
+        b.Text = label .. (enabled and ": ON" or ": OFF")
+        b.BackgroundColor3 = enabled and color or Color3.fromRGB(54, 52, 76)
+        callback(enabled)
+    end)
+    return b
+end
+
+makeToggle("AUTOFARM", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
+    CFG.Farm = on
+    if on then
+        -- Prepare the single floor and remove map visuals in the same activation.
+        ensureFarmFloor()
+        setHiddenMaps(true)
+        setKedadaTransition(true)
+        -- Cache and locally detach current Map/Chunks, matching KEDADA.
+        detachCurrentWorldRoots()
+        pendingLandingMap = getMapName()
+        landingConfirmedAt = nil
+        noFoodMapKey = select(2, getMapName())
+        noFoodSkipSentForMap = false
+        lastFoodScanAt = 0
+        cachedFoodNearby = false
+        lastNoFoodSkipAttemptAt = 0
+        lastLandingAttempt = 0
+        farmAnchor()
+        -- Do not wait for the next Heartbeat before the first Grab/Eat attempt.
+        pcall(farmStep)
+    else
+        setKedadaTransition(false)
+        restoreWorldRoots()
+        setHiddenMaps(false)
+        removeFarmFloor()
+        pendingLandingMap = nil
+        landingConfirmedAt = nil
+    end
+    print("[dEnzCreator V3.3.6] AutoFarm", on and "ON" or "OFF")
+end)
+
+-- Map hiding is now automatic with AutoFarm; no separate toggle is needed.
+
+local autoClaimEnabled = false
+local lastRewardClaim = 0
+local lastSpinRequest = 0
+local function claimRewardsStep()
+    if not autoClaimEnabled or os.clock() - lastRewardClaim < 1 then return end
+    lastRewardClaim = os.clock()
+
+    local events = ReplicatedStorage:FindFirstChild("Events")
+    if not events then return end
+
+    local timedRewards = player:FindFirstChild("TimedRewards")
+    local rewardEvent = events:FindFirstChild("RewardEvent")
+    if timedRewards and rewardEvent then
+        for _, reward in ipairs(timedRewards:GetChildren()) do
+            local value
+            pcall(function() value = tonumber(reward.Value) end)
+            if value and value > 0 then
+                pcall(function() rewardEvent:FireServer(reward) end)
+            end
+        end
+    end
+
+    -- Spin request is throttled separately to avoid rapid remote firing.
+    local spinEvent = events:FindFirstChild("SpinEvent")
+    if spinEvent and os.clock() - lastSpinRequest >= 10 then
+        lastSpinRequest = os.clock()
+        pcall(function() spinEvent:FireServer() end)
+    end
+end
+
+makeToggle("AUTO CLAIM REWARDS", 5, Color3.fromRGB(133, 89, 195), false, function(on)
+    autoClaimEnabled = on
+end)
+
+local minimized = false
+local hiddenItems = {}
+minimize.Activated:Connect(function()
+    minimized = not minimized
+    for _, child in ipairs(frame:GetChildren()) do
+        if child ~= header and child:IsA("GuiObject") then
+            child.Visible = not minimized
+        end
+    end
+    minimize.Text = minimized and "+" or "–"
+end)
+close.Activated:Connect(function()
+    running, CFG.Farm = false, false
+    autoClaimEnabled = false
+    restoreWorldRoots()
+    setHiddenMaps(false)
+    removeFarmFloor()
+    setKedadaTransition(false)
+    gui:Destroy()
+end)
+
+-- Wall-clock timers: update independently of AutoFarm activity.
+-- Runtime is retained across script re-execution if the executor keeps its environment.
+-- Same os.clock() timer basis as the first working runtime panel.
+local scriptStartedAt = os.clock()
+local sessionStartedAt = os.clock()
+local function formatDuration(seconds)
+    seconds = math.max(0, math.floor(tonumber(seconds) or 0))
+    local hours = math.floor(seconds / 3600)
+    local minutes = math.floor((seconds % 3600) / 60)
+    local secs = seconds % 60
+    if hours > 0 then
+        return string.format("%dh %dm %ds", hours, minutes, secs)
+    end
+    return string.format("%dm %ds", minutes, secs)
+end
+
+local function findCashValue()
+    local candidates = {
+        player:FindFirstChild("leaderstats"),
+        player:FindFirstChild("Data"),
+        player:FindFirstChild("Stats")
+    }
+    for _, folder in ipairs(candidates) do
+        if folder then
+            for _, obj in ipairs(folder:GetDescendants()) do
+                if (obj:IsA("IntValue") or obj:IsA("NumberValue"))
+                    and (norm(obj.Name):find("cash", 1, true)
+                    or norm(obj.Name):find("coin", 1, true)
+                    or norm(obj.Name):find("money", 1, true)
+                    or norm(obj.Name):find("gold", 1, true)) then
+                    return tonumber(obj.Value)
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function readMapCountdown()
+    local pg = player:FindFirstChildOfClass("PlayerGui")
+    if not pg then return nil end
+    for _, obj in ipairs(pg:GetDescendants()) do
+        if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+            local t = tostring(obj.Text or "")
+            local mm, ss = t:match("(%d%d?):(%d%d)")
+            if mm and ss then
+                local total = tonumber(mm) * 60 + tonumber(ss)
+                if total >= 0 and total <= 3600 then
+                    return total
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function countChunks()
+    local chunks = Workspace:FindFirstChild("Chunks")
+    if not chunks then return nil end
+    return #chunks:GetChildren()
+end
+
+local function updateRuntimeMonitor()
+    -- os.time() measures real elapsed wall time, not CPU time or map duration.
+    local now = os.clock()
+    runtimeBlock.Text = string.format(
+        "Runtime: %s\nSeason time: %s",
+        formatDuration(now - scriptStartedAt),
+        formatDuration(cycleStartedAt and (now - cycleStartedAt) or completedCycleSeconds)
+    )
+end
+
+
+-- Bind exactly once to each new Map root; Chunks is not scanned or hooked.
+kedadaCharacterConnection = player.CharacterAdded:Connect(function(char)
+    if not kedadaTransitionEnabled then return end
+    task.defer(function()
+        if kedadaTransitionEnabled and player.Character == char then
+            local hum = char:WaitForChild("Humanoid", 5)
+            applyKedadaTransitionToCharacter(char, hum)
+        end
+    end)
+end)
+
+workspaceMapConnection = Workspace.ChildAdded:Connect(function(child)
+    if child.Name ~= "Map" and child.Name ~= "Chunks" then return end
+
+    if hiddenMapsEnabled then
+        if child.Name == "Map" then
+            -- Bind before detaching so descendant streaming remains monitored.
+            bindHiddenMapRoot(child)
+        else
+            bindHiddenChunks(child)
+        end
+    end
+
+    if CFG.Farm and worldRootsDetached then
+        -- Detach newly streamed/replaced roots as well as the initial roots.
+        detachWorldRoot(child)
+    end
+end)
+
+local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
+frame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging, dragStart, startPos = true, input.Position, frame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then dragging = false end
+        end)
+    end
+end)
+frame.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and input == dragInput then
+        local delta = input.Position - dragStart
+        frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X,
+            startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+local connection = RunService.Heartbeat:Connect(function()
+    if not running then return end
+    pcall(updateRuntimeMonitor)
+    pcall(claimRewardsStep)
+    if CFG.Farm then
+        pcall(monitorGrabEatAvailability)
+        pcall(farmStep)
+    end
+end)
+gui.AncestryChanged:Connect(function(_, parent)
+    if parent == nil then
+        running, CFG.Farm = false, false
+        autoClaimEnabled = false
+        setKedadaTransition(false)
+        restoreWorldRoots()
+        setHiddenMaps(false)
+        removeFarmFloor()
+        if workspaceMapConnection then workspaceMapConnection:Disconnect() end
+        if kedadaCharacterConnection then kedadaCharacterConnection:Disconnect() end
+        connection:Disconnect()
+    end
+end)
+
+print("[dEnzCreator STAGE 8 KEDADA TRANSITION + FLOOR LOCK] LocalChunkManager/Animate disabled + Humanoid Physics; Map/Chunks detached locally while AutoFarm is ON; fixed anchored bedrock floor top Y=0; roots restored when AutoFarm turns OFF; Grab/Eat animation 5x; Grab/post-Grab delays 0.02s/12.")
+print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
+
+-- V3.3.6 keeps the character seated on the dedicated floor through map transitions; Grab/Eat never waits for food detection.
+
+-- V3.3.6: Transition floor lock corrects upward impulses and holds position
+-- on the fixed Y=0 FarmFloor while map roots are detached; Grab/Eat continue.
+-- AutoSell, AutoSkip, and Grab/Eat timing are retained.
+
+-- V3.3.6 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
+
+
+-- V3.3.6: Combined title/timer header (140px), left-aligned title, 5x named Grab/Eat animation acceleration. Grab and post-Grab delays are each divided by 12.
+
+-- V3.3.6: Season time starts when map food objects are detected and stops when the sell bar reaches full.
+
+-- Stage 8 fix: farmAnchor does not wait for map geometry; fixed floor is ready immediately.
+
+
+-- STAGE 8 REVISION: FULL KEDADA-STYLE LOCAL WORLD DETACH.
+-- AutoFarm ON: LocalChunkManager + Animate disabled; Humanoid uses Physics;
+-- Workspace.Map and Workspace.Chunks are cached and reparented to nil.
+-- New Map/Chunks roots arriving during transitions are detached as well.
+-- Dynamic map-surface raycasts are removed; the persistent anchored floor
+-- uses KEDADA's fixed bedrock top at Y=0 and landing X=0, Z=100.
+-- AutoFarm OFF / GUI cleanup restores cached Map/Chunks roots and original
+-- LocalScript Disabled states. This is a test adaptation; verify floor height
+-- on every Mega map because maps with playable surfaces below/above Y=0 may
+-- require a later per-map adjustment.
