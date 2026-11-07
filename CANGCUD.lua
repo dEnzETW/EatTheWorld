@@ -1,4 +1,4 @@
--- dEnzCreator ETW AUTOFARM - STAGE 8 KEDADA-STYLE TRANSITION + FLOOR LOCK
+-- dEnzCreator ETW AUTOFARM - TRANSITION FLOOR LOCK + NO-FOOD AUTOSKIP
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
 -- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
@@ -69,112 +69,8 @@ local hiddenMapOriginals = {}
 local hiddenMapConnections = {}
 local workspaceMapConnection = nil
 
--- STAGE 8 KEDADA-STYLE TRANSITION.
--- AutoFarm locally detaches Map/Chunks and uses a fixed bedrock floor.
--- Also disable LocalChunkManager and Animate while farming, and keep the
--- Humanoid in Physics state.
-local kedadaTransitionEnabled = false
-local kedadaBoundCharacter = nil
-local kedadaDisabledScripts = {}
-local kedadaCharacterConnection = nil
-
-local function setKedadaScriptDisabled(scriptObject, disabled)
-    if not scriptObject or not scriptObject:IsA("LocalScript") then return end
-    if kedadaDisabledScripts[scriptObject] == nil then
-        kedadaDisabledScripts[scriptObject] = scriptObject.Disabled
-    end
-    pcall(function()
-        scriptObject.Disabled = disabled
-    end)
-end
-
-local function applyKedadaTransitionToCharacter(char, hum)
-    if not kedadaTransitionEnabled or not char then return end
-    if kedadaBoundCharacter ~= char then
-        kedadaBoundCharacter = char
-    end
-
-    setKedadaScriptDisabled(char:FindFirstChild("LocalChunkManager"), true)
-    setKedadaScriptDisabled(char:FindFirstChild("Animate"), true)
-
-    if hum then
-        pcall(function()
-            hum:ChangeState(Enum.HumanoidStateType.Physics)
-        end)
-    end
-end
-
-local function restoreKedadaTransition()
-    kedadaTransitionEnabled = false
-    kedadaBoundCharacter = nil
-    for scriptObject, wasDisabled in pairs(kedadaDisabledScripts) do
-        if scriptObject then
-            pcall(function()
-                scriptObject.Disabled = wasDisabled
-            end)
-        end
-    end
-    table.clear(kedadaDisabledScripts)
-end
-
-local function setKedadaTransition(enabled)
-    kedadaTransitionEnabled = enabled and true or false
-    if not kedadaTransitionEnabled then
-        restoreKedadaTransition()
-        return
-    end
-    local char, hum = player.Character, nil
-    if char then hum = char:FindFirstChildOfClass("Humanoid") end
-    applyKedadaTransitionToCharacter(char, hum)
-end
-
 local function norm(v)
     return string.lower(tostring(v or "")):gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " ")
-end
-
--- KEDADA-style local detachment: keep references so roots can be restored
--- when AutoFarm is disabled. A list is used because a new map/chunk root can
--- arrive during a transition while an older root is already detached.
-local worldRootsDetached = false
-local detachedWorldRoots = {Map = {}, Chunks = {}}
-local latestDetachedMapRoot = nil
-
-local function detachWorldRoot(root)
-    if not root or (root.Name ~= "Map" and root.Name ~= "Chunks") then return end
-    local bucket = detachedWorldRoots[root.Name]
-    for _, saved in ipairs(bucket) do
-        if saved == root then return end
-    end
-    -- Keep only the newest root of each type for restoration. Older map
-    -- instances stay detached instead of being reinserted as duplicate maps.
-    table.clear(bucket)
-    table.insert(bucket, root)
-    if root.Name == "Map" then latestDetachedMapRoot = root end
-    pcall(function() root.Parent = nil end)
-end
-
-local function detachCurrentWorldRoots()
-    worldRootsDetached = true
-    local mapRoot = Workspace:FindFirstChild("Map")
-    local chunksRoot = Workspace:FindFirstChild("Chunks")
-    if mapRoot then detachWorldRoot(mapRoot) end
-    if chunksRoot then detachWorldRoot(chunksRoot) end
-end
-
-local function restoreWorldRoots()
-    worldRootsDetached = false
-    for _, rootName in ipairs({"Map", "Chunks"}) do
-        local bucket = detachedWorldRoots[rootName]
-        for _, root in ipairs(bucket) do
-            if root then
-                pcall(function()
-                    if root.Parent == nil then root.Parent = Workspace end
-                end)
-            end
-        end
-        table.clear(bucket)
-    end
-    latestDetachedMapRoot = nil
 end
 
 local function getMapName()
@@ -186,7 +82,7 @@ local function getMapName()
             if obj then pcall(function() table.insert(candidates, obj.Value) end) end
         end
     end
-    local map = Workspace:FindFirstChild("Map") or latestDetachedMapRoot
+    local map = Workspace:FindFirstChild("Map")
     if map then
         table.insert(candidates, map.Name)
         local value = map:FindFirstChild("MapName")
@@ -212,14 +108,16 @@ local function getParts()
 end
 
 
--- KEDADA-style bedrock floor: fixed 2048x10 with its top at Y=0.
--- Map/Chunks are detached locally, so surface raycasts are intentionally removed.
+-- One persistent anchored farm floor. Its height is matched to the active map's
+-- detected walkable surface; Workspace.Chunks is deliberately left untouched.
 local FARM_FLOOR_NAME = "dEnzCreator_FarmFloor"
 local FARM_FLOOR_SIZE = Vector3.new(2048, 10, 2048)
 local FARM_FLOOR_HALF_HEIGHT = FARM_FLOOR_SIZE.Y / 2
 local FARM_LANDING_X = 0
 local FARM_LANDING_Z = 100
-local FARM_FIXED_SURFACE_TOP_Y = 0
+local FARM_SURFACE_RAY_TOP = 5000
+local FARM_SURFACE_RAY_LENGTH = 10000
+local FARM_SURFACE_SCAN_INTERVAL = 0.20
 local farmFloor = nil
 local farmSurfaceMapKey = ""
 local farmSurfaceTopY = nil
@@ -287,26 +185,90 @@ local function ensureFarmFloor()
     return floor
 end
 
--- No raycast is used here: Map and Chunks are intentionally detached.
--- The persistent floor follows KEDADA's fixed bedrock top at Y=0.
+-- STAGE 5: re-check the new map surface every 0.20s while it streams in.
+-- This only shortens local floor-height detection latency; it does not force
+-- server map loading or change AutoSell/AutoSkip/Grab-Eat behavior.
+-- Find a broad, walkable map surface under the shared X=0, Z=100 landing point.
+-- Original map parts are only hidden with LocalTransparencyModifier, so they
+-- remain queryable and can still provide their actual height for this scan.
+local function detectMapSurfaceTopY()
+    local mapRoot = Workspace:FindFirstChild("Map")
+    if not mapRoot then return nil end
+
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Include
+    params.FilterDescendantsInstances = {mapRoot, Workspace.Terrain}
+    params.IgnoreWater = true
+
+    local offsets = {
+        {0, 0}, {4, 0}, {-4, 0}, {0, 4}, {0, -4},
+        {8, 8}, {-8, 8}, {8, -8}, {-8, -8}
+    }
+    local heights = {}
+
+    for _, offset in ipairs(offsets) do
+        local origin = Vector3.new(FARM_LANDING_X + offset[1], FARM_SURFACE_RAY_TOP,
+            FARM_LANDING_Z + offset[2])
+        local result = Workspace:Raycast(origin, Vector3.new(0, -FARM_SURFACE_RAY_LENGTH, 0), params)
+        if result and result.Normal.Y >= 0.82 then
+            local hit = result.Instance
+            local acceptable = hit == Workspace.Terrain
+            if hit:IsA("BasePart") then
+                acceptable = hit.CanCollide and hit.CanQuery
+                    and hit.CFrame.UpVector.Y >= 0.82
+                    and hit.Size.X >= 12 and hit.Size.Z >= 12
+            end
+            if acceptable then
+                table.insert(heights, result.Position.Y)
+            end
+        end
+    end
+
+    if #heights == 0 then return nil end
+    table.sort(heights)
+    -- Median rejects isolated raised props while tolerating small terrain variation.
+    local middle = math.floor((#heights + 1) / 2)
+    if #heights % 2 == 0 then
+        return (heights[middle] + heights[middle + 1]) / 2
+    end
+    return heights[middle]
+end
+
 local function positionFarmFloorForMap(mapKey)
     if farmSurfaceMapKey ~= mapKey then
         farmSurfaceMapKey = mapKey
-        farmSurfaceTopY = FARM_FIXED_SURFACE_TOP_Y
-        lastFarmSurfaceScan = os.clock()
-        transitionSurfaceReadyAt = os.clock()
-        local elapsed = transitionStartedAt and (transitionSurfaceReadyAt - transitionStartedAt) or nil
-        monitorLastSurfaceScanMs = 0
-        monitorLastSurfaceScanAt = os.clock()
-        monitorLog("FLOOR ready", string.format("fixed top Y %.2f | transition %s",
-            FARM_FIXED_SURFACE_TOP_Y,
-            elapsed and string.format("%.2fs", elapsed) or "n/a"))
+        farmSurfaceTopY = nil
+        lastFarmSurfaceScan = 0
     end
 
+    if farmSurfaceTopY then return true end
+    local now = os.clock()
+    if now - lastFarmSurfaceScan < FARM_SURFACE_SCAN_INTERVAL then
+        return false
+    end
+    lastFarmSurfaceScan = now
+
+    local scanStarted = os.clock()
+    local mapTopY = detectMapSurfaceTopY()
+    monitorLastSurfaceScanMs = (os.clock() - scanStarted) * 1000
+    monitorLastSurfaceScanAt = os.clock()
+    if mapTopY == nil then
+        monitorLog("SURFACE", "not ready; scan " .. string.format("%.1fms", monitorLastSurfaceScanMs))
+        return false
+    end
+    transitionSurfaceReadyAt = os.clock()
+    local surfaceElapsed = transitionStartedAt and (transitionSurfaceReadyAt - transitionStartedAt) or nil
+    monitorLog("SURFACE ready", string.format("Y %.2f | scan %.1fms | transition %s",
+        mapTopY, monitorLastSurfaceScanMs,
+        surfaceElapsed and string.format("%.2fs", surfaceElapsed) or "n/a"))
+
+    -- Keep the black anchored floor just above the actual map surface.
+    farmSurfaceTopY = mapTopY + 0.05
     local floor = ensureFarmFloor()
-    floor.CFrame = CFrame.new(0,
-        FARM_FIXED_SURFACE_TOP_Y - FARM_FLOOR_HALF_HEIGHT, 0)
+    floor.CFrame = CFrame.new(0, farmSurfaceTopY - FARM_FLOOR_HALF_HEIGHT, 0)
     floor.Anchored = true
+    print("[dEnzCreator] Anchored farm floor matched map surface:", mapKey,
+        "topY:", math.floor(farmSurfaceTopY * 100 + 0.5) / 100)
     return true
 end
 
@@ -355,8 +317,10 @@ local function farmAnchor()
     end
 
     local floor = ensureFarmFloor()
-    -- The fixed Y=0 FarmFloor remains available while Map/Chunks are detached.
-    -- On map changes, the same floor is reaffirmed without waiting for map geometry.
+    -- During map streaming, keep using the persistent FarmFloor at its last
+    -- known height instead of returning early and dropping the character lock.
+    -- Once the new map surface is detected, positionFarmFloorForMap updates
+    -- this same floor and the character is seated on its new height below.
     local newSurfaceReady = positionFarmFloorForMap(key)
     local floorTop = floor.Position.Y + floor.Size.Y / 2
     if not newSurfaceReady then
@@ -684,10 +648,6 @@ end
 local function farmStep()
     local char, hum, root, events = getParts()
     if not char then return end
-
-    -- KEDADA transition controls are re-applied to a replacement character
-    -- without waiting for the next map scan.
-    applyKedadaTransitionToCharacter(char, hum)
 
     farmAnchor()
     accelerateActionAnimations(hum)
@@ -1258,12 +1218,8 @@ end)
 
 local function refreshStage5Inspector()
     if not monitorEnabled or not monitorText then return end
-    local map = Workspace:FindFirstChild("Map") or latestDetachedMapRoot
+    local map = Workspace:FindFirstChild("Map")
     local chunks = Workspace:FindFirstChild("Chunks")
-    if not chunks and worldRootsDetached then
-        local bucket = detachedWorldRoots.Chunks
-        chunks = bucket[#bucket]
-    end
     local mapChildren = map and #map:GetChildren() or 0
     local chunkChildren = chunks and #chunks:GetChildren() or 0
     local mapName = getMapName()
@@ -1299,7 +1255,7 @@ local function refreshStage5Inspector()
             .. " | Eat age: " .. (eatGap and string.format("%.0fms", eatGap) or "n/a"),
         "Landing age: " .. (landingGap and string.format("%.1fs", landingGap) or "waiting"),
         "FarmFloor: " .. (floor and "FOUND" or "MISSING")
-            .. " | Floor mode: " .. (worldRootsDetached and "FIXED Y=0" or "OFF"),
+            .. " | Surface scan: " .. (monitorLastSurfaceScanMs and string.format("%.1fms", monitorLastSurfaceScanMs) or "n/a"),
         "Map mode: " .. (hiddenMapsEnabled and "HIDDEN (persistent)" or "VISIBLE")
             .. " | map batch: " .. (hiddenMapScanRunning and tostring(hiddenMapScanProcessed) or "done")
             .. " | chunks batch: " .. (hiddenChunksScanRunning and tostring(hiddenChunksScanProcessed) or "done"),
@@ -1343,9 +1299,6 @@ makeToggle("AUTOFARM", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
         -- Prepare the single floor and remove map visuals in the same activation.
         ensureFarmFloor()
         setHiddenMaps(true)
-        setKedadaTransition(true)
-        -- Cache and locally detach current Map/Chunks, matching KEDADA.
-        detachCurrentWorldRoots()
         pendingLandingMap = getMapName()
         landingConfirmedAt = nil
         noFoodMapKey = select(2, getMapName())
@@ -1358,8 +1311,6 @@ makeToggle("AUTOFARM", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
         -- Do not wait for the next Heartbeat before the first Grab/Eat attempt.
         pcall(farmStep)
     else
-        setKedadaTransition(false)
-        restoreWorldRoots()
         setHiddenMaps(false)
         removeFarmFloor()
         pendingLandingMap = nil
@@ -1418,10 +1369,8 @@ end)
 close.Activated:Connect(function()
     running, CFG.Farm = false, false
     autoClaimEnabled = false
-    restoreWorldRoots()
     setHiddenMaps(false)
     removeFarmFloor()
-    setKedadaTransition(false)
     gui:Destroy()
 end)
 
@@ -1499,31 +1448,13 @@ end
 
 
 -- Bind exactly once to each new Map root; Chunks is not scanned or hooked.
-kedadaCharacterConnection = player.CharacterAdded:Connect(function(char)
-    if not kedadaTransitionEnabled then return end
-    task.defer(function()
-        if kedadaTransitionEnabled and player.Character == char then
-            local hum = char:WaitForChild("Humanoid", 5)
-            applyKedadaTransitionToCharacter(char, hum)
-        end
-    end)
-end)
-
 workspaceMapConnection = Workspace.ChildAdded:Connect(function(child)
-    if child.Name ~= "Map" and child.Name ~= "Chunks" then return end
-
-    if hiddenMapsEnabled then
-        if child.Name == "Map" then
-            -- Bind before detaching so descendant streaming remains monitored.
-            bindHiddenMapRoot(child)
-        else
-            bindHiddenChunks(child)
-        end
-    end
-
-    if CFG.Farm and worldRootsDetached then
-        -- Detach newly streamed/replaced roots as well as the initial roots.
-        detachWorldRoot(child)
+    if not hiddenMapsEnabled then return end
+    if child.Name == "Map" then
+        -- Bind synchronously so objects added immediately after the root are caught.
+        bindHiddenMapRoot(child)
+    elseif child.Name == "Chunks" then
+        bindHiddenChunks(child)
     end
 end)
 
@@ -1566,24 +1497,20 @@ gui.AncestryChanged:Connect(function(_, parent)
     if parent == nil then
         running, CFG.Farm = false, false
         autoClaimEnabled = false
-        setKedadaTransition(false)
-        restoreWorldRoots()
         setHiddenMaps(false)
         removeFarmFloor()
         if workspaceMapConnection then workspaceMapConnection:Disconnect() end
-        if kedadaCharacterConnection then kedadaCharacterConnection:Disconnect() end
         connection:Disconnect()
     end
 end)
 
-print("[dEnzCreator STAGE 8 KEDADA TRANSITION + FLOOR LOCK] LocalChunkManager/Animate disabled + Humanoid Physics; Map/Chunks detached locally while AutoFarm is ON; fixed anchored bedrock floor top Y=0; roots restored when AutoFarm turns OFF; Grab/Eat animation 5x; Grab/post-Grab delays 0.02s/12.")
+print("[dEnzCreator STAGE 8 TRANSITION FLOOR LOCK + STREAMED HIDDEN MAP] New map objects are hidden immediately; existing Map/Chunks descendants are processed in small per-frame background batches. Transition-to-surface and first Grab/Eat timing tracked. All maps use landing X=0, Z=100; anchored floor Y is detected from each map surface; Grab/Eat animation acceleration 5x; Grab and post-Grab delays target 0.02s/12 each.")
 print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
 -- V3.3.6 keeps the character seated on the dedicated floor through map transitions; Grab/Eat never waits for food detection.
 
--- V3.3.6: Transition floor lock corrects upward impulses and holds position
--- on the fixed Y=0 FarmFloor while map roots are detached; Grab/Eat continue.
--- AutoSell, AutoSkip, and Grab/Eat timing are retained.
+-- V3.3.6: Transition floor lock corrects upward impulses and holds position until new food is detected.
+-- Stage 8 keeps the character locked to the persistent FarmFloor at its last known height while the next map surface streams in; Grab/Eat continue. AutoSell, AutoSkip, and Grab/Eat timing are retained.
 
 -- V3.3.6 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
 
@@ -1592,16 +1519,4 @@ print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active;
 
 -- V3.3.6: Season time starts when map food objects are detected and stops when the sell bar reaches full.
 
--- Stage 8 fix: farmAnchor does not wait for map geometry; fixed floor is ready immediately.
-
-
--- STAGE 8 REVISION: FULL KEDADA-STYLE LOCAL WORLD DETACH.
--- AutoFarm ON: LocalChunkManager + Animate disabled; Humanoid uses Physics;
--- Workspace.Map and Workspace.Chunks are cached and reparented to nil.
--- New Map/Chunks roots arriving during transitions are detached as well.
--- Dynamic map-surface raycasts are removed; the persistent anchored floor
--- uses KEDADA's fixed bedrock top at Y=0 and landing X=0, Z=100.
--- AutoFarm OFF / GUI cleanup restores cached Map/Chunks roots and original
--- LocalScript Disabled states. This is a test adaptation; verify floor height
--- on every Mega map because maps with playable surfaces below/above Y=0 may
--- require a later per-map adjustment.
+-- Stage 8 fix: do not return early from farmAnchor while the next map surface is unavailable.
