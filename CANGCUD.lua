@@ -552,12 +552,9 @@ local function sendAutoSell(events)
         return false
     end
 
-    if cycleStartedAt ~= nil then
-        completedCycleSeconds = math.max(0, os.clock() - cycleStartedAt)
-        cycleStartedAt = nil
-        print("[dEnzCreator] Season Time stopped and saved: Sell sent.")
-    end
-    print("[dEnzCreator V3.3.6] AutoSell request sent.")
+    -- Do not stop Season Time merely because a Sell request was sent.
+    -- Wait for the game to confirm the sale through the size/bar reset below.
+    print("[dEnzCreator V3.3.6] AutoSell request sent; waiting for sale confirmation.")
     return true
 end
 
@@ -860,24 +857,35 @@ local function farmStep()
             lastSellAttempt = os.clock()
             sendAutoSell(events)
         end
-    elseif wasFull then
-        -- A drop after a full bar confirms either AutoSell or a manual sale.
-        -- Prefer the Size reset/change signal; the bar drop is the fallback.
-        local sizeDrop = size ~= nil and lastSize ~= nil and size < lastSize
-        local barDrop = barProgress ~= nil and previousBarProgress ~= nil
-            and previousBarProgress >= 0.985 and barProgress < 0.90
-        local sold = (size ~= nil and maxSize ~= nil and size <= maxSize * 0.05)
-            or sizeDrop or barDrop
+    end
 
-        if sold then
+    -- Confirm both AutoSell and manual Sell by observing the game's actual
+    -- post-sale reset. A Sell button click/request alone is not confirmation.
+    local sizeDropAfterFull = size ~= nil and maxSize ~= nil and lastSize ~= nil
+        and lastSize >= maxSize * 0.90 and size < lastSize * 0.50
+    local sizeReset = size ~= nil and maxSize ~= nil and size <= maxSize * 0.05
+        and lastSize ~= nil and lastSize > size
+    local barDropAfterFull = barProgress ~= nil and previousBarProgress ~= nil
+        and previousBarProgress >= 0.985 and barProgress < 0.90
+    local saleConfirmed = sizeDropAfterFull or sizeReset or barDropAfterFull
+
+    if saleConfirmed then
+        if cycleStartedAt ~= nil then
+            completedCycleSeconds = math.max(0, os.clock() - cycleStartedAt)
+            cycleStartedAt = nil
+            print("[dEnzCreator] Season Time stopped and saved: sale/reset confirmed (AutoSell or manual Sell).")
+        end
+
+        if wasFull then
             print("[dEnzCreator V3.3.6] Sale/reset detected; requesting AutoSkip.")
             if not skipSentForCycle then
                 skipSentForCycle = requestSkip()
             end
-            wasFull = false
-            lastSellAttempt = 0
-            print("[dEnzCreator] Sale/reset detected; continuous Grab/Eat cycle re-armed.")
         end
+
+        wasFull = false
+        lastSellAttempt = 0
+        print("[dEnzCreator] Sale/reset detected; next Season Time will start on the next Eat action.")
     end
 
     if size ~= nil then
@@ -1589,7 +1597,8 @@ print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active;
 
 -- V3.3.6: Combined title/timer header (140px), left-aligned title, 5x named Grab/Eat animation acceleration. Grab and post-Grab delays are each divided by 12.
 
--- Season Time: starts on the first Eat action, stops and saves when Sell is successfully sent; remains stopped during map transition.
+-- Season Time: starts on the first Eat action; stops only after a confirmed
+-- size/bar reset, covering both AutoSell and manual Sell. Runtime never resets.
 
 -- Raycast confirms the map surface before Map/Chunks are detached.
 
