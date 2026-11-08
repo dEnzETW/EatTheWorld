@@ -1,7 +1,7 @@
--- dEnzCreator ETW AUTOFARM - STAGE 8 CHARACTER-TRANSITION TRANSITION + FLOOR LOCK FIX 2
+-- dEnzCreator ETW AUTOFARM - CLEANUP BUILD
 -- Reconstructed from the previously mapped Auto.txt behavior.
 -- Separate test file. Does not overwrite the original source/loader.
--- Timer fix: Sell is sent first; map skip waits for inventory size to decrease.
+-- Sell is sent first; map skip and capacity reset handling are retained.
 -- Skip request uses Paused=false. No fixed map countdowns or artificial waits.
 
 local Players = game:GetService("Players")
@@ -14,28 +14,11 @@ if not player then return end
 
 local CFG = {
     Farm = false,
-    DefaultZ = 100,
-    MegaMapZ = 100,
-    CentralRobloxiaZ = 100,
-    StudvilleZ = 100,
     AutoSkipAfterSell = true,
     UseMappedSkipRemote = true,
-    AutoMapModeSwitch = false,
-    SmallMaps = {
-        ["raven rock"]=true, ["glass houses"]=true, ["courtyard"]=true,
-        ["blox city"]=true, ["jungle"]=true, ["community construction"]=true,
-        ["candy land"]=true, ["ninja temple"]=true, ["forest peak"]=true,
-        ["mini baseplate"]=true, ["martian madness"]=true, ["chaos canyon"]=true,
-        ["zombie town"]=true, ["winter workshop"]=true, ["crossroads"]=true,
-        ["castle playground"]=true, ["twister"]=true, ["battle zone"]=true,
-        ["christmas coast"]=true, ["grid city"]=true,
-        ["yorick's resting place"]=true, ["headquarters"]=true,
-        ["haunted mansion"]=true, ["snow land"]=true
-    }
 }
 
-local running, lastMap, lastMode = true, "", ""
-local lastFoodAction = 0
+local running, lastMap = true, ""
 local grabEatPhase = "grab"
 local nextGrabEatActionAt = 0
 local GRAB_DELAY_BASE = 0.02
@@ -50,28 +33,20 @@ local lastSize = nil
 local lastBarProgress = nil
 local pendingLandingMap = nil
 local landingConfirmedAt = nil
-local lastNoFoodSkipAttemptAt = 0
 local lastLandingAttempt = 0
 local missingActionSince = nil
 local missingActionSkipSent = false
 local cycleStartedAt = nil
 local completedCycleSeconds = 0
-local lastNearbyFoodAt = nil
 local noFoodSkipSentForMap = false
 local noFoodMapKey = ""
 local lastFoodScanAt = 0
-local cachedFoodNearby = false
-local landingSizeBaseline = nil
-local landingBarBaseline = nil
 local lastMissingActionMap = ""
 local hiddenMapsEnabled = false
-local hiddenMapOriginals = {}
+local hiddenMapOriginals = setmetatable({}, {__mode = "k"})
 local workspaceMapConnection = nil
 
--- STAGE 8 CHARACTER-TRANSITION TRANSITION.
--- AutoFarm locally detaches Map/Chunks and uses a fixed bedrock floor.
--- Also disable LocalChunkManager and Animate while farming, and keep the
--- Humanoid in Physics state.
+-- Character transition: disable LocalChunkManager and Animate while farming.
 local characterTransitionEnabled = false
 local transitionBoundCharacter = nil
 local transitionDisabledScripts = {}
@@ -208,7 +183,6 @@ local function getParts()
     if hum and root then return char, hum, root, events end
 end
 
-
 -- Anchored 2048x10 farm floor. Raycast moves it to the detected map surface.
 -- Map/Chunks are detached only after the current map surface has been detected.
 local FARM_FLOOR_NAME = "dEnzCreator_FarmFloor"
@@ -223,30 +197,6 @@ local farmFloor = nil
 local farmSurfaceMapKey = ""
 local farmSurfaceTopY = nil
 local lastFarmSurfaceScan = 0
-
--- Stage 5 monitor: lightweight client-side timing and transition observations.
-local monitorEvents = {}
-local monitorLastGrabAt = nil
-local monitorLastEatAt = nil
-local monitorLastActionLabel = "waiting"
-local monitorLastMaxAt = nil
-local monitorLastSellAt = nil
-local monitorLastResetAt = nil
-local monitorLastLandingAt = nil
-local monitorLastSurfaceScanMs = nil
-local monitorLastSurfaceScanAt = 0
-local transitionStartedAt = nil
-local transitionMapKey = ""
-local transitionSurfaceReadyAt = nil
-local transitionFirstActionAt = nil
-
-local function monitorLog(label, detail)
-    local stamp = os.date("%H:%M:%S")
-    local line = string.format("[%s] %s%s", stamp, tostring(label),
-        detail and (" | " .. tostring(detail)) or "")
-    table.insert(monitorEvents, 1, line)
-    while #monitorEvents > 12 do table.remove(monitorEvents) end
-end
 
 -- Re-normalize even an already-existing FarmFloor. Older instances may have
 -- been left with a stale size, CFrame, or collision flags by a prior run.
@@ -342,24 +292,13 @@ local function positionFarmFloorForMap(mapKey, floor)
     local now = os.clock()
     if now - lastFarmSurfaceScan < FARM_SURFACE_SCAN_INTERVAL then return false end
     lastFarmSurfaceScan = now
-    local scanStarted = os.clock()
     local mapTopY = detectMapSurfaceTopY()
-    monitorLastSurfaceScanMs = (os.clock() - scanStarted) * 1000
-    monitorLastSurfaceScanAt = os.clock()
-    if mapTopY == nil then
-        monitorLog("SURFACE", "not ready; scan " .. string.format("%.1fms", monitorLastSurfaceScanMs))
-        return false
-    end
+    if mapTopY == nil then return false end
 
     farmSurfaceTopY = mapTopY + 0.05
     floor = floor or ensureFarmFloor()
     floor.CFrame = CFrame.new(0, farmSurfaceTopY - FARM_FLOOR_HALF_HEIGHT, 0)
     floor.Anchored = true
-    transitionSurfaceReadyAt = os.clock()
-    local elapsed = transitionStartedAt and (transitionSurfaceReadyAt - transitionStartedAt) or nil
-    monitorLog("SURFACE ready", string.format("Y %.2f | scan %.1fms | transition %s",
-        farmSurfaceTopY, monitorLastSurfaceScanMs,
-        elapsed and string.format("%.2fs", elapsed) or "n/a"))
     print("[dEnzCreator] Raycast floor matched map surface:", mapKey,
         "topY:", math.floor(farmSurfaceTopY * 100 + 0.5) / 100)
     return true
@@ -392,26 +331,15 @@ local function farmAnchor()
         lastMap = mapName
         pendingLandingMap = mapName
         landingConfirmedAt = nil
-        lastNoFoodSkipAttemptAt = 0
         noFoodMapKey = key
-        lastNearbyFoodAt = nil
         noFoodSkipSentForMap = false
         lastFoodScanAt = 0
-        cachedFoodNearby = false
-        landingSizeBaseline = nil
-        landingBarBaseline = nil
         lastLandingAttempt = 0
-        monitorLog("MAP transition", mapName)
-        transitionStartedAt = os.clock()
-        transitionMapKey = key
-        transitionSurfaceReadyAt = nil
-        transitionFirstActionAt = nil
         print("[dEnzCreator] Map transition detected; keeping map Hidden and preparing farm:", mapName)
     end
 
     local floor = ensureFarmFloor()
-    -- The fixed Y=0 FarmFloor remains available while Map/Chunks are detached.
-    -- On map changes, the same floor is reaffirmed without waiting for map geometry.
+    -- Keep the farm floor available while Map/Chunks are detached; Raycast sets its height.
     local newSurfaceReady = positionFarmFloorForMap(key, floor)
     if not newSurfaceReady then
         -- Hold the previous safe position while the new map streams in.
@@ -506,8 +434,7 @@ local function monitorGrabEatAvailability()
     local char = player.Character
     if not char then return end
 
-    local mapName = getMapName()
-    local _, key = getMapName()
+    local mapName, key = getMapName()
     if key ~= lastMissingActionMap then
         lastMissingActionMap = key
         missingActionSince = nil
@@ -535,21 +462,6 @@ local function monitorGrabEatAvailability()
             "- requesting automatic map skip.")
         missingActionSkipSent = true
         requestSkip()
-    end
-end
-
-local function switchModeIfEnabled(mapName)
-    if not CFG.AutoMapModeSwitch then return end
-    local key = norm(mapName)
-    if key == "" or key == lastMode then return end
-    local folder = ReplicatedStorage:FindFirstChild("Events")
-    local remote = folder and folder:FindFirstChild("RequestTeleport")
-    if remote and remote:IsA("RemoteEvent") then
-        local mode = CFG.SmallMaps[key] and "Mega" or "Normal"
-        if pcall(function() remote:FireServer(mode) end) then
-            lastMode = key
-            print("[dEnzCreator V3.3.6] RequestTeleport:", mode, mapName)
-        end
     end
 end
 
@@ -667,7 +579,7 @@ local function getActiveChunksRoot()
     return nil
 end
 
-local function findNearbyFood(char, root)
+local function findNearbyFood(root)
     local chunks = getActiveChunksRoot()
     if not chunks then
         return nil -- nil means map/chunks are not ready; do not start/count timer
@@ -688,7 +600,7 @@ local function findNearbyFood(char, root)
     return false
 end
 
-local function monitorLandingEatProgress(char, hum, root)
+local function monitorLandingEatProgress(hum, root)
     if not pendingLandingMap or noFoodSkipSentForMap then
         return false
     end
@@ -699,10 +611,8 @@ local function monitorLandingEatProgress(char, hum, root)
         noFoodMapKey = key
         pendingLandingMap = mapName
         landingConfirmedAt = nil
-        lastNoFoodSkipAttemptAt = 0
         noFoodSkipSentForMap = false
         lastFoodScanAt = 0
-        cachedFoodNearby = false
     end
 
     local now = os.clock()
@@ -727,8 +637,6 @@ local function monitorLandingEatProgress(char, hum, root)
 
         landingConfirmedAt = now
         lastFoodScanAt = 0
-        monitorLastLandingAt = now
-        monitorLog("LANDING confirmed", string.format("Y %.1f", root.Position.Y))
         print("[dEnzCreator] Map ready + landing confirmed; starting 3-second nearby-object scan:", mapName)
         return false
     end
@@ -738,28 +646,23 @@ local function monitorLandingEatProgress(char, hum, root)
     end
     lastFoodScanAt = now
 
-    local foodState = findNearbyFood(char, root)
+    local foodState = findNearbyFood(root)
     if foodState == nil then
         -- Chunk root became unavailable during streaming; pause the window.
         landingConfirmedAt = nil
         return false
     elseif foodState then
-        cachedFoodNearby = true
-        lastNearbyFoodAt = now
         noFoodSkipSentForMap = true
         pendingLandingMap = nil
         print("[dEnzCreator] Nearby object detected; no-food AutoSkip cancelled for this map:", mapName)
         return true
     end
 
-    cachedFoodNearby = false
     if now - landingConfirmedAt >= NO_FOOD_CONFIRM_SECONDS then
         noFoodSkipSentForMap = true -- one request per map; never spam during transition
         pendingLandingMap = nil
         warn("[dEnzCreator] No nearby object within 3 seconds after map became ready; requesting AutoSkip:", mapName)
-        if requestSkip(true) then
-            monitorLog("NO-FOOD SKIP", mapName .. " | 3.0s no nearby object")
-        else
+        if not requestSkip(true) then
             warn("[dEnzCreator] No-food AutoSkip request could not be sent for:", mapName)
         end
     end
@@ -767,8 +670,7 @@ local function monitorLandingEatProgress(char, hum, root)
     return false
 end
 
--- Separate animation speeds: Grab is accelerated to 10x until the
--- pre-Eat standing phase; Eat animation remains at 5x. Other tracks untouched.
+-- Keep Grab and Eat animation acceleration at the established 5x setting.
 local GRAB_ANIMATION_SPEED = 5.0
 local EAT_ANIMATION_SPEED = 5.0
 local function accelerateActionAnimations(hum)
@@ -812,7 +714,7 @@ local function farmStep()
     end
     accelerateActionAnimations(hum)
 
-    monitorLandingEatProgress(char, hum, root)
+    monitorLandingEatProgress(hum, root)
 
     -- X12 delay tuning: Grab and the post-Grab Eat phase each use 1/12
     -- of the former 0.02s interval. Heartbeat frame rate is the practical
@@ -825,19 +727,6 @@ local function farmStep()
         if grabEvent and eatEvent and now >= nextGrabEatActionAt then
             if grabEatPhase == "grab" then
                 fire(grabEvent)
-                monitorLastGrabAt = now
-                if transitionStartedAt and not transitionFirstActionAt then
-                    transitionFirstActionAt = now
-                    monitorLog("TRANSITION first action", string.format("Grab %.2fs after map change",
-                        now - transitionStartedAt))
-                end
-                monitorLastActionLabel = "GRAB sent"
-                if monitorLastEatAt then
-                    monitorLog("GRAB", string.format("since EAT %.0fms",
-                        (now - monitorLastEatAt) * 1000))
-                else
-                    monitorLog("GRAB", "first observed")
-                end
                 grabEatPhase = "eat"
                 nextGrabEatActionAt = now + POST_GRAB_DELAY
             else
@@ -849,23 +738,9 @@ local function farmStep()
                 fire(eatEvent)
                 fire(eatEvent)
                 fire(eatEvent)
-                monitorLastEatAt = now
-                if transitionStartedAt and not transitionFirstActionAt then
-                    transitionFirstActionAt = now
-                    monitorLog("TRANSITION first action", string.format("Eat %.2fs after map change",
-                        now - transitionStartedAt))
-                end
-                monitorLastActionLabel = "EAT sent"
-                if monitorLastGrabAt then
-                    monitorLog("EAT", string.format("since GRAB %.0fms",
-                        (now - monitorLastGrabAt) * 1000))
-                else
-                    monitorLog("EAT", "first observed")
-                end
                 grabEatPhase = "grab"
                 nextGrabEatActionAt = now + GRAB_DELAY
             end
-            lastFoodAction = now
         end
     end
 
@@ -888,22 +763,12 @@ local function farmStep()
     if full then
         if not wasFull then
             wasFull = true
-            monitorLastMaxAt = os.clock()
-            monitorLog("MAX detected", size and string.format("Size %.0f / %s",
-                size, maxSize and string.format("%.0f", maxSize) or "?") or "bar full")
             skipSentForCycle = false
             lastSellAttempt = os.clock()
 
             -- Requested order: detect FULL -> Sell immediately -> Skip
             -- immediately. Do not add a wait between either remote call.
-            local sellSent = sendAutoSell(events)
-            if sellSent then
-                monitorLastSellAt = os.clock()
-                monitorLog("SELL sent", monitorLastMaxAt and string.format("MAX→SELL %.0fms",
-                    (monitorLastSellAt - monitorLastMaxAt) * 1000) or "sent")
-            else
-                monitorLog("SELL failed", "remote unavailable")
-            end
+            sendAutoSell(events)
             skipSentForCycle = requestSkip()
             print("[dEnzCreator] FULL detected | Sell sent, then Skip sent with no added delay.")
         elseif os.clock() - lastSellAttempt >= 1.75 then
@@ -928,9 +793,6 @@ local function farmStep()
             end
             wasFull = false
             lastSellAttempt = 0
-            monitorLastResetAt = os.clock()
-            monitorLog("RESET observed", size and string.format("Size %.0f", size)
-                or (barProgress and string.format("Bar %.0f%%", barProgress * 100) or "bar/size reset"))
             print("[dEnzCreator] Sale/reset detected; continuous Grab/Eat cycle re-armed.")
         end
     end
@@ -939,10 +801,7 @@ local function farmStep()
         lastSize = size
     end
 
-    local mapName = getMapName()
-    switchModeIfEnabled(mapName)
 end
-
 
 -- HIDDEN MAPS: STREAMED-IN HIDDEN PROCESSING / LOW VISUAL LOAD / BLACK FLOOR
 -- Important: a client LocalScript cannot delay server-side map creation/replication.
@@ -953,13 +812,9 @@ end
 local hiddenMapRoot = nil
 local hiddenMapAddedConnection = nil
 local hiddenMapGeneration = 0
-local hiddenMapScanRunning = false
-local hiddenMapScanProcessed = 0
 local hiddenChunksRoot = nil
 local hiddenChunksAddedConnection = nil
 local hiddenChunksGeneration = 0
-local hiddenChunksScanRunning = false
-local hiddenChunksScanProcessed = 0
 local HIDDEN_MAP_BATCH_SIZE = 160
 local HIDDEN_CHUNKS_BATCH_SIZE = 160
 
@@ -1030,7 +885,7 @@ end
 -- Iterative tree walk: avoids the large synchronous GetDescendants() snapshot.
 -- Newly arriving objects are hidden by DescendantAdded immediately, while this
 -- worker catches up with objects that already existed when the root was bound.
-local function scanTreeInBatches(root, isCurrent, hideCallback, batchSize, onFinished)
+local function scanTreeInBatches(root, isCurrent, hideCallback, batchSize)
     task.spawn(function()
         local stack = {}
         local ok, children = pcall(function() return root:GetChildren() end)
@@ -1063,9 +918,6 @@ local function scanTreeInBatches(root, isCurrent, hideCallback, batchSize, onFin
             end
         end
 
-        if isCurrent() and onFinished then
-            onFinished()
-        end
     end)
 end
 
@@ -1091,8 +943,6 @@ local function bindHiddenChunks(chunksArg)
         end
     end)
 
-    hiddenChunksScanRunning = true
-    hiddenChunksScanProcessed = 0
     scanTreeInBatches(chunks,
         function()
             return hiddenMapsEnabled and hiddenChunksRoot == chunks
@@ -1100,12 +950,8 @@ local function bindHiddenChunks(chunksArg)
         end,
         function(obj)
             hideFoodVisual(obj)
-            hiddenChunksScanProcessed = hiddenChunksScanProcessed + 1
         end,
-        HIDDEN_CHUNKS_BATCH_SIZE,
-        function()
-            hiddenChunksScanRunning = false
-        end
+        HIDDEN_CHUNKS_BATCH_SIZE
     )
     return true
 end
@@ -1117,7 +963,6 @@ local function disconnectHiddenMapRoot()
     end
     hiddenMapGeneration = hiddenMapGeneration + 1
     hiddenMapRoot = nil
-    hiddenMapScanRunning = false
 end
 
 local function disconnectHiddenChunksRoot()
@@ -1127,7 +972,6 @@ local function disconnectHiddenChunksRoot()
     end
     hiddenChunksGeneration = hiddenChunksGeneration + 1
     hiddenChunksRoot = nil
-    hiddenChunksScanRunning = false
 end
 
 local function restoreHiddenMap()
@@ -1155,21 +999,10 @@ local function restoreHiddenMap()
     table.clear(hiddenMapOriginals)
 end
 
-local function pruneDestroyedHiddenObjects()
-    for obj in pairs(hiddenMapOriginals) do
-        local hasParent = false
-        pcall(function() hasParent = obj.Parent ~= nil end)
-        if not hasParent then
-            hiddenMapOriginals[obj] = nil
-        end
-    end
-end
-
 local function bindHiddenMapRoot(mapRoot)
     if not hiddenMapsEnabled or not mapRoot then return false end
     if hiddenMapRoot == mapRoot then return true end
 
-    pruneDestroyedHiddenObjects()
     -- Disconnect only the previous Map listener. Keep the Chunks listener alive.
     disconnectHiddenMapRoot()
     hiddenMapRoot = mapRoot
@@ -1184,8 +1017,6 @@ local function bindHiddenMapRoot(mapRoot)
         end
     end)
 
-    hiddenMapScanRunning = true
-    hiddenMapScanProcessed = 0
     scanTreeInBatches(mapRoot,
         function()
             return hiddenMapsEnabled and hiddenMapRoot == mapRoot
@@ -1193,14 +1024,8 @@ local function bindHiddenMapRoot(mapRoot)
         end,
         function(obj)
             hideMapObject(obj, mapRoot)
-            hiddenMapScanProcessed = hiddenMapScanProcessed + 1
         end,
-        HIDDEN_MAP_BATCH_SIZE,
-        function()
-            hiddenMapScanRunning = false
-            print("[dEnzCreator STAGE 7] Map hidden in background:", mapRoot.Name,
-                "| descendants processed:", hiddenMapScanProcessed)
-        end
+        HIDDEN_MAP_BATCH_SIZE
     )
     return true
 end
@@ -1350,8 +1175,6 @@ makeToggle("AUTOFARM", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
         noFoodMapKey = select(2, getMapName())
         noFoodSkipSentForMap = false
         lastFoodScanAt = 0
-        cachedFoodNearby = false
-        lastNoFoodSkipAttemptAt = 0
         lastLandingAttempt = 0
         -- farmStep performs the one initial floor-lock pass before Grab/Eat.
         -- Do not wait for the next Heartbeat before the first Grab/Eat attempt.
@@ -1448,7 +1271,6 @@ local function updateRuntimeMonitor()
     )
 end
 
-
 -- Bind each replacement Map/Chunks root before local detachment.
 characterTransitionConnection = player.CharacterAdded:Connect(function(char)
     if not characterTransitionEnabled then return end
@@ -1495,7 +1317,7 @@ frame.InputChanged:Connect(function(input)
         dragInput = input
     end
 end)
-UserInputService.InputChanged:Connect(function(input)
+local inputChangedConnection = UserInputService.InputChanged:Connect(function(input)
     if dragging and input == dragInput then
         local delta = input.Position - dragStart
         frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X,
@@ -1522,6 +1344,7 @@ gui.AncestryChanged:Connect(function(_, parent)
         removeFarmFloor()
         if workspaceMapConnection then workspaceMapConnection:Disconnect() end
         if characterTransitionConnection then characterTransitionConnection:Disconnect() end
+        if inputChangedConnection then inputChangedConnection:Disconnect() end
         connection:Disconnect()
     end
 end)
@@ -1529,24 +1352,18 @@ end)
 print("[dEnzCreator STAGE 8 RAYCAST FLOOR] LocalChunkManager/Animate transition handling; Raycast detects map surface before Map/Chunks detach; roots restored when AutoFarm turns OFF; Grab/Eat animation 5x; Grab/post-Grab delays 0.02s/12.")
 print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
 
--- FLOOR LOCK FIX 2 re-normalizes existing FarmFloor size, Y=0 surface, and collision flags once per farmStep cycle; Grab/Eat behavior is unchanged.
-
--- V3.3.6: Transition floor lock corrects upward impulses and holds position
--- on the fixed Y=0 FarmFloor while map roots are detached; Grab/Eat continue.
--- AutoSell, AutoSkip, and Grab/Eat timing are retained.
+-- Floor lock re-normalizes the existing FarmFloor size and collision flags once per farmStep cycle; Grab/Eat behavior is unchanged.
 
 -- V3.3.6 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
-
 
 -- V3.3.6: Combined title/timer header (140px), left-aligned title, 5x named Grab/Eat animation acceleration. Grab and post-Grab delays are each divided by 12.
 
 -- Season Time: starts on the first Eat action, stops and saves when Sell is successfully sent; remains stopped during map transition.
 
--- Stage 8 fix: farmAnchor does not wait for map geometry; fixed floor is ready immediately.
+-- Raycast confirms the map surface before Map/Chunks are detached.
 
-
--- STAGE 8 REVISION: FULL CHARACTER-TRANSITION LOCAL WORLD DETACH.
--- AutoFarm ON: LocalChunkManager + Animate disabled; Humanoid uses Physics;
+-- CHARACTER-TRANSITION LOCAL WORLD DETACH.
+-- AutoFarm ON: LocalChunkManager + Animate disabled; Humanoid is not forced into Physics;
 -- Workspace.Map and Workspace.Chunks are cached and reparented to nil.
 -- New Map/Chunks roots arriving during transitions are detached as well.
 -- Raycast detects each map's walkable surface before Map/Chunks are detached;
