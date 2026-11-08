@@ -588,8 +588,8 @@ local LOOT_MIN_RANGE = 8
 local lastLootScanAt = 0
 local lootTouchWarned = false
 
--- Count Candy only when a Candy part touched by the collector disappears
--- from the active Chunks tree (pickup confirmation), not from the wallet UI.
+-- Data Candy increments only after a Candy touched by the collector leaves
+-- the active Chunks tree; no Candy wallet/UI scanner is used.
 local candyEarnedTotal = 0
 local trackedCandyParts = setmetatable({}, {__mode = "k"})
 
@@ -1428,7 +1428,7 @@ end
 -- Only accept integer-looking UI labels associated with an icon or a clearly
 -- named currency container. This avoids accidentally parsing timers, scientific
 -- notation, or unrelated large numbers elsewhere in PlayerGui.
-local function findDisplayedCurrency(kind)
+local function findDisplayedCoin()
     local playerGui = getPlayerGui()
     if not playerGui then return nil, nil end
 
@@ -1436,20 +1436,14 @@ local function findDisplayedCurrency(kind)
     for _, obj in ipairs(playerGui:GetDescendants()) do
         if obj:IsA("TextLabel") or obj:IsA("TextButton") then
             local value, digitCount = parseDisplayedNumber(obj.Text)
-            if value then
+            if value and digitCount >= 7 and digitCount <= 15 then
                 local parent = obj.Parent
                 local name = string.lower(obj.Name .. " " .. (parent and parent.Name or ""))
-                local named = kind == "coin" and (name:find("coin", 1, true) or name:find("cash", 1, true))
-                    or kind == "candy" and name:find("candy", 1, true)
+                local named = name:find("coin", 1, true) or name:find("cash", 1, true)
                 local icon = hasImageSibling(obj)
                 local score = -math.huge
-                if kind == "coin" and digitCount >= 7 and digitCount <= 15 then
-                    if named then score = 300 + digitCount
-                    elseif icon then score = 100 + digitCount end
-                elseif kind == "candy" and digitCount >= 4 and digitCount <= 6 then
-                    if named then score = 300 + digitCount
-                    elseif icon then score = 100 + digitCount end
-                end
+                if named then score = 300 + digitCount
+                elseif icon then score = 100 + digitCount end
                 if score > bestScore then
                     bestObject, bestValue, bestScore = obj, value, score
                 end
@@ -1472,7 +1466,7 @@ local function updateEarnedStats(now)
 
     -- Count every positive increase in the live displayed wallet. This includes
     -- Coin pickups and Sell proceeds because both update the same Coin balance.
-    local coinObject, coinBalance = findDisplayedCurrency("coin")
+    local coinObject, coinBalance = findDisplayedCoin()
     if coinObject and coinBalance ~= nil then
         if coinStatObject ~= coinObject then
             coinStatObject = coinObject
@@ -1484,7 +1478,6 @@ local function updateEarnedStats(now)
         end
     end
 
-    -- Data Candy is updated only by confirmed Candy pickup in lootCoinsCandyStep().
 end
 
 local function updateRuntimeMonitor()
