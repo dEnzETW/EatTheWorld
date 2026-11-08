@@ -1206,7 +1206,7 @@ runtimeBlock.Position = UDim2.fromOffset(6, 25)
 runtimeBlock.BackgroundTransparency = 1
 runtimeBlock.BorderSizePixel = 0
 runtimeBlock.RichText = true
-runtimeBlock.Text = '<font size="7">Runtime: 0m 0s</font>\n<font size="7">Season Time: 0m 0s</font>\n<font size="9">Coin Earned: --</font>\n<font size="9">Data Candy: --</font>'
+runtimeBlock.Text = '<font size="9">Runtime: 0m 0s</font>\n<font size="9">Season Time: 0m 0s</font>\n<font size="9">Coin Earned: --</font>\n<font size="9">Data Candy: --</font>'
 runtimeBlock.TextColor3 = Color3.fromRGB(240, 243, 248)
 runtimeBlock.TextSize = 9
 runtimeBlock.Font = Enum.Font.GothamMedium
@@ -1353,101 +1353,98 @@ local function formatThousands(value)
     return formatted
 end
 
-local function normalizeStatName(name)
-    return string.lower(tostring(name or "")):gsub("[^%w]", "")
+local function parseDisplayedNumber(value)
+    if value == nil then return nil end
+    local digits = tostring(value):gsub("[^%d]", "")
+    if digits == "" then return nil end
+    return tonumber(digits), #digits
 end
 
-local function findCurrencyStat(kind)
-    -- ETW may place live currency values under leaderstats, Data, Stats,
-    -- or directly under the Player. Search all common containers.
-    local containers = {
-        player:FindFirstChild("leaderstats"),
-        player:FindFirstChild("Data"),
-        player:FindFirstChild("Stats"),
-        player
-    }
+local function getPlayerGui()
+    return player:FindFirstChildOfClass("PlayerGui") or player:FindFirstChild("PlayerGui")
+end
 
-    local exactNames
-    local partialNames
-    if kind == "coin" then
-        exactNames = {coin = true, coins = true, cash = true, currency = true,
-            gold = true, money = true, totalcoins = true, totalcash = true}
-        partialNames = {"coin", "cash", "money", "gold"}
-    else
-        exactNames = {candy = true, candies = true, candycount = true,
-            candiescount = true, totalcandy = true, totalcandies = true}
-        partialNames = {"candy"}
+local function hasImageSibling(label)
+    local parent = label and label.Parent
+    if not parent then return false end
+    for _, child in ipairs(parent:GetChildren()) do
+        if child ~= label and (child:IsA("ImageLabel") or child:IsA("ImageButton")) then
+            return true
+        end
     end
+    return false
+end
 
-    -- Prefer exact names first to avoid accidentally selecting a multiplier,
-    -- spent-counter, or other unrelated value containing the same word.
-    for pass = 1, 2 do
-        for _, container in ipairs(containers) do
-            if container then
-                for _, obj in ipairs(container:GetDescendants()) do
-                    if obj:IsA("IntValue") or obj:IsA("NumberValue") then
-                        local normalized = normalizeStatName(obj.Name)
-                        local matched = exactNames[normalized] == true
-                        if pass == 2 and not matched then
-                            for _, fragment in ipairs(partialNames) do
-                                if normalized:find(fragment, 1, true) then
-                                    matched = true
-                                    break
-                                end
-                            end
-                        end
-                        if matched then
-                            local value = tonumber(obj.Value)
-                            if value ~= nil then return obj, value end
-                        end
+-- ETW's visible Coin and Candy balances are rendered as UI text. Search the
+-- live PlayerGui rather than assuming they are IntValue/NumberValue objects.
+-- Coin is the long balance (7+ digits); Candy is the 4-6 digit balance shown
+-- beside its icon. Names are used as a stronger hint when the game provides them.
+local function findDisplayedCurrency(kind)
+    local playerGui = getPlayerGui()
+    if not playerGui then return nil, nil end
+
+    local bestObject, bestValue, bestScore = nil, nil, -math.huge
+    for _, obj in ipairs(playerGui:GetDescendants()) do
+        if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+            local value, digitCount = parseDisplayedNumber(obj.Text)
+            if value then
+                local name = string.lower(obj.Name .. " " .. obj.Parent.Name)
+                local score = -math.huge
+                if kind == "coin" then
+                    if digitCount >= 7 then
+                        score = 10 + math.min(digitCount, 15)
+                        if name:find("coin", 1, true) then score = score + 100 end
                     end
+                else
+                    if digitCount >= 4 and digitCount <= 6 and hasImageSibling(obj) then
+                        score = 10 + digitCount
+                        if name:find("candy", 1, true) then score = score + 100 end
+                    elseif digitCount >= 4 and digitCount <= 6 and name:find("candy", 1, true) then
+                        score = 50 + digitCount
+                    end
+                end
+                if score > bestScore then
+                    bestObject, bestValue, bestScore = obj, value, score
                 end
             end
         end
     end
-    return nil, nil
+    return bestObject, bestValue
 end
 
 local coinStatObject, candyStatObject
 local lastCoinBalance, lastCandyBalance
 local coinEarnedTotal, candyEarnedTotal = 0, 0
 local lastStatsScanAt = 0
-local STATS_SCAN_INTERVAL = 0.15
+local STATS_SCAN_INTERVAL = 0.10
 
 local function updateEarnedStats(now)
     if now - lastStatsScanAt < STATS_SCAN_INTERVAL then return end
     lastStatsScanAt = now
 
-    -- COIN EARNED accumulates every positive live-currency increase. This
-    -- includes Coin/Token pickups AND the money credited after a successful
-    -- Sell. We read the resulting game value, not the Sell remote invocation,
-    -- so a rejected/failed Sell does not add a made-up amount.
-    local coinObject, coinBalance = findCurrencyStat("coin")
+    -- Count every positive increase in the live displayed wallet. This includes
+    -- Coin pickups and Sell proceeds because both update the same Coin balance.
+    local coinObject, coinBalance = findDisplayedCurrency("coin")
     if coinObject and coinBalance ~= nil then
         if coinStatObject ~= coinObject then
             coinStatObject = coinObject
-            lastCoinBalance = coinBalance -- establish baseline; don't count old balance
+            lastCoinBalance = coinBalance -- establish baseline; do not count old wallet
         elseif lastCoinBalance ~= nil then
             local gained = coinBalance - lastCoinBalance
-            if gained > 0 then
-                coinEarnedTotal = coinEarnedTotal + gained
-            end
+            if gained > 0 then coinEarnedTotal = coinEarnedTotal + gained end
             lastCoinBalance = coinBalance
         end
     end
 
-    -- DATA CANDY follows the Candy counter increase from the game. It counts
-    -- Candy actually credited to this player, not merely touched/attempted.
-    local candyObject, candyBalance = findCurrencyStat("candy")
+    -- Candy is counted from its live displayed counter, independently of Coin.
+    local candyObject, candyBalance = findDisplayedCurrency("candy")
     if candyObject and candyBalance ~= nil then
         if candyStatObject ~= candyObject then
             candyStatObject = candyObject
-            lastCandyBalance = candyBalance -- establish baseline; don't count old balance
+            lastCandyBalance = candyBalance -- establish baseline; do not count old amount
         elseif lastCandyBalance ~= nil then
             local gained = candyBalance - lastCandyBalance
-            if gained > 0 then
-                candyEarnedTotal = candyEarnedTotal + gained
-            end
+            if gained > 0 then candyEarnedTotal = candyEarnedTotal + gained end
             lastCandyBalance = candyBalance
         end
     end
@@ -1463,7 +1460,7 @@ local function updateRuntimeMonitor()
     local coinText = coinStatObject and formatThousands(coinEarnedTotal) or "--"
     local candyText = candyStatObject and formatThousands(candyEarnedTotal) or "--"
     runtimeBlock.Text = string.format(
-        '<font size="7">Runtime: %s</font>\n<font size="7">Season Time: %s</font>\n<font size="9">Coin Earned: %s</font>\n<font size="9">Data Candy: %s</font>',
+        '<font size="9">Runtime: %s</font>\n<font size="9">Season Time: %s</font>\n<font size="9">Coin Earned: %s</font>\n<font size="9">Data Candy: %s</font>',
         formatDuration(now - scriptStartedAt),
         formatDuration(cycleStartedAt and (now - cycleStartedAt) or completedCycleSeconds),
         coinText, candyText
