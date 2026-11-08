@@ -1355,8 +1355,31 @@ end
 
 local function parseDisplayedNumber(value)
     if value == nil then return nil end
-    local digits = tostring(value):gsub("[^%d]", "")
-    if digits == "" then return nil end
+    local textValue = tostring(value):gsub("%s+", "")
+    -- Reject scientific notation and text containing unrelated numbers.
+    if textValue == "" or textValue:find("[eE]") then return nil end
+    -- Allow a currency symbol/prefix, but require exactly one grouped integer.
+    local numeric = textValue:match("[%d][%d%.,]*")
+    if not numeric then return nil end
+    local prefix, suffix = textValue:sub(1, textValue:find(numeric, 1, true) - 1), nil
+    local first = textValue:find(numeric, 1, true)
+    suffix = textValue:sub(first + #numeric)
+    if prefix:find("%d") or suffix:find("%d") then return nil end
+    if suffix:find("[kKmMbB]") then return nil end -- abbreviated values are ambiguous
+
+    local separator = numeric:find(".", 1, true) and "." or (numeric:find(",", 1, true) and "," or nil)
+    if separator then
+        local groups = {}
+        for part in numeric:gmatch("[^%.,]+") do groups[#groups + 1] = part end
+        if #groups < 2 or #groups[1] < 1 or #groups[1] > 3 then return nil end
+        for i = 2, #groups do
+            if #groups[i] ~= 3 then return nil end
+        end
+        -- Mixed separators are not accepted; ETW displays integer grouping.
+        if numeric:find(".", 1, true) and numeric:find(",", 1, true) then return nil end
+    end
+    local digits = numeric:gsub("[%.,]", "")
+    if #digits < 1 or #digits > 15 then return nil end
     return tonumber(digits), #digits
 end
 
@@ -1375,10 +1398,9 @@ local function hasImageSibling(label)
     return false
 end
 
--- ETW's visible Coin and Candy balances are rendered as UI text. Search the
--- live PlayerGui rather than assuming they are IntValue/NumberValue objects.
--- Coin is the long balance (7+ digits); Candy is the 4-6 digit balance shown
--- beside its icon. Names are used as a stronger hint when the game provides them.
+-- Only accept integer-looking UI labels associated with an icon or a clearly
+-- named currency container. This avoids accidentally parsing timers, scientific
+-- notation, or unrelated large numbers elsewhere in PlayerGui.
 local function findDisplayedCurrency(kind)
     local playerGui = getPlayerGui()
     if not playerGui then return nil, nil end
@@ -1388,20 +1410,18 @@ local function findDisplayedCurrency(kind)
         if obj:IsA("TextLabel") or obj:IsA("TextButton") then
             local value, digitCount = parseDisplayedNumber(obj.Text)
             if value then
-                local name = string.lower(obj.Name .. " " .. obj.Parent.Name)
+                local parent = obj.Parent
+                local name = string.lower(obj.Name .. " " .. (parent and parent.Name or ""))
+                local named = kind == "coin" and (name:find("coin", 1, true) or name:find("cash", 1, true))
+                    or kind == "candy" and name:find("candy", 1, true)
+                local icon = hasImageSibling(obj)
                 local score = -math.huge
-                if kind == "coin" then
-                    if digitCount >= 7 then
-                        score = 10 + math.min(digitCount, 15)
-                        if name:find("coin", 1, true) then score = score + 100 end
-                    end
-                else
-                    if digitCount >= 4 and digitCount <= 6 and hasImageSibling(obj) then
-                        score = 10 + digitCount
-                        if name:find("candy", 1, true) then score = score + 100 end
-                    elseif digitCount >= 4 and digitCount <= 6 and name:find("candy", 1, true) then
-                        score = 50 + digitCount
-                    end
+                if kind == "coin" and digitCount >= 7 and digitCount <= 15 then
+                    if named then score = 300 + digitCount
+                    elseif icon then score = 100 + digitCount end
+                elseif kind == "candy" and digitCount >= 4 and digitCount <= 6 then
+                    if named then score = 300 + digitCount
+                    elseif icon then score = 100 + digitCount end
                 end
                 if score > bestScore then
                     bestObject, bestValue, bestScore = obj, value, score
@@ -1409,6 +1429,7 @@ local function findDisplayedCurrency(kind)
             end
         end
     end
+    if bestScore == -math.huge then return nil, nil end
     return bestObject, bestValue
 end
 
@@ -1457,8 +1478,8 @@ local function updateRuntimeMonitor()
     local online = player.Parent == Players
     onlineStatus.Text = online and "● ONLINE" or "● OFFLINE"
     onlineStatus.TextColor3 = online and Color3.fromRGB(80, 220, 145) or Color3.fromRGB(235, 90, 90)
-    local coinText = coinStatObject and formatThousands(coinEarnedTotal) or "--"
-    local candyText = candyStatObject and formatThousands(candyEarnedTotal) or "--"
+    local coinText = formatThousands(coinEarnedTotal)
+    local candyText = formatThousands(candyEarnedTotal)
     runtimeBlock.Text = string.format(
         '<font size="9">Runtime: %s</font>\n<font size="9">Season Time: %s</font>\n<font size="9">Coin Earned: %s</font>\n<font size="9">Data Candy: %s</font>',
         formatDuration(now - scriptStartedAt),
