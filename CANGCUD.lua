@@ -1449,26 +1449,29 @@ local function findDisplayedCurrency(kind)
     return bestObject, bestValue
 end
 
-local coinStatObject
 local lastCoinBalance
 local coinEarnedTotal = 0
 local lastStatsScanAt = 0
-local STATS_SCAN_INTERVAL = 0.10
+-- Poll the displayed wallet frequently so Sell proceeds are reflected promptly.
+local STATS_SCAN_INTERVAL = 0.03
 
 local function updateEarnedStats(now)
     if now - lastStatsScanAt < STATS_SCAN_INTERVAL then return end
     lastStatsScanAt = now
 
-    -- Count every positive increase in the live displayed wallet. This includes
-    -- Coin pickups and Sell proceeds because both update the same Coin balance.
-    local coinObject, coinBalance = findDisplayedCurrency("coin")
-    if coinObject and coinBalance ~= nil then
-        if coinStatObject ~= coinObject then
-            coinStatObject = coinObject
-            lastCoinBalance = coinBalance -- establish baseline; do not count old wallet
-        elseif lastCoinBalance ~= nil then
+    -- Count positive wallet increases regardless of whether the game's UI
+    -- replaces its TextLabel during a Sell/map transition. Keep the baseline
+    -- across label-instance changes so a fresh label does not discard Sell gain.
+    -- This remains the single Coin source, preventing a separate Sell double-count.
+    local _, coinBalance = findDisplayedCurrency("coin")
+    if coinBalance ~= nil then
+        if lastCoinBalance == nil then
+            lastCoinBalance = coinBalance -- baseline only; never count old wallet
+        else
             local gained = coinBalance - lastCoinBalance
-            if gained > 0 then coinEarnedTotal = coinEarnedTotal + gained end
+            if gained > 0 then
+                coinEarnedTotal = coinEarnedTotal + gained
+            end
             lastCoinBalance = coinBalance
         end
     end
@@ -1581,6 +1584,8 @@ print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active;
 -- Floor lock re-normalizes the existing FarmFloor size and collision flags once per farmStep cycle; Grab/Eat behavior is unchanged.
 
 -- V3.3.6 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
+
+-- Coin counter revision: wallet polling every 0.03s and persistent baseline across UI label replacement.
 
 -- V3.3.6: Combined title/timer header (140px), left-aligned title, 5x named Grab/Eat animation acceleration. Grab and post-Grab delays are each divided by 12.
 
