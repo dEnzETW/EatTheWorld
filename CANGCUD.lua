@@ -579,58 +579,66 @@ local function getActiveChunksRoot()
     return nil
 end
 
--- Coin/Candy collector. It scans the active map tree, but only processes
--- targets inside a dynamic range derived from the current character dimensions.
+-- Global Coin/Candy collector, adapted from Loot candyBLANC.lua:
+-- global Workspace registration, canCollect owner/time-left eligibility,
+-- and per-item touch cooldown. Candy is counted only when an attempted
+-- Candy pickup subsequently leaves Workspace (still a client-side proxy).
 local lootCoinsCandyEnabled = false
-local LOOT_SCAN_DELAY = 0.08
-local LOOT_CHARACTER_RANGE_MULTIPLIER = 2.5
-local LOOT_MIN_RANGE = 8
+local LOOT_SCAN_DELAY = 0.35
+local LOOT_TOUCH_COOLDOWN = 0.8
 local lastLootScanAt = 0
 local lootTouchWarned = false
-
--- Data Candy increments only after a Candy touched by the collector leaves
--- the active Chunks tree; no Candy wallet/UI scanner is used.
+local lootTargets = {}
+local lootLastTouch = setmetatable({}, {__mode = "k"})
+local pendingCandyPickup = setmetatable({}, {__mode = "k"})
+local lootAddedConnection
+local lootRemovingConnection
 local candyEarnedTotal = 0
-local trackedCandyParts = setmetatable({}, {__mode = "k"})
 
-local function trackCandyPickup(part, chunks)
-    if trackedCandyParts[part] then return end
-    trackedCandyParts[part] = true
-    local resolved = false
-    local connection
-    connection = part.AncestryChanged:Connect(function()
-        if resolved then return end
-        local stillInChunks = false
-        pcall(function()
-            stillInChunks = part:IsDescendantOf(chunks)
-        end)
-        if not stillInChunks then
-            resolved = true
-            candyEarnedTotal = candyEarnedTotal + 1
-            if connection then connection:Disconnect() end
-        end
-    end)
+local function isLootPart(obj)
+    return obj and obj:IsA("BasePart") and (obj.Name == "Token" or obj.Name == "Candy")
 end
 
-local function getLootCharacterRange(char)
-    local ok, extents = pcall(function() return char:GetExtentsSize() end)
-    if not ok or not extents then return LOOT_MIN_RANGE end
-    local largestDimension = math.max(extents.X, extents.Y, extents.Z)
-    return math.max(LOOT_MIN_RANGE, largestDimension * LOOT_CHARACTER_RANGE_MULTIPLIER)
+local function registerLoot(obj)
+    if isLootPart(obj) then lootTargets[obj] = true end
+end
+
+local function unregisterLoot(obj)
+    if not lootTargets[obj] then return end
+    lootTargets[obj] = nil
+    lootLastTouch[obj] = nil
+    if obj.Name == "Candy" and pendingCandyPickup[obj] then
+        pendingCandyPickup[obj] = nil
+        candyEarnedTotal = candyEarnedTotal + 1
+    end
+end
+
+for _, obj in ipairs(Workspace:GetDescendants()) do registerLoot(obj) end
+lootAddedConnection = Workspace.DescendantAdded:Connect(registerLoot)
+lootRemovingConnection = Workspace.DescendantRemoving:Connect(unregisterLoot)
+
+local function canCollectLoot(item)
+    if not item or not item:IsA("BasePart") or not item.Parent then return false end
+    if item.Name ~= "Token" and item.Name ~= "Candy" then return false end
+
+    local owner = item:FindFirstChild("Owner")
+    local timeLeft = item:FindFirstChild("TimeLeft")
+    if owner and owner.Value ~= "" and owner.Value ~= player.Name then
+        local remaining = timeLeft and tonumber(timeLeft.Value)
+        if remaining and remaining > 0 then return false end
+    end
+    return true
 end
 
 local function lootCoinsCandyStep()
     if not lootCoinsCandyEnabled then return end
-
     local now = os.clock()
     if now - lastLootScanAt < LOOT_SCAN_DELAY then return end
     lastLootScanAt = now
 
     local char = player.Character
     local root = char and char:FindFirstChild("HumanoidRootPart")
-    local chunks = getActiveChunksRoot()
-    if not root or not chunks then return end
-
+    if not root then return end
     if type(firetouchinterest) ~= "function" then
         if not lootTouchWarned then
             lootTouchWarned = true
@@ -639,37 +647,21 @@ local function lootCoinsCandyStep()
         return
     end
 
-    local range = getLootCharacterRange(char)
-    local rangeSquared = range * range
-    local rootPosition = root.Position
-    local ok, descendants = pcall(function() return chunks:GetDescendants() end)
-    if not ok or type(descendants) ~= "table" then return end
-
-    -- Process nearest targets first so close, reachable loot gets priority.
-    local targets = {}
-    for _, obj in ipairs(descendants) do
-        if obj:IsA("BasePart") and obj.Parent
-            and (obj.Name == "Token" or obj.Name == "Candy")
-            and obj:IsDescendantOf(chunks) then
-            local offset = obj.Position - rootPosition
-            local distanceSquared = offset:Dot(offset)
-            if distanceSquared <= rangeSquared then
-                targets[#targets + 1] = {part = obj, distance = distanceSquared}
+    for item in pairs(lootTargets) do
+        if item.Parent and canCollectLoot(item) then
+            local previous = lootLastTouch[item] or 0
+            if now - previous >= LOOT_TOUCH_COOLDOWN then
+                lootLastTouch[item] = now
+                local touched = pcall(function()
+                    firetouchinterest(root, item, 0)
+                    firetouchinterest(root, item, 1)
+                end)
+                if touched and item.Name == "Candy" then
+                    pendingCandyPickup[item] = true
+                end
             end
-        end
-    end
-    table.sort(targets, function(a, b) return a.distance < b.distance end)
-
-    for _, target in ipairs(targets) do
-        local obj = target.part
-        if obj.Parent and obj:IsDescendantOf(chunks) then
-            if obj.Name == "Candy" then
-                trackCandyPickup(obj, chunks)
-            end
-            pcall(function()
-                firetouchinterest(root, obj, 0)
-                firetouchinterest(root, obj, 1)
-            end)
+        elseif not item.Parent then
+            unregisterLoot(item)
         end
     end
 end
@@ -1428,7 +1420,7 @@ end
 -- Only accept integer-looking UI labels associated with an icon or a clearly
 -- named currency container. This avoids accidentally parsing timers, scientific
 -- notation, or unrelated large numbers elsewhere in PlayerGui.
-local function findDisplayedCoin()
+local function findDisplayedCurrency(kind)
     local playerGui = getPlayerGui()
     if not playerGui then return nil, nil end
 
@@ -1436,14 +1428,17 @@ local function findDisplayedCoin()
     for _, obj in ipairs(playerGui:GetDescendants()) do
         if obj:IsA("TextLabel") or obj:IsA("TextButton") then
             local value, digitCount = parseDisplayedNumber(obj.Text)
-            if value and digitCount >= 7 and digitCount <= 15 then
+            if value then
                 local parent = obj.Parent
                 local name = string.lower(obj.Name .. " " .. (parent and parent.Name or ""))
-                local named = name:find("coin", 1, true) or name:find("cash", 1, true)
+                local named = kind == "coin" and (name:find("coin", 1, true) or name:find("cash", 1, true))
+                    or kind == "candy" and name:find("candy", 1, true)
                 local icon = hasImageSibling(obj)
                 local score = -math.huge
-                if named then score = 300 + digitCount
-                elseif icon then score = 100 + digitCount end
+                if kind == "coin" and digitCount >= 7 and digitCount <= 15 then
+                    if named then score = 300 + digitCount
+                    elseif icon then score = 100 + digitCount end
+                end
                 if score > bestScore then
                     bestObject, bestValue, bestScore = obj, value, score
                 end
@@ -1466,7 +1461,7 @@ local function updateEarnedStats(now)
 
     -- Count every positive increase in the live displayed wallet. This includes
     -- Coin pickups and Sell proceeds because both update the same Coin balance.
-    local coinObject, coinBalance = findDisplayedCoin()
+    local coinObject, coinBalance = findDisplayedCurrency("coin")
     if coinObject and coinBalance ~= nil then
         if coinStatObject ~= coinObject then
             coinStatObject = coinObject
@@ -1478,6 +1473,7 @@ local function updateEarnedStats(now)
         end
     end
 
+    -- Data Candy is updated by the global collector after a touched Candy leaves Workspace.
 end
 
 local function updateRuntimeMonitor()
@@ -1566,6 +1562,8 @@ gui.AncestryChanged:Connect(function(_, parent)
         running, CFG.Farm = false, false
         autoClaimEnabled = false
         lootCoinsCandyEnabled = false
+        if lootAddedConnection then lootAddedConnection:Disconnect(); lootAddedConnection = nil end
+        if lootRemovingConnection then lootRemovingConnection:Disconnect(); lootRemovingConnection = nil end
         setCharacterTransition(false)
         restoreWorldRoots()
         setHiddenMaps(false)
