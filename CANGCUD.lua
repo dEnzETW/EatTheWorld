@@ -1352,20 +1352,52 @@ local function formatThousands(value)
     return formatted
 end
 
+local function normalizeStatName(name)
+    return string.lower(tostring(name or "")):gsub("[^%w]", "")
+end
+
 local function findCurrencyStat(kind)
-    local containers = {player:FindFirstChild("leaderstats"), player}
-    local names = kind == "coin"
-        and {"coin", "coins", "cash", "currency", "gold", "money"}
-        or {"candy", "candies", "candycount", "candiescount"}
-    for _, container in ipairs(containers) do
-        if container then
-            for _, obj in ipairs(container:GetDescendants()) do
-                if obj:IsA("ValueBase") then
-                    local n = string.lower(obj.Name):gsub("[^%w]", "")
-                    for _, candidate in ipairs(names) do
-                        if n == candidate then
+    -- ETW may place live currency values under leaderstats, Data, Stats,
+    -- or directly under the Player. Search all common containers.
+    local containers = {
+        player:FindFirstChild("leaderstats"),
+        player:FindFirstChild("Data"),
+        player:FindFirstChild("Stats"),
+        player
+    }
+
+    local exactNames
+    local partialNames
+    if kind == "coin" then
+        exactNames = {coin = true, coins = true, cash = true, currency = true,
+            gold = true, money = true, totalcoins = true, totalcash = true}
+        partialNames = {"coin", "cash", "money", "gold"}
+    else
+        exactNames = {candy = true, candies = true, candycount = true,
+            candiescount = true, totalcandy = true, totalcandies = true}
+        partialNames = {"candy"}
+    end
+
+    -- Prefer exact names first to avoid accidentally selecting a multiplier,
+    -- spent-counter, or other unrelated value containing the same word.
+    for pass = 1, 2 do
+        for _, container in ipairs(containers) do
+            if container then
+                for _, obj in ipairs(container:GetDescendants()) do
+                    if obj:IsA("IntValue") or obj:IsA("NumberValue") then
+                        local normalized = normalizeStatName(obj.Name)
+                        local matched = exactNames[normalized] == true
+                        if pass == 2 and not matched then
+                            for _, fragment in ipairs(partialNames) do
+                                if normalized:find(fragment, 1, true) then
+                                    matched = true
+                                    break
+                                end
+                            end
+                        end
+                        if matched then
                             local value = tonumber(obj.Value)
-                            if value then return obj, value end
+                            if value ~= nil then return obj, value end
                         end
                     end
                 end
@@ -1379,28 +1411,41 @@ local coinStatObject, candyStatObject
 local lastCoinBalance, lastCandyBalance
 local coinEarnedTotal, candyEarnedTotal = 0, 0
 local lastStatsScanAt = 0
+local STATS_SCAN_INTERVAL = 0.15
 
 local function updateEarnedStats(now)
-    if now - lastStatsScanAt < 1 then return end
+    if now - lastStatsScanAt < STATS_SCAN_INTERVAL then return end
     lastStatsScanAt = now
+
+    -- COIN EARNED accumulates every positive live-currency increase. This
+    -- includes Coin/Token pickups AND the money credited after a successful
+    -- Sell. We read the resulting game value, not the Sell remote invocation,
+    -- so a rejected/failed Sell does not add a made-up amount.
     local coinObject, coinBalance = findCurrencyStat("coin")
-    if coinObject and coinBalance then
+    if coinObject and coinBalance ~= nil then
         if coinStatObject ~= coinObject then
-            coinStatObject, lastCoinBalance = coinObject, coinBalance
+            coinStatObject = coinObject
+            lastCoinBalance = coinBalance -- establish baseline; don't count old balance
         elseif lastCoinBalance ~= nil then
-            if coinBalance > lastCoinBalance then
-                coinEarnedTotal = coinEarnedTotal + (coinBalance - lastCoinBalance)
+            local gained = coinBalance - lastCoinBalance
+            if gained > 0 then
+                coinEarnedTotal = coinEarnedTotal + gained
             end
             lastCoinBalance = coinBalance
         end
     end
+
+    -- DATA CANDY follows the Candy counter increase from the game. It counts
+    -- Candy actually credited to this player, not merely touched/attempted.
     local candyObject, candyBalance = findCurrencyStat("candy")
-    if candyObject and candyBalance then
+    if candyObject and candyBalance ~= nil then
         if candyStatObject ~= candyObject then
-            candyStatObject, lastCandyBalance = candyObject, candyBalance
+            candyStatObject = candyObject
+            lastCandyBalance = candyBalance -- establish baseline; don't count old balance
         elseif lastCandyBalance ~= nil then
-            if candyBalance > lastCandyBalance then
-                candyEarnedTotal = candyEarnedTotal + (candyBalance - lastCandyBalance)
+            local gained = candyBalance - lastCandyBalance
+            if gained > 0 then
+                candyEarnedTotal = candyEarnedTotal + gained
             end
             lastCandyBalance = candyBalance
         end
