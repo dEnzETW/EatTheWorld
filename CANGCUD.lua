@@ -1205,9 +1205,10 @@ runtimeBlock.Size = UDim2.new(1, -12, 0, 54)
 runtimeBlock.Position = UDim2.fromOffset(6, 25)
 runtimeBlock.BackgroundTransparency = 1
 runtimeBlock.BorderSizePixel = 0
-runtimeBlock.Text = "Runtime: 0m 0s\nSeason time: 0m 0s\nCOIN EARNED: --\nDATA CANDY: --"
+runtimeBlock.RichText = true
+runtimeBlock.Text = '<font size="7">Runtime: 0m 0s</font>\n<font size="7">Season Time: 0m 0s</font>\n<font size="9">Coin Earned: --</font>\n<font size="9">Data Candy: --</font>'
 runtimeBlock.TextColor3 = Color3.fromRGB(240, 243, 248)
-runtimeBlock.TextSize = 8
+runtimeBlock.TextSize = 9
 runtimeBlock.Font = Enum.Font.GothamMedium
 runtimeBlock.TextXAlignment = Enum.TextXAlignment.Left
 runtimeBlock.TextYAlignment = Enum.TextYAlignment.Center
@@ -1237,7 +1238,7 @@ local function makeToggle(label, order, color, initial, callback)
     return b
 end
 
-makeToggle("AUTOFARM", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
+makeToggle("AutoFarm", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
     CFG.Farm = on
     if on then
         -- Prepare the single floor and remove map visuals in the same activation.
@@ -1268,7 +1269,7 @@ end)
 
 -- Map hiding is now automatic with AutoFarm; no separate toggle is needed.
 
-makeToggle("LOOT COIN & CANDY", 4, Color3.fromRGB(205, 145, 55), false, function(on)
+makeToggle("Loot Coin & Candy", 4, Color3.fromRGB(205, 145, 55), false, function(on)
     lootCoinsCandyEnabled = on
     lastLootScanAt = 0
     print("[dEnzCreator] Loot Coin & Candy", on and "ON" or "OFF")
@@ -1304,7 +1305,7 @@ local function claimRewardsStep()
     end
 end
 
-makeToggle("AUTO CLAIM REWARDS", 5, Color3.fromRGB(133, 89, 195), false, function(on)
+makeToggle("Auto Claim Rewards", 5, Color3.fromRGB(133, 89, 195), false, function(on)
     autoClaimEnabled = on
 end)
 
@@ -1462,7 +1463,7 @@ local function updateRuntimeMonitor()
     local coinText = coinStatObject and formatThousands(coinEarnedTotal) or "--"
     local candyText = candyStatObject and formatThousands(candyEarnedTotal) or "--"
     runtimeBlock.Text = string.format(
-        "Runtime: %s\nSeason time: %s\nCOIN EARNED: %s\nDATA CANDY: %s",
+        '<font size="7">Runtime: %s</font>\n<font size="7">Season Time: %s</font>\n<font size="9">Coin Earned: %s</font>\n<font size="9">Data Candy: %s</font>',
         formatDuration(now - scriptStartedAt),
         formatDuration(cycleStartedAt and (now - cycleStartedAt) or completedCycleSeconds),
         coinText, candyText
