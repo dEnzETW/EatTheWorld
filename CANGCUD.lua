@@ -1121,7 +1121,7 @@ gui.Parent = player:WaitForChild("PlayerGui")
 
 local frame = Instance.new("Frame")
 frame.Name = "Main"
-frame.Size = UDim2.fromOffset(140, 0)
+frame.Size = UDim2.fromOffset(170, 0)
 frame.AutomaticSize = Enum.AutomaticSize.Y
 frame.Position = UDim2.new(0, 12, 0.42, 0)
 frame.BackgroundColor3 = Color3.fromRGB(20, 22, 38)
@@ -1144,7 +1144,7 @@ layout.Padding = UDim.new(0, 5)
 
 local header = Instance.new("Frame")
 header.LayoutOrder = 1
-header.Size = UDim2.new(1, 0, 0, 64)
+header.Size = UDim2.new(1, 0, 0, 82)
 header.BackgroundColor3 = Color3.fromRGB(37, 39, 62)
 header.BackgroundTransparency = 0
 header.BorderSizePixel = 0
@@ -1155,7 +1155,7 @@ headerStroke.Color = Color3.fromRGB(125, 105, 195)
 headerStroke.Thickness = 1
 
 local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -48, 0, 23)
+title.Size = UDim2.fromOffset(64, 23)
 title.Position = UDim2.fromOffset(6, 1)
 title.BackgroundTransparency = 1
 title.Text = "dEnzCreator"
@@ -1164,6 +1164,18 @@ title.TextSize = 11
 title.Font = Enum.Font.GothamBold
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = header
+
+local onlineStatus = Instance.new("TextLabel")
+onlineStatus.Name = "OnlineStatus"
+onlineStatus.Size = UDim2.fromOffset(42, 20)
+onlineStatus.Position = UDim2.fromOffset(72, 2)
+onlineStatus.BackgroundTransparency = 1
+onlineStatus.Text = "● ONLINE"
+onlineStatus.TextColor3 = Color3.fromRGB(80, 220, 145)
+onlineStatus.TextSize = 7
+onlineStatus.Font = Enum.Font.GothamBold
+onlineStatus.TextXAlignment = Enum.TextXAlignment.Left
+onlineStatus.Parent = header
 
 local minimize = Instance.new("TextButton")
 minimize.Size = UDim2.fromOffset(20, 20)
@@ -1189,11 +1201,11 @@ Instance.new("UICorner", close).CornerRadius = UDim.new(1, 0)
 
 local runtimeBlock = Instance.new("TextLabel")
 runtimeBlock.Name = "RuntimeBlock"
-runtimeBlock.Size = UDim2.new(1, -12, 0, 34)
-runtimeBlock.Position = UDim2.fromOffset(6, 27)
+runtimeBlock.Size = UDim2.new(1, -12, 0, 54)
+runtimeBlock.Position = UDim2.fromOffset(6, 25)
 runtimeBlock.BackgroundTransparency = 1
 runtimeBlock.BorderSizePixel = 0
-runtimeBlock.Text = "Runtime: 0m 0s\nSeason time: 0m 0s"
+runtimeBlock.Text = "Runtime: 0m 0s\nSeason time: 0m 0s\nCOIN EARNED: --\nDATA CANDY: --"
 runtimeBlock.TextColor3 = Color3.fromRGB(240, 243, 248)
 runtimeBlock.TextSize = 8
 runtimeBlock.Font = Enum.Font.GothamMedium
@@ -1332,13 +1344,83 @@ local function formatDuration(seconds)
     return string.format("%dm %ds", minutes, secs)
 end
 
+local function formatThousands(value)
+    local number = math.max(0, math.floor(tonumber(value) or 0))
+    local digits = tostring(number)
+    local reversed = digits:reverse():gsub("(%d%d%d)", "%1.")
+    local formatted = reversed:reverse():gsub("^%.", "")
+    return formatted
+end
+
+local function findCurrencyStat(kind)
+    local containers = {player:FindFirstChild("leaderstats"), player}
+    local names = kind == "coin"
+        and {"coin", "coins", "cash", "currency", "gold", "money"}
+        or {"candy", "candies", "candycount", "candiescount"}
+    for _, container in ipairs(containers) do
+        if container then
+            for _, obj in ipairs(container:GetDescendants()) do
+                if obj:IsA("ValueBase") then
+                    local n = string.lower(obj.Name):gsub("[^%w]", "")
+                    for _, candidate in ipairs(names) do
+                        if n == candidate then
+                            local value = tonumber(obj.Value)
+                            if value then return obj, value end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nil, nil
+end
+
+local coinStatObject, candyStatObject
+local lastCoinBalance, lastCandyBalance
+local coinEarnedTotal, candyEarnedTotal = 0, 0
+local lastStatsScanAt = 0
+
+local function updateEarnedStats(now)
+    if now - lastStatsScanAt < 1 then return end
+    lastStatsScanAt = now
+    local coinObject, coinBalance = findCurrencyStat("coin")
+    if coinObject and coinBalance then
+        if coinStatObject ~= coinObject then
+            coinStatObject, lastCoinBalance = coinObject, coinBalance
+        elseif lastCoinBalance ~= nil then
+            if coinBalance > lastCoinBalance then
+                coinEarnedTotal = coinEarnedTotal + (coinBalance - lastCoinBalance)
+            end
+            lastCoinBalance = coinBalance
+        end
+    end
+    local candyObject, candyBalance = findCurrencyStat("candy")
+    if candyObject and candyBalance then
+        if candyStatObject ~= candyObject then
+            candyStatObject, lastCandyBalance = candyObject, candyBalance
+        elseif lastCandyBalance ~= nil then
+            if candyBalance > lastCandyBalance then
+                candyEarnedTotal = candyEarnedTotal + (candyBalance - lastCandyBalance)
+            end
+            lastCandyBalance = candyBalance
+        end
+    end
+end
+
 local function updateRuntimeMonitor()
-    -- os.time() measures real elapsed wall time, not CPU time or map duration.
+    -- os.clock() keeps the existing runtime/season timers unchanged.
     local now = os.clock()
+    updateEarnedStats(now)
+    local online = player.Parent == Players
+    onlineStatus.Text = online and "● ONLINE" or "● OFFLINE"
+    onlineStatus.TextColor3 = online and Color3.fromRGB(80, 220, 145) or Color3.fromRGB(235, 90, 90)
+    local coinText = coinStatObject and formatThousands(coinEarnedTotal) or "--"
+    local candyText = candyStatObject and formatThousands(candyEarnedTotal) or "--"
     runtimeBlock.Text = string.format(
-        "Runtime: %s\nSeason time: %s",
+        "Runtime: %s\nSeason time: %s\nCOIN EARNED: %s\nDATA CANDY: %s",
         formatDuration(now - scriptStartedAt),
-        formatDuration(cycleStartedAt and (now - cycleStartedAt) or completedCycleSeconds)
+        formatDuration(cycleStartedAt and (now - cycleStartedAt) or completedCycleSeconds),
+        coinText, candyText
     )
 end
 
