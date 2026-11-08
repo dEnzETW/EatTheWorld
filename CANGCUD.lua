@@ -579,6 +579,48 @@ local function getActiveChunksRoot()
     return nil
 end
 
+-- Map-wide Coin/Candy collector. Uses the same tested touch method as the
+-- standalone test, but scans the active Chunks tree without a distance limit.
+local lootCoinsCandyEnabled = false
+local LOOT_SCAN_DELAY = 0.08
+local lastLootScanAt = 0
+local lootTouchWarned = false
+
+local function lootCoinsCandyStep()
+    if not lootCoinsCandyEnabled then return end
+
+    local now = os.clock()
+    if now - lastLootScanAt < LOOT_SCAN_DELAY then return end
+    lastLootScanAt = now
+
+    local char = player.Character
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local chunks = getActiveChunksRoot()
+    if not root or not chunks then return end
+
+    if type(firetouchinterest) ~= "function" then
+        if not lootTouchWarned then
+            lootTouchWarned = true
+            warn("[dEnzCreator] Loot Coin & Candy requires firetouchinterest support in the executor.")
+        end
+        return
+    end
+
+    local ok, descendants = pcall(function() return chunks:GetDescendants() end)
+    if not ok or type(descendants) ~= "table" then return end
+
+    for _, obj in ipairs(descendants) do
+        if obj:IsA("BasePart") and obj.Parent
+            and (obj.Name == "Token" or obj.Name == "Candy")
+            and obj:IsDescendantOf(chunks) then
+            pcall(function()
+                firetouchinterest(root, obj, 0)
+                firetouchinterest(root, obj, 1)
+            end)
+        end
+    end
+end
+
 local function findNearbyFood(root)
     local chunks = getActiveChunksRoot()
     if not chunks then
@@ -1188,6 +1230,12 @@ end)
 
 -- Map hiding is now automatic with AutoFarm; no separate toggle is needed.
 
+makeToggle("LOOT COIN & CANDY", 4, Color3.fromRGB(205, 145, 55), false, function(on)
+    lootCoinsCandyEnabled = on
+    lastLootScanAt = 0
+    print("[dEnzCreator] Loot Coin & Candy", on and "ON" or "OFF")
+end)
+
 local autoClaimEnabled = false
 local lastRewardClaim = 0
 local lastSpinRequest = 0
@@ -1235,6 +1283,7 @@ end)
 close.Activated:Connect(function()
     running, CFG.Farm = false, false
     autoClaimEnabled = false
+    lootCoinsCandyEnabled = false
     restoreWorldRoots()
     setHiddenMaps(false)
     removeFarmFloor()
@@ -1325,6 +1374,7 @@ local connection = RunService.Heartbeat:Connect(function()
     if not running then return end
     pcall(updateRuntimeMonitor)
     pcall(claimRewardsStep)
+    pcall(lootCoinsCandyStep)
     if CFG.Farm then
         pcall(monitorGrabEatAvailability)
         pcall(farmStep)
@@ -1334,6 +1384,7 @@ gui.AncestryChanged:Connect(function(_, parent)
     if parent == nil then
         running, CFG.Farm = false, false
         autoClaimEnabled = false
+        lootCoinsCandyEnabled = false
         setCharacterTransition(false)
         restoreWorldRoots()
         setHiddenMaps(false)
