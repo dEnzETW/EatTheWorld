@@ -563,9 +563,9 @@ end
 
 -- character-transition no-object detector.
 -- Start the 3-second window only after the new map key is active AND the
--- character has confirmed contact with the farm floor. Map/Chunks are detached
+-- character has confirmed contact with the farm floor. Scan the entire active
+-- Chunks tree without a character-distance limit. Map/Chunks may be detached
 -- locally, so scan the retained detached Chunks root instead of Workspace.
-local NO_FOOD_RADIUS = 100
 local NO_FOOD_CONFIRM_SECONDS = 3.0
 local NO_FOOD_SCAN_INTERVAL = 0.35
 
@@ -585,16 +585,12 @@ local function findNearbyFood(root)
         return nil -- nil means map/chunks are not ready; do not start/count timer
     end
 
-    local radiusSquared = NO_FOOD_RADIUS * NO_FOOD_RADIUS
     local ok, descendants = pcall(function() return chunks:GetDescendants() end)
     if not ok then return nil end
 
     for _, obj in ipairs(descendants) do
         if obj:IsA("BasePart") and obj.Parent and obj:IsDescendantOf(chunks) then
-            local delta = obj.Position - root.Position
-            if delta:Dot(delta) <= radiusSquared then
-                return true
-            end
+            return true
         end
     end
     return false
@@ -637,7 +633,7 @@ local function monitorLandingEatProgress(hum, root)
 
         landingConfirmedAt = now
         lastFoodScanAt = 0
-        print("[dEnzCreator] Map ready + landing confirmed; starting 3-second nearby-object scan:", mapName)
+        print("[dEnzCreator] Map ready + landing confirmed; starting 3-second whole-map object scan:", mapName)
         return false
     end
 
@@ -654,14 +650,14 @@ local function monitorLandingEatProgress(hum, root)
     elseif foodState then
         noFoodSkipSentForMap = true
         pendingLandingMap = nil
-        print("[dEnzCreator] Nearby object detected; no-food AutoSkip cancelled for this map:", mapName)
+        print("[dEnzCreator] Object detected in active map; no-food AutoSkip cancelled for this map:", mapName)
         return true
     end
 
     if now - landingConfirmedAt >= NO_FOOD_CONFIRM_SECONDS then
         noFoodSkipSentForMap = true -- one request per map; never spam during transition
         pendingLandingMap = nil
-        warn("[dEnzCreator] No nearby object within 3 seconds after map became ready; requesting AutoSkip:", mapName)
+        warn("[dEnzCreator] No BasePart found in active map within 3 seconds after map became ready; requesting AutoSkip:", mapName)
         if not requestSkip(true) then
             warn("[dEnzCreator] No-food AutoSkip request could not be sent for:", mapName)
         end
