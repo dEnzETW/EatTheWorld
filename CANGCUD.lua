@@ -579,12 +579,21 @@ local function getActiveChunksRoot()
     return nil
 end
 
--- Map-wide Coin/Candy collector. Uses the same tested touch method as the
--- standalone test, but scans the active Chunks tree without a distance limit.
+-- Coin/Candy collector. It scans the active map tree, but only processes
+-- targets inside a dynamic range derived from the current character dimensions.
 local lootCoinsCandyEnabled = false
 local LOOT_SCAN_DELAY = 0.08
+local LOOT_CHARACTER_RANGE_MULTIPLIER = 2.5
+local LOOT_MIN_RANGE = 8
 local lastLootScanAt = 0
 local lootTouchWarned = false
+
+local function getLootCharacterRange(char)
+    local ok, extents = pcall(function() return char:GetExtentsSize() end)
+    if not ok or not extents then return LOOT_MIN_RANGE end
+    local largestDimension = math.max(extents.X, extents.Y, extents.Z)
+    return math.max(LOOT_MIN_RANGE, largestDimension * LOOT_CHARACTER_RANGE_MULTIPLIER)
+end
 
 local function lootCoinsCandyStep()
     if not lootCoinsCandyEnabled then return end
@@ -606,13 +615,30 @@ local function lootCoinsCandyStep()
         return
     end
 
+    local range = getLootCharacterRange(char)
+    local rangeSquared = range * range
+    local rootPosition = root.Position
     local ok, descendants = pcall(function() return chunks:GetDescendants() end)
     if not ok or type(descendants) ~= "table" then return end
 
+    -- Process nearest targets first so close, reachable loot gets priority.
+    local targets = {}
     for _, obj in ipairs(descendants) do
         if obj:IsA("BasePart") and obj.Parent
             and (obj.Name == "Token" or obj.Name == "Candy")
             and obj:IsDescendantOf(chunks) then
+            local offset = obj.Position - rootPosition
+            local distanceSquared = offset:Dot(offset)
+            if distanceSquared <= rangeSquared then
+                targets[#targets + 1] = {part = obj, distance = distanceSquared}
+            end
+        end
+    end
+    table.sort(targets, function(a, b) return a.distance < b.distance end)
+
+    for _, target in ipairs(targets) do
+        local obj = target.part
+        if obj.Parent and obj:IsDescendantOf(chunks) then
             pcall(function()
                 firetouchinterest(root, obj, 0)
                 firetouchinterest(root, obj, 1)
