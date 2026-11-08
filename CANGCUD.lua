@@ -66,7 +66,6 @@ local landingBarBaseline = nil
 local lastMissingActionMap = ""
 local hiddenMapsEnabled = false
 local hiddenMapOriginals = {}
-local hiddenMapConnections = {}
 local workspaceMapConnection = nil
 
 -- STAGE 8 CHARACTER-TRANSITION TRANSITION.
@@ -217,7 +216,6 @@ local FARM_FLOOR_SIZE = Vector3.new(2048, 10, 2048)
 local FARM_FLOOR_HALF_HEIGHT = FARM_FLOOR_SIZE.Y / 2
 local FARM_LANDING_X = 0
 local FARM_LANDING_Z = 100
-local FARM_FIXED_SURFACE_TOP_Y = 0
 local FARM_SURFACE_SCAN_INTERVAL = 0.20
 local FARM_SURFACE_RAY_TOP = 10000
 local FARM_SURFACE_RAY_LENGTH = 20000
@@ -228,9 +226,6 @@ local lastFarmSurfaceScan = 0
 
 -- Stage 5 monitor: lightweight client-side timing and transition observations.
 local monitorEvents = {}
-local monitorLastMapName = ""
-local monitorLastMapChildren = nil
-local monitorLastChunksChildren = nil
 local monitorLastGrabAt = nil
 local monitorLastEatAt = nil
 local monitorLastActionLabel = "waiting"
@@ -1409,7 +1404,6 @@ makeToggle("AUTO CLAIM REWARDS", 5, Color3.fromRGB(133, 89, 195), false, functio
 end)
 
 local minimized = false
-local hiddenItems = {}
 minimize.Activated:Connect(function()
     minimized = not minimized
     for _, child in ipairs(frame:GetChildren()) do
@@ -1442,52 +1436,6 @@ local function formatDuration(seconds)
         return string.format("%dh %dm %ds", hours, minutes, secs)
     end
     return string.format("%dm %ds", minutes, secs)
-end
-
-local function findCashValue()
-    local candidates = {
-        player:FindFirstChild("leaderstats"),
-        player:FindFirstChild("Data"),
-        player:FindFirstChild("Stats")
-    }
-    for _, folder in ipairs(candidates) do
-        if folder then
-            for _, obj in ipairs(folder:GetDescendants()) do
-                if (obj:IsA("IntValue") or obj:IsA("NumberValue"))
-                    and (norm(obj.Name):find("cash", 1, true)
-                    or norm(obj.Name):find("coin", 1, true)
-                    or norm(obj.Name):find("money", 1, true)
-                    or norm(obj.Name):find("gold", 1, true)) then
-                    return tonumber(obj.Value)
-                end
-            end
-        end
-    end
-    return nil
-end
-
-local function readMapCountdown()
-    local pg = player:FindFirstChildOfClass("PlayerGui")
-    if not pg then return nil end
-    for _, obj in ipairs(pg:GetDescendants()) do
-        if obj:IsA("TextLabel") or obj:IsA("TextButton") then
-            local t = tostring(obj.Text or "")
-            local mm, ss = t:match("(%d%d?):(%d%d)")
-            if mm and ss then
-                local total = tonumber(mm) * 60 + tonumber(ss)
-                if total >= 0 and total <= 3600 then
-                    return total
-                end
-            end
-        end
-    end
-    return nil
-end
-
-local function countChunks()
-    local chunks = Workspace:FindFirstChild("Chunks")
-    if not chunks then return nil end
-    return #chunks:GetChildren()
 end
 
 local function updateRuntimeMonitor()
