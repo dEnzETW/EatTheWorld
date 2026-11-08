@@ -588,6 +588,30 @@ local LOOT_MIN_RANGE = 8
 local lastLootScanAt = 0
 local lootTouchWarned = false
 
+-- Count Candy only when a Candy part touched by the collector disappears
+-- from the active Chunks tree (pickup confirmation), not from the wallet UI.
+local candyEarnedTotal = 0
+local trackedCandyParts = setmetatable({}, {__mode = "k"})
+
+local function trackCandyPickup(part, chunks)
+    if trackedCandyParts[part] then return end
+    trackedCandyParts[part] = true
+    local resolved = false
+    local connection
+    connection = part.AncestryChanged:Connect(function()
+        if resolved then return end
+        local stillInChunks = false
+        pcall(function()
+            stillInChunks = part:IsDescendantOf(chunks)
+        end)
+        if not stillInChunks then
+            resolved = true
+            candyEarnedTotal = candyEarnedTotal + 1
+            if connection then connection:Disconnect() end
+        end
+    end)
+end
+
 local function getLootCharacterRange(char)
     local ok, extents = pcall(function() return char:GetExtentsSize() end)
     if not ok or not extents then return LOOT_MIN_RANGE end
@@ -639,6 +663,9 @@ local function lootCoinsCandyStep()
     for _, target in ipairs(targets) do
         local obj = target.part
         if obj.Parent and obj:IsDescendantOf(chunks) then
+            if obj.Name == "Candy" then
+                trackCandyPickup(obj, chunks)
+            end
             pcall(function()
                 firetouchinterest(root, obj, 0)
                 firetouchinterest(root, obj, 1)
@@ -1433,9 +1460,9 @@ local function findDisplayedCurrency(kind)
     return bestObject, bestValue
 end
 
-local coinStatObject, candyStatObject
-local lastCoinBalance, lastCandyBalance
-local coinEarnedTotal, candyEarnedTotal = 0, 0
+local coinStatObject
+local lastCoinBalance
+local coinEarnedTotal = 0
 local lastStatsScanAt = 0
 local STATS_SCAN_INTERVAL = 0.10
 
@@ -1457,18 +1484,7 @@ local function updateEarnedStats(now)
         end
     end
 
-    -- Candy is counted from its live displayed counter, independently of Coin.
-    local candyObject, candyBalance = findDisplayedCurrency("candy")
-    if candyObject and candyBalance ~= nil then
-        if candyStatObject ~= candyObject then
-            candyStatObject = candyObject
-            lastCandyBalance = candyBalance -- establish baseline; do not count old amount
-        elseif lastCandyBalance ~= nil then
-            local gained = candyBalance - lastCandyBalance
-            if gained > 0 then candyEarnedTotal = candyEarnedTotal + gained end
-            lastCandyBalance = candyBalance
-        end
-    end
+    -- Data Candy is updated only by confirmed Candy pickup in lootCoinsCandyStep().
 end
 
 local function updateRuntimeMonitor()
