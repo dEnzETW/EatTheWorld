@@ -133,7 +133,7 @@ CARA MEMASANG
 
 CATATAN
 -------
-- Daftar di atas berisi 24 username yang ada pada kode yang dikirim di percakapan ini.
+- Daftar di atas berisi 25 username yang ada pada kode yang dikirim di percakapan ini.
 - Jika ada username tambahan yang sudah kamu masukkan sendiri ke GitHub, pertahankan/tambahkan juga pada file WhiteList.lua sebelum commit.
 - Gate ini memerlukan executor yang mendukung game:HttpGet dan loadstring.
 - Ini adalah pemeriksaan client-side; pengguna yang dapat mengubah script lokal berpotensi melewatinya.
