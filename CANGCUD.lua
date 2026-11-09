@@ -594,11 +594,10 @@ local candyEarnedTotal = 0
 local farmCycleTotal = 0
 local rewardCubeTotal = 0 -- Sum of Coin balance increases observed immediately after confirmed Cube claims.
 local timedRewardsCounterConnection
-local lastCubeClaimConfirmedAt = nil
 local rewardClaimSnapshots = setmetatable({}, {__mode = "k"})
 local findCubeCoinBalance
 local activeCubeCoinCapture = nil
-local CUBE_COIN_CAPTURE_WINDOW = 1.5
+local CUBE_COIN_CAPTURE_WINDOW = 3.0
 local playerChildAddedConnection
 local boundTimedRewards
 
@@ -609,27 +608,22 @@ local function bindTimedRewardsCounter(folder)
         timedRewardsCounterConnection = nil
     end
     boundTimedRewards = folder
+
     timedRewardsCounterConnection = folder.ChildRemoved:Connect(function(reward)
-        -- The game may set reward.Value to 0 (or otherwise mutate it) before
-        -- removing the entry. A snapshot created by our own claim request is
-        -- therefore the primary confirmation key; do not reject it by reading
-        -- reward.Value after removal.
+        -- Removal confirms consumption. Do not read reward.Value here:
+        -- the game may set it to zero before removing the instance.
         local snapshot = rewardClaimSnapshots[reward]
         rewardClaimSnapshots[reward] = nil
-        if snapshot then
-            lastCubeClaimConfirmedAt = os.clock()
-            -- The wallet may update BEFORE TimedRewards removes the claimed row.
-            -- Keep the capture that started at request time and only authorize
-            -- its accumulated delta once ChildRemoved confirms the claim.
-            if snapshot.capture then
-                snapshot.capture.confirmed = true
-                if snapshot.capture.accumulated > 0 then
-                    rewardCubeTotal = rewardCubeTotal + snapshot.capture.accumulated
-                    snapshot.capture.accumulated = 0
-                end
-                activeCubeCoinCapture = snapshot.capture
-            end
-        end
+        if not snapshot or snapshot.balance == nil then return end
+
+        -- Start attribution from the pre-request wallet snapshot. This also
+        -- catches a wallet update replicated before ChildRemoved is delivered.
+        activeCubeCoinCapture = {
+            baseline = snapshot.balance,
+            lastBalance = snapshot.balance,
+            expiresAt = os.clock() + CUBE_COIN_CAPTURE_WINDOW,
+            credited = 0,
+        }
     end)
 end
 
@@ -639,28 +633,6 @@ playerChildAddedConnection = player.ChildAdded:Connect(function(child)
         bindTimedRewardsCounter(child)
     end
 end)
-
-local function isLootPart(obj)
-    return obj and obj:IsA("BasePart") and (obj.Name == "Token" or obj.Name == "Candy")
-end
-
-local function registerLoot(obj)
-    if isLootPart(obj) then lootTargets[obj] = true end
-end
-
-local function unregisterLoot(obj)
-    if not lootTargets[obj] then return end
-    lootTargets[obj] = nil
-    lootLastTouch[obj] = nil
-    if obj.Name == "Candy" and pendingCandyPickup[obj] then
-        pendingCandyPickup[obj] = nil
-        candyEarnedTotal = candyEarnedTotal + 1
-    end
-end
-
-for _, obj in ipairs(Workspace:GetDescendants()) do registerLoot(obj) end
-lootAddedConnection = Workspace.DescendantAdded:Connect(registerLoot)
-lootRemovingConnection = Workspace.DescendantRemoving:Connect(unregisterLoot)
 
 local function canCollectLoot(item)
     if not item or not item:IsA("BasePart") or not item.Parent then return false end
@@ -1374,24 +1346,16 @@ local function claimRewardsStep()
             local value
             pcall(function() value = tonumber(reward.Value) end)
             if value and value > 0 then
-                local coinObject, coinBefore = findCubeCoinBalance()
-                local capture = nil
-                if coinObject and coinBefore ~= nil then
-                    capture = {
-                        object = coinObject,
-                        baseline = coinBefore,
-                        lastBalance = coinBefore,
-                        expiresAt = os.clock() + CUBE_COIN_CAPTURE_WINDOW,
-                        accumulated = 0,
-                        confirmed = false,
+                local _, coinBefore = findCubeCoinBalance()
+                if coinBefore ~= nil then
+                    rewardClaimSnapshots[reward] = {
+                        balance = coinBefore,
+                        requestedAt = os.clock(),
                     }
-                    activeCubeCoinCapture = capture
                 end
-                rewardClaimSnapshots[reward] = {balance = coinBefore, requestedAt = os.clock(), capture = capture}
                 local ok = pcall(function() rewardEvent:FireServer(reward) end)
                 if not ok then
                     rewardClaimSnapshots[reward] = nil
-                    if activeCubeCoinCapture == capture then activeCubeCoinCapture = nil end
                 end
             end
         end
@@ -1453,9 +1417,8 @@ local function formatThousands(value)
     return formatted
 end
 
--- Read the live Coin wallet label. Capture starts BEFORE the claim request,
--- because the wallet can update before TimedRewards.ChildRemoved arrives.
--- Deltas are only added to Reward Cube after ChildRemoved confirms the claim.
+-- Read the live Coin wallet label. This is used only as a short-lived
+-- measurement around a confirmed TimedRewards claim, not as a general Coin counter.
 local function parseCubeCoinText(value)
     local raw = tostring(value or ""):gsub("%s+", "")
     if raw == "" or raw:find("[eE]") then return nil end
@@ -1480,27 +1443,49 @@ end
 findCubeCoinBalance = function()
     local pg = player:FindFirstChildOfClass("PlayerGui") or player:FindFirstChild("PlayerGui")
     if not pg then return nil, nil end
+
+    local camera = Workspace.CurrentCamera
+    local viewportY = camera and camera.ViewportSize.Y or 0
     local bestObject, bestValue, bestScore = nil, nil, -math.huge
+
     for _, obj in ipairs(pg:GetDescendants()) do
         if obj:IsA("TextLabel") or obj:IsA("TextButton") then
             local value = parseCubeCoinText(obj.Text)
             if value then
                 local parent = obj.Parent
                 local names = string.lower(obj.Name .. " " .. (parent and parent.Name or ""))
-                local named = names:find("coin", 1, true) or names:find("cash", 1, true)
-                local hasIcon = false
+                local namedCurrency = names:find("coin", 1, true) or names:find("cash", 1, true)
+                local hasImageSibling = false
+
                 if parent then
                     for _, sibling in ipairs(parent:GetChildren()) do
                         if sibling ~= obj and (sibling:IsA("ImageLabel") or sibling:IsA("ImageButton")) then
-                            hasIcon = true; break
+                            hasImageSibling = true
+                            break
                         end
                     end
                 end
-                local score = named and 300 or (hasIcon and 100 or -math.huge)
-                if score > bestScore then bestObject, bestValue, bestScore = obj, value, score end
+
+                local y = obj.AbsolutePosition.Y
+                local upperHud = viewportY > 0 and y <= viewportY * 0.45
+                local digitCount = #tostring(math.floor(value))
+                local score = -math.huge
+
+                if namedCurrency then
+                    score = 1000 + digitCount
+                elseif hasImageSibling and upperHud and digitCount >= 7 then
+                    score = 500 + digitCount
+                elseif upperHud and digitCount >= 9 then
+                    score = 300 + digitCount
+                end
+
+                if score > bestScore then
+                    bestObject, bestValue, bestScore = obj, value, score
+                end
             end
         end
     end
+
     return bestObject, bestValue
 end
 
@@ -1516,11 +1501,8 @@ local function updateCubeCoinCapture(now)
         capture.object = object
         local delta = balance - capture.lastBalance
         if delta > 0 then
-            if capture.confirmed then
-                rewardCubeTotal = rewardCubeTotal + delta
-            else
-                capture.accumulated = capture.accumulated + delta
-            end
+            capture.credited = capture.credited + delta
+            rewardCubeTotal = rewardCubeTotal + delta
         end
         capture.lastBalance = balance
     end
