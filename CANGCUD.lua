@@ -610,21 +610,15 @@ local function bindTimedRewardsCounter(folder)
     end
     boundTimedRewards = folder
     timedRewardsCounterConnection = folder.ChildRemoved:Connect(function(reward)
-        -- RewardEvent:FireServer() has no client return value. A claimed reward
-        -- leaving TimedRewards is the observable replicated confirmation.
-        local wasClaimable = false
-        pcall(function()
-            local value = tonumber(reward.Value)
-            wasClaimable = value ~= nil and value > 0
-        end)
-        if wasClaimable then
-            -- A removed TimedRewards entry confirms the claim was consumed.
-            -- Attribute only the wallet delta observed in the short window
-            -- following this specific confirmed claim; never count the claim as +1.
+        -- The game may set reward.Value to 0 (or otherwise mutate it) before
+        -- removing the entry. A snapshot created by our own claim request is
+        -- therefore the primary confirmation key; do not reject it by reading
+        -- reward.Value after removal.
+        local snapshot = rewardClaimSnapshots[reward]
+        rewardClaimSnapshots[reward] = nil
+        if snapshot then
             lastCubeClaimConfirmedAt = os.clock()
-            local snapshot = rewardClaimSnapshots[reward]
-            rewardClaimSnapshots[reward] = nil
-            if snapshot and snapshot.balance ~= nil then
+            if snapshot.balance ~= nil then
                 activeCubeCoinCapture = {
                     baseline = snapshot.balance,
                     lastBalance = snapshot.balance,
