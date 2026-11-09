@@ -40,6 +40,7 @@ local cycleStartedAt = nil
 local completedCycleSeconds = 0
 local noFoodSkipSentForMap = false
 local noFoodMapKey = ""
+local noFoodSince = nil
 local lastFoodScanAt = 0
 local lastMissingActionMap = ""
 local hiddenMapsEnabled = false
@@ -682,43 +683,61 @@ local function findNearbyFood(root)
 end
 
 local function monitorLandingEatProgress(hum, root)
-    if not pendingLandingMap or noFoodSkipSentForMap then
+    -- This monitor runs continuously while farming. It never gates or pauses
+    -- the Grab/Eat loop; it only decides when the current map is truly empty.
+    local mapName, key = getMapName()
+    if key == "" then
+        noFoodSince = nil
+        landingConfirmedAt = nil
         return false
     end
 
-    local mapName, key = getMapName()
-    if key == "" then return false end
     if key ~= noFoodMapKey then
         noFoodMapKey = key
         pendingLandingMap = mapName
         landingConfirmedAt = nil
+        noFoodSince = nil
         noFoodSkipSentForMap = false
         lastFoodScanAt = 0
+        lastLandingAttempt = 0
+        print("[dEnzCreator] New map detected; AutoSkip monitor waiting for map-ready confirmation:", mapName)
+    end
+
+    if noFoodSkipSentForMap then
+        return false
     end
 
     local now = os.clock()
     local chunks = getActiveChunksRoot()
     if not chunks then
-        -- A missing Chunks root is still part of map loading, not proof of an
-        -- empty map. Keep waiting until the new map's chunk container exists.
+        -- Missing/replaced Chunks during streaming is transition, not empty food.
         landingConfirmedAt = nil
+        noFoodSince = nil
         return false
     end
 
-    if not farmSurfaceTopY then return false end
-    if not landingConfirmedAt then
-        local floor = ensureFarmFloor()
-        local floorTop = floor.Position.Y + floor.Size.Y / 2
-        local expectedRootY = floorTop + hum.HipHeight + root.Size.Y / 2 + 0.08
-        local onFloor = hum.FloorMaterial ~= Enum.Material.Air
-            and math.abs(root.Position.Y - expectedRootY) <= 1.0
-        if not onFloor or now - lastLandingAttempt < 0.15 then
-            return false
-        end
+    if not farmSurfaceTopY then
+        noFoodSince = nil
+        return false
+    end
 
+    local floor = ensureFarmFloor()
+    local floorTop = floor.Position.Y + floor.Size.Y / 2
+    local expectedRootY = floorTop + hum.HipHeight + root.Size.Y / 2 + 0.08
+    local onFloor = hum.FloorMaterial ~= Enum.Material.Air
+        and math.abs(root.Position.Y - expectedRootY) <= 1.0
+
+    if not onFloor or now - lastLandingAttempt < 0.15 then
+        -- Do not count teleport/fall/landing frames toward the 3-second window.
+        noFoodSince = nil
+        return false
+    end
+
+    if not landingConfirmedAt then
         landingConfirmedAt = now
         lastFoodScanAt = 0
-        print("[dEnzCreator] Map ready + landing confirmed; starting 3-second whole-map object scan:", mapName)
+        noFoodSince = nil
+        print("[dEnzCreator] Map ready + landing confirmed; continuous food monitoring started:", mapName)
         return false
     end
 
@@ -729,22 +748,34 @@ local function monitorLandingEatProgress(hum, root)
 
     local foodState = findNearbyFood(root)
     if foodState == nil then
-        -- Chunk root became unavailable during streaming; pause the window.
-        landingConfirmedAt = nil
+        -- A temporarily unavailable tree is not an empty map.
+        noFoodSince = nil
         return false
     elseif foodState then
-        noFoodSkipSentForMap = true
+        -- Food exists: clear the empty timer, but KEEP monitoring this map.
+        noFoodSince = nil
         pendingLandingMap = nil
-        print("[dEnzCreator] Object detected in active map; no-food AutoSkip cancelled for this map:", mapName)
-        return true
+        return false
     end
 
-    if now - landingConfirmedAt >= NO_FOOD_CONFIRM_SECONDS then
-        noFoodSkipSentForMap = true -- one request per map; never spam during transition
-        pendingLandingMap = nil
-        warn("[dEnzCreator] No BasePart found in active map within 3 seconds after map became ready; requesting AutoSkip:", mapName)
-        if not requestSkip(true) then
-            warn("[dEnzCreator] No-food AutoSkip request could not be sent for:", mapName)
+    -- Chunks exists, map is ready, character is grounded, and no BasePart food
+    -- is present. Start/continue a fresh 3-second empty-map confirmation.
+    if not noFoodSince then
+        noFoodSince = now
+        print("[dEnzCreator] Active map appears empty; starting 3-second confirmation:", mapName)
+        return false
+    end
+
+    if now - noFoodSince >= NO_FOOD_CONFIRM_SECONDS then
+        if requestSkip(true) then
+            noFoodSkipSentForMap = true
+            pendingLandingMap = nil
+            warn("[dEnzCreator] Map remained empty for 3 seconds; AutoSkip request sent:", mapName)
+        else
+            -- Keep the timer alive; retry on a later scan if the mapped remote
+            -- was temporarily unavailable. No Grab/Eat action is paused.
+            noFoodSince = now
+            warn("[dEnzCreator] AutoSkip request failed; will retry after another 3-second check:", mapName)
         end
     end
 
