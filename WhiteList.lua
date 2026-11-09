@@ -34,7 +34,9 @@ local WhitelistedUsers = {
     "mummy77776",
     "TOBI03310",
     "ZloyIzumrudikYT",
-    "Papaangs"
+    "Papaangs",
+    "bbomibbomiya",
+    "Guru_Shaoilin"
 }
 
 local function notify(title, message, duration)
