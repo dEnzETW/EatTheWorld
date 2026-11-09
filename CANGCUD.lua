@@ -41,6 +41,8 @@ local completedCycleSeconds = 0
 local noFoodSkipSentForMap = false
 local noFoodMapKey = ""
 local noFoodSince = nil
+local noFoodChunksRoot = nil
+local chunksReadySince = nil
 local lastFoodScanAt = 0
 local lastMissingActionMap = ""
 local hiddenMapsEnabled = false
@@ -333,6 +335,9 @@ local function farmAnchor()
         pendingLandingMap = mapName
         landingConfirmedAt = nil
         noFoodMapKey = key
+        noFoodChunksRoot = nil
+        chunksReadySince = nil
+        noFoodSince = nil
         noFoodSkipSentForMap = false
         lastFoodScanAt = 0
         lastLandingAttempt = 0
@@ -683,24 +688,39 @@ local function findNearbyFood(root)
 end
 
 local function monitorLandingEatProgress(hum, root)
-    -- This monitor runs continuously while farming. It never gates or pauses
-    -- the Grab/Eat loop; it only decides when the current map is truly empty.
-    local mapName, key = getMapName()
-    if key == "" then
+    -- Independent monitor: it never pauses or gates Grab/Eat.
+    -- Readiness is based on a stable Chunks root, not floor/landing state.
+    local chunks = getActiveChunksRoot()
+    if not chunks then
         noFoodSince = nil
+        noFoodChunksRoot = nil
+        chunksReadySince = nil
         landingConfirmedAt = nil
         return false
     end
 
-    if key ~= noFoodMapKey then
-        noFoodMapKey = key
-        pendingLandingMap = mapName
-        landingConfirmedAt = nil
+    local mapName, key = getMapName()
+    -- Some ETW sessions do not expose a readable map name. In that case,
+    -- use the actual Chunks instance as the transition identity.
+    local identity = key ~= "" and ("map:" .. key) or chunks
+    local changed = false
+    if typeof(identity) == "Instance" then
+        changed = noFoodChunksRoot ~= identity
+    else
+        changed = noFoodMapKey ~= identity
+    end
+
+    if changed then
+        noFoodMapKey = typeof(identity) == "string" and identity or ""
+        noFoodChunksRoot = typeof(identity) == "Instance" and identity or chunks
+        chunksReadySince = os.clock()
         noFoodSince = nil
+        landingConfirmedAt = nil
         noFoodSkipSentForMap = false
         lastFoodScanAt = 0
-        lastLandingAttempt = 0
-        print("[dEnzCreator] New map detected; AutoSkip monitor waiting for map-ready confirmation:", mapName)
+        pendingLandingMap = mapName
+        print("[dEnzCreator] AutoSkip: Chunks/map changed; waiting for stable map:", mapName)
+        return false
     end
 
     if noFoodSkipSentForMap then
@@ -708,36 +728,13 @@ local function monitorLandingEatProgress(hum, root)
     end
 
     local now = os.clock()
-    local chunks = getActiveChunksRoot()
-    if not chunks then
-        -- Missing/replaced Chunks during streaming is transition, not empty food.
-        landingConfirmedAt = nil
-        noFoodSince = nil
+    -- Require Chunks to remain present for 1.5s before treating an empty
+    -- tree as a genuinely empty map. This shields map streaming/transitions.
+    if not chunksReadySince then
+        chunksReadySince = now
         return false
     end
-
-    if not farmSurfaceTopY then
-        noFoodSince = nil
-        return false
-    end
-
-    local floor = ensureFarmFloor()
-    local floorTop = floor.Position.Y + floor.Size.Y / 2
-    local expectedRootY = floorTop + hum.HipHeight + root.Size.Y / 2 + 0.08
-    local onFloor = hum.FloorMaterial ~= Enum.Material.Air
-        and math.abs(root.Position.Y - expectedRootY) <= 1.0
-
-    if not onFloor or now - lastLandingAttempt < 0.15 then
-        -- Do not count teleport/fall/landing frames toward the 3-second window.
-        noFoodSince = nil
-        return false
-    end
-
-    if not landingConfirmedAt then
-        landingConfirmedAt = now
-        lastFoodScanAt = 0
-        noFoodSince = nil
-        print("[dEnzCreator] Map ready + landing confirmed; continuous food monitoring started:", mapName)
+    if now - chunksReadySince < 1.5 then
         return false
     end
 
@@ -748,21 +745,20 @@ local function monitorLandingEatProgress(hum, root)
 
     local foodState = findNearbyFood(root)
     if foodState == nil then
-        -- A temporarily unavailable tree is not an empty map.
         noFoodSince = nil
         return false
     elseif foodState then
-        -- Food exists: clear the empty timer, but KEEP monitoring this map.
+        -- Food exists: reset only the empty timer. Keep watching this map
+        -- so AutoSkip can activate later when the character has grown and
+        -- all food has been consumed.
         noFoodSince = nil
         pendingLandingMap = nil
         return false
     end
 
-    -- Chunks exists, map is ready, character is grounded, and no BasePart food
-    -- is present. Start/continue a fresh 3-second empty-map confirmation.
     if not noFoodSince then
         noFoodSince = now
-        print("[dEnzCreator] Active map appears empty; starting 3-second confirmation:", mapName)
+        print("[dEnzCreator] AutoSkip: no food detected; starting 3-second timer:", mapName)
         return false
     end
 
@@ -770,12 +766,11 @@ local function monitorLandingEatProgress(hum, root)
         if requestSkip(true) then
             noFoodSkipSentForMap = true
             pendingLandingMap = nil
-            warn("[dEnzCreator] Map remained empty for 3 seconds; AutoSkip request sent:", mapName)
+            warn("[dEnzCreator] AutoSkip: map empty for 3 seconds; skip request sent:", mapName)
         else
-            -- Keep the timer alive; retry on a later scan if the mapped remote
-            -- was temporarily unavailable. No Grab/Eat action is paused.
+            -- Retry later if the mapped remote is temporarily unavailable.
             noFoodSince = now
-            warn("[dEnzCreator] AutoSkip request failed; will retry after another 3-second check:", mapName)
+            warn("[dEnzCreator] AutoSkip: request failed; retrying after 3 seconds:", mapName)
         end
     end
 
