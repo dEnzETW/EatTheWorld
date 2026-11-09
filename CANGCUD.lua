@@ -618,13 +618,16 @@ local function bindTimedRewardsCounter(folder)
         rewardClaimSnapshots[reward] = nil
         if snapshot then
             lastCubeClaimConfirmedAt = os.clock()
-            if snapshot.balance ~= nil then
-                activeCubeCoinCapture = {
-                    baseline = snapshot.balance,
-                    lastBalance = snapshot.balance,
-                    expiresAt = os.clock() + CUBE_COIN_CAPTURE_WINDOW,
-                    credited = 0,
-                }
+            -- The wallet may update BEFORE TimedRewards removes the claimed row.
+            -- Keep the capture that started at request time and only authorize
+            -- its accumulated delta once ChildRemoved confirms the claim.
+            if snapshot.capture then
+                snapshot.capture.confirmed = true
+                if snapshot.capture.accumulated > 0 then
+                    rewardCubeTotal = rewardCubeTotal + snapshot.capture.accumulated
+                    snapshot.capture.accumulated = 0
+                end
+                activeCubeCoinCapture = snapshot.capture
             end
         end
     end)
@@ -1371,10 +1374,25 @@ local function claimRewardsStep()
             local value
             pcall(function() value = tonumber(reward.Value) end)
             if value and value > 0 then
-                local _, coinBefore = findCubeCoinBalance()
-                rewardClaimSnapshots[reward] = {balance = coinBefore, requestedAt = os.clock()}
+                local coinObject, coinBefore = findCubeCoinBalance()
+                local capture = nil
+                if coinObject and coinBefore ~= nil then
+                    capture = {
+                        object = coinObject,
+                        baseline = coinBefore,
+                        lastBalance = coinBefore,
+                        expiresAt = os.clock() + CUBE_COIN_CAPTURE_WINDOW,
+                        accumulated = 0,
+                        confirmed = false,
+                    }
+                    activeCubeCoinCapture = capture
+                end
+                rewardClaimSnapshots[reward] = {balance = coinBefore, requestedAt = os.clock(), capture = capture}
                 local ok = pcall(function() rewardEvent:FireServer(reward) end)
-                if not ok then rewardClaimSnapshots[reward] = nil end
+                if not ok then
+                    rewardClaimSnapshots[reward] = nil
+                    if activeCubeCoinCapture == capture then activeCubeCoinCapture = nil end
+                end
             end
         end
     end
@@ -1435,8 +1453,9 @@ local function formatThousands(value)
     return formatted
 end
 
--- Read the live Coin wallet label. This is used only as a short-lived
--- measurement around a confirmed TimedRewards claim, not as a general Coin counter.
+-- Read the live Coin wallet label. Capture starts BEFORE the claim request,
+-- because the wallet can update before TimedRewards.ChildRemoved arrives.
+-- Deltas are only added to Reward Cube after ChildRemoved confirms the claim.
 local function parseCubeCoinText(value)
     local raw = tostring(value or ""):gsub("%s+", "")
     if raw == "" or raw:find("[eE]") then return nil end
@@ -1497,8 +1516,11 @@ local function updateCubeCoinCapture(now)
         capture.object = object
         local delta = balance - capture.lastBalance
         if delta > 0 then
-            capture.credited = capture.credited + delta
-            rewardCubeTotal = rewardCubeTotal + delta
+            if capture.confirmed then
+                rewardCubeTotal = rewardCubeTotal + delta
+            else
+                capture.accumulated = capture.accumulated + delta
+            end
         end
         capture.lastBalance = balance
     end
