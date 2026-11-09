@@ -592,8 +592,9 @@ local lootAddedConnection
 local lootRemovingConnection
 local candyEarnedTotal = 0
 local farmCycleTotal = 0
-local rewardCubeTotal = 0 -- Counts reward entries confirmed removed from TimedRewards.
+local rewardCubeTotal = 0 -- Coin amount from Cube rewards; remains unchanged until the game exposes the actual awarded amount.
 local timedRewardsCounterConnection
+local lastCubeClaimConfirmedAt = nil
 local playerChildAddedConnection
 local boundTimedRewards
 
@@ -613,7 +614,9 @@ local function bindTimedRewardsCounter(folder)
             wasClaimable = value ~= nil and value > 0
         end)
         if wasClaimable then
-            rewardCubeTotal = rewardCubeTotal + 1
+            -- This confirms a reward entry was consumed, but does not reveal
+            -- how many Coins the Cube awarded. Do not add +1 as if it were Coin.
+            lastCubeClaimConfirmedAt = os.clock()
         end
     end)
 end
@@ -1343,36 +1346,33 @@ makeToggle("Loot Coin & Candy", 4, Color3.fromRGB(205, 145, 55), false, function
 end)
 
 local autoClaimEnabled = false
-local lastRewardClaim = 0
-local lastSpinRequest = 0
+local lastRewardCheck = 0
+local rewardRequestPending = setmetatable({}, {__mode = "k"})
+local REWARD_CHECK_INTERVAL = 60
+
 local function claimRewardsStep()
-    if not autoClaimEnabled or os.clock() - lastRewardClaim < 1 then return end
-    lastRewardClaim = os.clock()
+    if not autoClaimEnabled or os.clock() - lastRewardCheck < REWARD_CHECK_INTERVAL then return end
+    lastRewardCheck = os.clock()
 
     local events = ReplicatedStorage:FindFirstChild("Events")
-    if not events then return end
-
     local timedRewards = player:FindFirstChild("TimedRewards")
-    local rewardEvent = events:FindFirstChild("RewardEvent")
-    if timedRewards and rewardEvent then
-        for _, reward in ipairs(timedRewards:GetChildren()) do
-            local value
-            pcall(function() value = tonumber(reward.Value) end)
-            if value and value > 0 then
-                -- FireServer only sends a request; it does not confirm delivery.
-                -- The counter increments from TimedRewards.ChildRemoved above.
-                pcall(function()
-                    rewardEvent:FireServer(reward)
-                end)
+    local rewardEvent = events and events:FindFirstChild("RewardEvent")
+    if not timedRewards or not rewardEvent then return end
+
+    for _, reward in ipairs(timedRewards:GetChildren()) do
+        local value
+        pcall(function() value = tonumber(reward.Value) end)
+
+        -- Timed rewards are countdowns. Only request a claim when the timer
+        -- has reached zero; never resend the same item every Heartbeat.
+        if value ~= nil and value <= 0 and not rewardRequestPending[reward] then
+            local sent = pcall(function()
+                rewardEvent:FireServer(reward)
+            end)
+            if sent then
+                rewardRequestPending[reward] = true
             end
         end
-    end
-
-    -- Spin request is throttled separately to avoid rapid remote firing.
-    local spinEvent = events:FindFirstChild("SpinEvent")
-    if spinEvent and os.clock() - lastSpinRequest >= 10 then
-        lastSpinRequest = os.clock()
-        pcall(function() spinEvent:FireServer() end)
     end
 end
 
