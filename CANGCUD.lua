@@ -591,6 +591,8 @@ local pendingCandyPickup = setmetatable({}, {__mode = "k"})
 local lootAddedConnection
 local lootRemovingConnection
 local candyEarnedTotal = 0
+local farmCycleTotal = 0
+local rewardCubeTotal = 0 -- Display counter; pickup source not yet identified in the supplied code.
 
 local function isLootPart(obj)
     return obj and obj:IsA("BasePart") and (obj.Name == "Token" or obj.Name == "Candy")
@@ -870,6 +872,13 @@ local function farmStep()
     local saleConfirmed = sizeDropAfterFull or sizeReset or barDropAfterFull
 
     if saleConfirmed then
+        -- One Farm Cycle = one confirmed full-size sale/reset.
+        -- Count once for an active farming cycle or a detected full-state sale.
+        if cycleStartedAt ~= nil or wasFull then
+            farmCycleTotal = farmCycleTotal + 1
+            print("[dEnzCreator] Farm Cycle completed:", farmCycleTotal)
+        end
+
         if cycleStartedAt ~= nil then
             completedCycleSeconds = math.max(0, os.clock() - cycleStartedAt)
             cycleStartedAt = nil
@@ -1228,12 +1237,12 @@ Instance.new("UICorner", close).CornerRadius = UDim.new(1, 0)
 
 local runtimeBlock = Instance.new("TextLabel")
 runtimeBlock.Name = "RuntimeBlock"
-runtimeBlock.Size = UDim2.new(1, -12, 0, 54)
+runtimeBlock.Size = UDim2.new(1, -12, 0, 66)
 runtimeBlock.Position = UDim2.fromOffset(6, 25)
 runtimeBlock.BackgroundTransparency = 1
 runtimeBlock.BorderSizePixel = 0
 runtimeBlock.RichText = true
-runtimeBlock.Text = '<font size="9">Runtime: 0m 0s</font>\n<font size="9">Season Time: 0m 0s</font>\n<font size="9">Coin Earned: --</font>\n<font size="9">Data Candy: --</font>'
+runtimeBlock.Text = '<font size="9">Runtime: 0m 0s</font>\n<font size="9">Season Time: 0m 0s</font>\n<font size="9">Farm Cycle: 0</font>\n<font size="9">Reward Cube: 0</font>\n<font size="9">Data Candy: 0</font>'
 runtimeBlock.TextColor3 = Color3.fromRGB(240, 243, 248)
 runtimeBlock.TextSize = 9
 runtimeBlock.Font = Enum.Font.GothamMedium
@@ -1380,127 +1389,18 @@ local function formatThousands(value)
     return formatted
 end
 
-local function parseDisplayedNumber(value)
-    if value == nil then return nil end
-    local textValue = tostring(value):gsub("%s+", "")
-    -- Reject scientific notation and text containing unrelated numbers.
-    if textValue == "" or textValue:find("[eE]") then return nil end
-    -- Allow a currency symbol/prefix, but require exactly one grouped integer.
-    local numeric = textValue:match("[%d][%d%.,]*")
-    if not numeric then return nil end
-    local prefix, suffix = textValue:sub(1, textValue:find(numeric, 1, true) - 1), nil
-    local first = textValue:find(numeric, 1, true)
-    suffix = textValue:sub(first + #numeric)
-    if prefix:find("%d") or suffix:find("%d") then return nil end
-    if suffix:find("[kKmMbB]") then return nil end -- abbreviated values are ambiguous
-
-    local separator = numeric:find(".", 1, true) and "." or (numeric:find(",", 1, true) and "," or nil)
-    if separator then
-        local groups = {}
-        for part in numeric:gmatch("[^%.,]+") do groups[#groups + 1] = part end
-        if #groups < 2 or #groups[1] < 1 or #groups[1] > 3 then return nil end
-        for i = 2, #groups do
-            if #groups[i] ~= 3 then return nil end
-        end
-        -- Mixed separators are not accepted; ETW displays integer grouping.
-        if numeric:find(".", 1, true) and numeric:find(",", 1, true) then return nil end
-    end
-    local digits = numeric:gsub("[%.,]", "")
-    if #digits < 1 or #digits > 15 then return nil end
-    return tonumber(digits), #digits
-end
-
-local function getPlayerGui()
-    return player:FindFirstChildOfClass("PlayerGui") or player:FindFirstChild("PlayerGui")
-end
-
-local function hasImageSibling(label)
-    local parent = label and label.Parent
-    if not parent then return false end
-    for _, child in ipairs(parent:GetChildren()) do
-        if child ~= label and (child:IsA("ImageLabel") or child:IsA("ImageButton")) then
-            return true
-        end
-    end
-    return false
-end
-
--- Only accept integer-looking UI labels associated with an icon or a clearly
--- named currency container. This avoids accidentally parsing timers, scientific
--- notation, or unrelated large numbers elsewhere in PlayerGui.
-local function findDisplayedCurrency(kind)
-    local playerGui = getPlayerGui()
-    if not playerGui then return nil, nil end
-
-    local bestObject, bestValue, bestScore = nil, nil, -math.huge
-    for _, obj in ipairs(playerGui:GetDescendants()) do
-        if obj:IsA("TextLabel") or obj:IsA("TextButton") then
-            local value, digitCount = parseDisplayedNumber(obj.Text)
-            if value then
-                local parent = obj.Parent
-                local name = string.lower(obj.Name .. " " .. (parent and parent.Name or ""))
-                local named = kind == "coin" and (name:find("coin", 1, true) or name:find("cash", 1, true))
-                    or kind == "candy" and name:find("candy", 1, true)
-                local icon = hasImageSibling(obj)
-                local score = -math.huge
-                if kind == "coin" and digitCount >= 7 and digitCount <= 15 then
-                    if named then score = 300 + digitCount
-                    elseif icon then score = 100 + digitCount end
-                end
-                if score > bestScore then
-                    bestObject, bestValue, bestScore = obj, value, score
-                end
-            end
-        end
-    end
-    if bestScore == -math.huge then return nil, nil end
-    return bestObject, bestValue
-end
-
-local lastCoinBalance
-local coinEarnedTotal = 0
-local lastStatsScanAt = 0
--- Poll the displayed wallet frequently so Sell proceeds are reflected promptly.
-local STATS_SCAN_INTERVAL = 0.03
-
-local function updateEarnedStats(now)
-    if now - lastStatsScanAt < STATS_SCAN_INTERVAL then return end
-    lastStatsScanAt = now
-
-    -- Count positive wallet increases regardless of whether the game's UI
-    -- replaces its TextLabel during a Sell/map transition. Keep the baseline
-    -- across label-instance changes so a fresh label does not discard Sell gain.
-    -- This remains the single Coin source, preventing a separate Sell double-count.
-    local _, coinBalance = findDisplayedCurrency("coin")
-    if coinBalance ~= nil then
-        if lastCoinBalance == nil then
-            lastCoinBalance = coinBalance -- baseline only; never count old wallet
-        else
-            local gained = coinBalance - lastCoinBalance
-            if gained > 0 then
-                coinEarnedTotal = coinEarnedTotal + gained
-            end
-            lastCoinBalance = coinBalance
-        end
-    end
-
-    -- Data Candy is updated by the global collector after a touched Candy leaves Workspace.
-end
-
 local function updateRuntimeMonitor()
     -- os.clock() keeps the existing runtime/season timers unchanged.
     local now = os.clock()
-    updateEarnedStats(now)
     local online = player.Parent == Players
     onlineStatus.Text = online and "● ONLINE" or "● OFFLINE"
     onlineStatus.TextColor3 = online and Color3.fromRGB(80, 220, 145) or Color3.fromRGB(235, 90, 90)
-    local coinText = formatThousands(coinEarnedTotal)
     local candyText = formatThousands(candyEarnedTotal)
     runtimeBlock.Text = string.format(
-        '<font size="9">Runtime: %s</font>\n<font size="9">Season Time: %s</font>\n<font size="9">Coin Earned: %s</font>\n<font size="9">Data Candy: %s</font>',
+        '<font size="9">Runtime: %s</font>\n<font size="9">Season Time: %s</font>\n<font size="9">Farm Cycle: %s</font>\n<font size="9">Reward Cube: %s</font>\n<font size="9">Data Candy: %s</font>',
         formatDuration(now - scriptStartedAt),
         formatDuration(cycleStartedAt and (now - cycleStartedAt) or completedCycleSeconds),
-        coinText, candyText
+        formatThousands(farmCycleTotal), formatThousands(rewardCubeTotal), candyText
     )
 end
 
@@ -1593,7 +1493,7 @@ print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active;
 
 -- V3.3.6 adds a live runtime/statistics panel. Unknown game values display as -- rather than fabricated numbers.
 
--- Coin counter revision: wallet polling every 0.03s and persistent baseline across UI label replacement.
+-- Coin Earned display removed; Farm Cycle counts confirmed farming sale/reset events.
 
 -- V3.3.6: Combined title/timer header (140px), left-aligned title, 5x named Grab/Eat animation acceleration. Grab and post-Grab delays are each divided by 12.
 
