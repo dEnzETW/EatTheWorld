@@ -592,7 +592,56 @@ local lootAddedConnection
 local lootRemovingConnection
 local candyEarnedTotal = 0
 local farmCycleTotal = 0
-local rewardCubeTotal = 0 -- Counts RewardEvent claim requests sent successfully by the client.
+local rewardCubeTotal = 0 -- Sum of Coin balance increases observed immediately after confirmed Cube claims.
+local timedRewardsCounterConnection
+local lastCubeClaimConfirmedAt = nil
+local rewardClaimSnapshots = setmetatable({}, {__mode = "k"})
+local findCubeCoinBalance
+local activeCubeCoinCapture = nil
+local CUBE_COIN_CAPTURE_WINDOW = 1.5
+local playerChildAddedConnection
+local boundTimedRewards
+
+local function bindTimedRewardsCounter(folder)
+    if not folder or not folder:IsA("Folder") or boundTimedRewards == folder then return end
+    if timedRewardsCounterConnection then
+        timedRewardsCounterConnection:Disconnect()
+        timedRewardsCounterConnection = nil
+    end
+    boundTimedRewards = folder
+    timedRewardsCounterConnection = folder.ChildRemoved:Connect(function(reward)
+        -- RewardEvent:FireServer() has no client return value. A claimed reward
+        -- leaving TimedRewards is the observable replicated confirmation.
+        local wasClaimable = false
+        pcall(function()
+            local value = tonumber(reward.Value)
+            wasClaimable = value ~= nil and value > 0
+        end)
+        if wasClaimable then
+            -- A removed TimedRewards entry confirms the claim was consumed.
+            -- Attribute only the wallet delta observed in the short window
+            -- following this specific confirmed claim; never count the claim as +1.
+            lastCubeClaimConfirmedAt = os.clock()
+            local snapshot = rewardClaimSnapshots[reward]
+            rewardClaimSnapshots[reward] = nil
+            if snapshot and snapshot.balance ~= nil then
+                activeCubeCoinCapture = {
+                    baseline = snapshot.balance,
+                    lastBalance = snapshot.balance,
+                    expiresAt = os.clock() + CUBE_COIN_CAPTURE_WINDOW,
+                    credited = 0,
+                }
+            end
+        end
+    end)
+end
+
+bindTimedRewardsCounter(player:FindFirstChild("TimedRewards"))
+playerChildAddedConnection = player.ChildAdded:Connect(function(child)
+    if child.Name == "TimedRewards" then
+        bindTimedRewardsCounter(child)
+    end
+end)
 
 local function isLootPart(obj)
     return obj and obj:IsA("BasePart") and (obj.Name == "Token" or obj.Name == "Candy")
@@ -1328,12 +1377,10 @@ local function claimRewardsStep()
             local value
             pcall(function() value = tonumber(reward.Value) end)
             if value and value > 0 then
-                local sent = pcall(function()
-                    rewardEvent:FireServer(reward)
-                end)
-                if sent then
-                    rewardCubeTotal = rewardCubeTotal + 1
-                end
+                local _, coinBefore = findCubeCoinBalance()
+                rewardClaimSnapshots[reward] = {balance = coinBefore, requestedAt = os.clock()}
+                local ok = pcall(function() rewardEvent:FireServer(reward) end)
+                if not ok then rewardClaimSnapshots[reward] = nil end
             end
         end
     end
@@ -1394,9 +1441,80 @@ local function formatThousands(value)
     return formatted
 end
 
+-- Read the live Coin wallet label. This is used only as a short-lived
+-- measurement around a confirmed TimedRewards claim, not as a general Coin counter.
+local function parseCubeCoinText(value)
+    local raw = tostring(value or ""):gsub("%s+", "")
+    if raw == "" or raw:find("[eE]") then return nil end
+    local token = raw:match("[%d][%d%.,]*")
+    if not token then return nil end
+    local first = raw:find(token, 1, true)
+    local prefix, suffix = raw:sub(1, first - 1), raw:sub(first + #token)
+    if prefix:find("%d") or suffix:find("%d") or suffix:find("[kKmMbB]") then return nil end
+    if token:find(".", 1, true) and token:find(",", 1, true) then return nil end
+    local sep = token:find(".", 1, true) and "." or (token:find(",", 1, true) and "," or nil)
+    if sep then
+        local groups = {}
+        for part in token:gmatch("[^%.,]+") do groups[#groups + 1] = part end
+        if #groups < 2 then return nil end
+        for i = 2, #groups do if #groups[i] ~= 3 then return nil end end
+    end
+    local digits = token:gsub("[%.,]", "")
+    if #digits < 1 or #digits > 15 then return nil end
+    return tonumber(digits)
+end
+
+findCubeCoinBalance = function()
+    local pg = player:FindFirstChildOfClass("PlayerGui") or player:FindFirstChild("PlayerGui")
+    if not pg then return nil, nil end
+    local bestObject, bestValue, bestScore = nil, nil, -math.huge
+    for _, obj in ipairs(pg:GetDescendants()) do
+        if obj:IsA("TextLabel") or obj:IsA("TextButton") then
+            local value = parseCubeCoinText(obj.Text)
+            if value then
+                local parent = obj.Parent
+                local names = string.lower(obj.Name .. " " .. (parent and parent.Name or ""))
+                local named = names:find("coin", 1, true) or names:find("cash", 1, true)
+                local hasIcon = false
+                if parent then
+                    for _, sibling in ipairs(parent:GetChildren()) do
+                        if sibling ~= obj and (sibling:IsA("ImageLabel") or sibling:IsA("ImageButton")) then
+                            hasIcon = true; break
+                        end
+                    end
+                end
+                local score = named and 300 or (hasIcon and 100 or -math.huge)
+                if score > bestScore then bestObject, bestValue, bestScore = obj, value, score end
+            end
+        end
+    end
+    return bestObject, bestValue
+end
+
+local function updateCubeCoinCapture(now)
+    local capture = activeCubeCoinCapture
+    if not capture then return end
+    local object, balance = findCubeCoinBalance()
+    if object and balance ~= nil then
+        if capture.object and capture.object ~= object then
+            activeCubeCoinCapture = nil
+            return
+        end
+        capture.object = object
+        local delta = balance - capture.lastBalance
+        if delta > 0 then
+            capture.credited = capture.credited + delta
+            rewardCubeTotal = rewardCubeTotal + delta
+        end
+        capture.lastBalance = balance
+    end
+    if now >= capture.expiresAt then activeCubeCoinCapture = nil end
+end
+
 local function updateRuntimeMonitor()
     -- os.clock() keeps the existing runtime/season timers unchanged.
     local now = os.clock()
+    updateCubeCoinCapture(now)
     local online = player.Parent == Players
     onlineStatus.Text = online and "● ONLINE" or "● OFFLINE"
     onlineStatus.TextColor3 = online and Color3.fromRGB(80, 220, 145) or Color3.fromRGB(235, 90, 90)
@@ -1480,6 +1598,8 @@ gui.AncestryChanged:Connect(function(_, parent)
         lootCoinsCandyEnabled = false
         if lootAddedConnection then lootAddedConnection:Disconnect(); lootAddedConnection = nil end
         if lootRemovingConnection then lootRemovingConnection:Disconnect(); lootRemovingConnection = nil end
+        if timedRewardsCounterConnection then timedRewardsCounterConnection:Disconnect(); timedRewardsCounterConnection = nil end
+        if playerChildAddedConnection then playerChildAddedConnection:Disconnect(); playerChildAddedConnection = nil end
         setCharacterTransition(false)
         restoreWorldRoots()
         setHiddenMaps(false)
