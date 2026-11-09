@@ -592,7 +592,7 @@ local lootAddedConnection
 local lootRemovingConnection
 local candyEarnedTotal = 0
 local farmCycleTotal = 0
-local rewardCubeTotal = 0 -- Display counter; pickup source not yet identified in the supplied code.
+local rewardCubeTotal = 0 -- Counts RewardEvent claim requests sent successfully by the client.
 
 local function isLootPart(obj)
     return obj and obj:IsA("BasePart") and (obj.Name == "Token" or obj.Name == "Candy")
@@ -1328,7 +1328,12 @@ local function claimRewardsStep()
             local value
             pcall(function() value = tonumber(reward.Value) end)
             if value and value > 0 then
-                pcall(function() rewardEvent:FireServer(reward) end)
+                local sent = pcall(function()
+                    rewardEvent:FireServer(reward)
+                end)
+                if sent then
+                    rewardCubeTotal = rewardCubeTotal + 1
+                end
             end
         end
     end
