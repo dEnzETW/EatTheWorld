@@ -592,7 +592,38 @@ local lootAddedConnection
 local lootRemovingConnection
 local candyEarnedTotal = 0
 local farmCycleTotal = 0
-local rewardCubeTotal = 0 -- Counts RewardEvent claim requests sent successfully by the client.
+local rewardCubeTotal = 0 -- Counts reward entries confirmed removed from TimedRewards.
+local timedRewardsCounterConnection
+local playerChildAddedConnection
+local boundTimedRewards
+
+local function bindTimedRewardsCounter(folder)
+    if not folder or not folder:IsA("Folder") or boundTimedRewards == folder then return end
+    if timedRewardsCounterConnection then
+        timedRewardsCounterConnection:Disconnect()
+        timedRewardsCounterConnection = nil
+    end
+    boundTimedRewards = folder
+    timedRewardsCounterConnection = folder.ChildRemoved:Connect(function(reward)
+        -- RewardEvent:FireServer() has no client return value. A claimed reward
+        -- leaving TimedRewards is the observable replicated confirmation.
+        local wasClaimable = false
+        pcall(function()
+            local value = tonumber(reward.Value)
+            wasClaimable = value ~= nil and value > 0
+        end)
+        if wasClaimable then
+            rewardCubeTotal = rewardCubeTotal + 1
+        end
+    end)
+end
+
+bindTimedRewardsCounter(player:FindFirstChild("TimedRewards"))
+playerChildAddedConnection = player.ChildAdded:Connect(function(child)
+    if child.Name == "TimedRewards" then
+        bindTimedRewardsCounter(child)
+    end
+end)
 
 local function isLootPart(obj)
     return obj and obj:IsA("BasePart") and (obj.Name == "Token" or obj.Name == "Candy")
@@ -1328,12 +1359,11 @@ local function claimRewardsStep()
             local value
             pcall(function() value = tonumber(reward.Value) end)
             if value and value > 0 then
-                local sent = pcall(function()
+                -- FireServer only sends a request; it does not confirm delivery.
+                -- The counter increments from TimedRewards.ChildRemoved above.
+                pcall(function()
                     rewardEvent:FireServer(reward)
                 end)
-                if sent then
-                    rewardCubeTotal = rewardCubeTotal + 1
-                end
             end
         end
     end
@@ -1480,6 +1510,8 @@ gui.AncestryChanged:Connect(function(_, parent)
         lootCoinsCandyEnabled = false
         if lootAddedConnection then lootAddedConnection:Disconnect(); lootAddedConnection = nil end
         if lootRemovingConnection then lootRemovingConnection:Disconnect(); lootRemovingConnection = nil end
+        if timedRewardsCounterConnection then timedRewardsCounterConnection:Disconnect(); timedRewardsCounterConnection = nil end
+        if playerChildAddedConnection then playerChildAddedConnection:Disconnect(); playerChildAddedConnection = nil end
         setCharacterTransition(false)
         restoreWorldRoots()
         setHiddenMaps(false)
