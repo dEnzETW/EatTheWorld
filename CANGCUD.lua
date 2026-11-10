@@ -23,9 +23,18 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local VirtualUser = game:GetService("VirtualUser")
 local Workspace = game:GetService("Workspace")
 local player = Players.LocalPlayer
 if not player then return end
+local afkProtectionEnabled = true
+local afkProtectionConnection = player.Idled:Connect(function()
+    if not afkProtectionEnabled then return end
+    pcall(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new(0, 0))
+    end)
+end)
 local CFG = {
     Farm = false,
     AutoSkipAfterSell = true,
@@ -1131,6 +1140,10 @@ end
 makeToggle("Auto Claim Rewards", 5, Color3.fromRGB(133, 89, 195), false, function(on)
     autoClaimEnabled = on
 end)
+makeToggle("AFK Protection", 6, Color3.fromRGB(35, 150, 112), true, function(on)
+    afkProtectionEnabled = on
+    print("[dEnzCreator] AFK Protection", on and "ON" or "OFF")
+end)
 local minimized = false
 minimize.Activated:Connect(function()
     minimized = not minimized
@@ -1143,6 +1156,8 @@ minimize.Activated:Connect(function()
 end)
 close.Activated:Connect(function()
     running, CFG.Farm = false, false
+    afkProtectionEnabled = false
+    if afkProtectionConnection then afkProtectionConnection:Disconnect(); afkProtectionConnection = nil end
     autoClaimEnabled = false
     lootCoinsCandyEnabled = false
     restoreWorldRoots()
@@ -1240,6 +1255,8 @@ end)
 gui.AncestryChanged:Connect(function(_, parent)
     if parent == nil then
         running, CFG.Farm = false, false
+        afkProtectionEnabled = false
+        if afkProtectionConnection then afkProtectionConnection:Disconnect(); afkProtectionConnection = nil end
         autoClaimEnabled = false
         lootCoinsCandyEnabled = false
         if lootAddedConnection then lootAddedConnection:Disconnect(); lootAddedConnection = nil end
