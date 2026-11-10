@@ -1261,8 +1261,6 @@ gui.AncestryChanged:Connect(function(_, parent)
         lootCoinsCandyEnabled = false
         if lootAddedConnection then lootAddedConnection:Disconnect(); lootAddedConnection = nil end
         if lootRemovingConnection then lootRemovingConnection:Disconnect(); lootRemovingConnection = nil end
-        if timedRewardsCounterConnection then timedRewardsCounterConnection:Disconnect(); timedRewardsCounterConnection = nil end
-        if playerChildAddedConnection then playerChildAddedConnection:Disconnect(); playerChildAddedConnection = nil end
         setCharacterTransition(false)
         restoreWorldRoots()
         setHiddenMaps(false)
