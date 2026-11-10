@@ -880,8 +880,6 @@ local function farmStep()
                     print("[dEnzCreator] Season Time started: first Eat action.")
                 end
                 fire(eatEvent)
-                fire(eatEvent)
-                fire(eatEvent)
                 grabEatPhase = "grab"
                 nextGrabEatActionAt = now + GRAB_DELAY
             end
