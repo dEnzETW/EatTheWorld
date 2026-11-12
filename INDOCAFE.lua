@@ -6,7 +6,7 @@ local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
--- ===================== 白名单系统 =====================
+-- ===================== Whitelist System =====================
 --==================================================
 -- dEnzCreator | REMOTE WHITELIST GATE
 --==================================================
@@ -36,30 +36,24 @@ end
 local Events = ReplicatedStorage:WaitForChild("Events")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
--- 设置配置文件路径
 configPath = LocalPlayer.Name .. "_chi_chi_world_config.json"
--- ===================== 配置管理 =====================
+-- ===================== Configuration Manager =====================
 local config = {
-    -- 自动功能
     autofarm = false,
     autoCollectingCubes = false,
     autoClaimRewards = false,
     farmMoving = false,
     showMap = false,
     autoeat = false,
-    -- 人物功能
     keepUnanchor = false,
     antiFallEnabled = false,
     slippageEliminationEnabled = false,
     gravityLockEnabled = false,
-    -- 其他功能
     platformEnabled = false
 }
--- 保存配置
 local function saveConfig()
     local HttpService = game:GetService("HttpService")
     local configData = HttpService:JSONEncode(config)
-    -- 尝试保存到PlayerGui
     local configFolder = LocalPlayer.PlayerGui:FindFirstChild("ChiChiWorldConfig")
     if not configFolder then
         configFolder = Instance.new("Folder")
@@ -73,12 +67,10 @@ local function saveConfig()
         configFile.Parent = configFolder
     end
     configFile.Value = configData
-    print("[配置管理] 配置已保存")
+    print("[Configuration Manager] Configuration saved")
 end
--- 加载配置
 local function loadConfig()
     local HttpService = game:GetService("HttpService")
-    -- 尝试从PlayerGui加载
     local configFolder = LocalPlayer.PlayerGui:FindFirstChild("ChiChiWorldConfig")
     if configFolder then
         local configFile = configFolder:FindFirstChild(configPath)
@@ -87,39 +79,32 @@ local function loadConfig()
                 return HttpService:JSONDecode(configFile.Value)
             end)
             if success and configData then
-                -- 更新配置
                 for key, value in pairs(configData) do
                     if config[key] ~= nil then
                         config[key] = value
                     end
                 end
-                print("[配置管理] 配置已加载")
+                print("[Configuration Manager] Configuration loaded")
                 return true
             end
         end
     end
-    print("[配置管理] 未找到配置文件，使用默认配置")
+    print("[Configuration Manager] Config file not found; using defaults")
     return false
 end
--- 自动保存配置（当设置改变时）
 local function autoSaveConfig()
     saveConfig()
 end
--- 加载配置
 loadConfig()
--- ===================== 本地化UI库实现 =====================
 local UI = {}
 UI.__index = UI
--- 创建主窗口
 function UI:NewWindow(title)
     local self = setmetatable({}, UI)
-    -- 主容器
     self.MainGui = Instance.new("ScreenGui")
     self.MainGui.Name = "ChiChiWorldUI"
     self.MainGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     self.MainGui.ResetOnSpawn = false
     self.MainGui.Parent = syn and CoreGui or PlayerGui
-    -- 主窗口框架
     self.Window = Instance.new("Frame")
     self.Window.Name = "MainWindow"
     self.Window.Size = UDim2.new(0, 150, 0, 150)
@@ -128,17 +113,14 @@ function UI:NewWindow(title)
     self.Window.BorderSizePixel = 0
     self.Window.ClipsDescendants = true
     self.Window.Parent = self.MainGui
-    -- 窗口圆角
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 8)
     corner.Parent = self.Window
-    -- 标题栏
     self.TitleBar = Instance.new("Frame")
     self.TitleBar.Name = "TitleBar"
     self.TitleBar.Size = UDim2.new(1, 0, 0, 40)
     self.TitleBar.BackgroundColor3 = Color3.fromRGB(36, 36, 42)
     self.TitleBar.Parent = self.Window
-    -- 标题文字
     self.TitleText = Instance.new("TextLabel")
     self.TitleText.Name = "TitleText"
     self.TitleText.Size = UDim2.new(1, -40, 1, 0)
@@ -150,7 +132,6 @@ function UI:NewWindow(title)
     self.TitleText.TextColor3 = Color3.fromRGB(255, 255, 255)
     self.TitleText.TextXAlignment = Enum.TextXAlignment.Left
     self.TitleText.Parent = self.TitleBar
-    -- 收起按钮
     self.CollapseBtn = Instance.new("TextButton")
     self.CollapseBtn.Name = "CollapseBtn"
     self.CollapseBtn.Size = UDim2.new(0, 40, 1, 0)
@@ -161,7 +142,6 @@ function UI:NewWindow(title)
     self.CollapseBtn.TextSize = 20
     self.CollapseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     self.CollapseBtn.Parent = self.TitleBar
-    -- 内容容器
     self.ContentContainer = Instance.new("Frame")
     self.ContentContainer.Name = "ContentContainer"
     self.ContentContainer.Size = UDim2.new(1, 0, 1, -40)
@@ -169,25 +149,20 @@ function UI:NewWindow(title)
     self.ContentContainer.BackgroundTransparency = 1
     self.ContentContainer.ClipsDescendants = false
     self.ContentContainer.Parent = self.Window
-    -- 菜单容器
     self.MenuContainer = Instance.new("Frame")
     self.MenuContainer.Size = UDim2.new(1, 0, 1, 0)
     self.MenuContainer.BackgroundTransparency = 1
     self.MenuContainer.ClipsDescendants = false
     self.MenuContainer.Parent = self.ContentContainer
-    -- 窗口拖拽功能
     self:MakeDraggable()
-    -- 收起/展开功能
     self.IsCollapsed = false
     self.CollapseBtn.MouseButton1Click:Connect(function()
         self:ToggleCollapse()
     end)
-    -- 存储所有子菜单
     self.Sections = {}
     self.CurrentY = 0
     return self
 end
--- 窗口拖拽
 function UI:MakeDraggable()
     local dragging = false
     local dragStart = Vector2.new()
@@ -218,12 +193,9 @@ function UI:MakeDraggable()
         end
     end)
 end
--- 收起/展开窗口
 function UI:ToggleCollapse()
     self.IsCollapsed = not self.IsCollapsed
     if self.IsCollapsed then
-        -- 收起
-        -- 同步收起所有展开的子菜单
         for _, section in ipairs(self.Sections) do
             if section.IsExpanded then
                 section.IsExpanded = false
@@ -231,7 +203,6 @@ function UI:ToggleCollapse()
                 TweenService:Create(section.Content, TweenInfo.new(0.2), {
                     Size = UDim2.new(1, 0, 0, 0)
                 }):Play()
-                -- 更新主容器高度
                 self.CurrentY = self.CurrentY - section.ContentY
             end
         end
@@ -241,29 +212,21 @@ function UI:ToggleCollapse()
         self.CollapseBtn.Text = "+"
         self.ContentContainer.Visible = false
     else
-        -- 展开
-        -- 重新计算CurrentY和所有子菜单的位置
         self.CurrentY = 0
         local currentOffset = 0
         for _, section in ipairs(self.Sections) do
-            -- 设置子菜单的位置
             section.Frame.Position = UDim2.new(0, 0, 0, currentOffset)
             section.Content.Position = UDim2.new(0, 0, 0, currentOffset + 50)
-            -- 更新当前偏移量和CurrentY
             currentOffset = currentOffset + 50
             self.CurrentY = self.CurrentY + 50
         end
-        -- 计算正确的窗口高度，与子菜单展开/收起时的逻辑一致
-        local newHeight = math.max(150, 40 + self.CurrentY + 20) -- 40 是标题栏高度，20 是底部边距
+        local newHeight = math.max(150, 40 + self.CurrentY + 20) -- 40 is the title bar height; 20 is the bottom margin
         TweenService:Create(self.Window, TweenInfo.new(0.2), {
             Size = UDim2.new(0, 150, 0, newHeight)
         }):Play()
         self.CollapseBtn.Text = "-"
-        -- 确保MenuContainer大小正确
         self.MenuContainer.Size = UDim2.new(1, 0, 1, 0)
-        -- 恢复ContentContainer的相对大小
         self.ContentContainer.Size = UDim2.new(1, 0, 1, -40)
-        -- 确保所有子菜单都可见
         for _, section in ipairs(self.Sections) do
             section.Frame.Visible = true
             section.Content.Visible = true
@@ -272,7 +235,6 @@ function UI:ToggleCollapse()
         self.ContentContainer.Visible = true
     end
 end
--- 创建子菜单
 function UI:NewSection(title)
     local section = {}
     section.Title = title
@@ -281,11 +243,9 @@ function UI:NewSection(title)
     section.Frame.Position = UDim2.new(0, 0, 0, self.CurrentY)
     section.Frame.BackgroundColor3 = Color3.fromRGB(36, 36, 42)
     section.Frame.Parent = self.MenuContainer
-    -- 子菜单圆角
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 6)
     corner.Parent = section.Frame
-    -- 子菜单标题
     section.TitleText = Instance.new("TextLabel")
     section.TitleText.Size = UDim2.new(1, -40, 1, 0)
     section.TitleText.Position = UDim2.new(0, 10, 0, 0)
@@ -296,7 +256,6 @@ function UI:NewSection(title)
     section.TitleText.TextColor3 = Color3.fromRGB(255, 255, 255)
     section.TitleText.TextXAlignment = Enum.TextXAlignment.Left
     section.TitleText.Parent = section.Frame
-    -- 展开/收起按钮
     section.ToggleBtn = Instance.new("TextButton")
     section.ToggleBtn.Size = UDim2.new(0, 40, 1, 0)
     section.ToggleBtn.Position = UDim2.new(1, -40, 0, 0)
@@ -306,80 +265,60 @@ function UI:NewSection(title)
     section.ToggleBtn.TextSize = 18
     section.ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     section.ToggleBtn.Parent = section.Frame
-    -- 功能按钮容器
     section.Content = Instance.new("Frame")
     section.Content.Size = UDim2.new(1, 0, 0, 0)
     section.Content.Position = UDim2.new(0, 0, 0, self.CurrentY + 50)
     section.Content.BackgroundTransparency = 1
     section.Content.ClipsDescendants = true
     section.Content.Parent = self.MenuContainer
-    -- 状态
     section.IsExpanded = false
     section.Buttons = {}
     section.ContentY = 0
-    -- 更新菜单容器高度
     self.CurrentY = self.CurrentY + 50
     self.MenuContainer.Size = UDim2.new(1, 0, 0, self.CurrentY)
-    -- 确保子菜单可见
     section.Frame.Visible = true
     section.Content.Visible = true
-    -- 更新主窗口高度以跟随子菜单大小
-    local newHeight = math.max(150, 40 + self.CurrentY + 20) -- 40 是标题栏高度，20 是底部边距
+    local newHeight = math.max(150, 40 + self.CurrentY + 20) -- 40 is the title bar height; 20 is the bottom margin
     TweenService:Create(self.Window, TweenInfo.new(0.2), {
         Size = UDim2.new(0, 150, 0, newHeight)
     }):Play()
-    -- 更新内容容器大小
     self.ContentContainer.Size = UDim2.new(1, 0, 1, -40)
-    -- 子菜单展开/收起
     section.ToggleBtn.MouseButton1Click:Connect(function()
         section.IsExpanded = not section.IsExpanded
         if section.IsExpanded then
-            -- 展开
             section.ToggleBtn.Text = "-"
             TweenService:Create(section.Content, TweenInfo.new(0.2), {
                 Size = UDim2.new(1, 0, 0, section.ContentY)
             }):Play()
-            -- 更新主容器高度
             self.CurrentY = self.CurrentY + section.ContentY
         else
-            -- 收起
             section.ToggleBtn.Text = "+"
             TweenService:Create(section.Content, TweenInfo.new(0.2), {
                 Size = UDim2.new(1, 0, 0, 0)
             }):Play()
-            -- 更新主容器高度
             self.CurrentY = self.CurrentY - section.ContentY
         end
-        -- 重新计算所有子菜单的位置
         local currentOffset = 0
         for i, sec in ipairs(self.Sections) do
-            -- 设置子菜单的位置
             sec.Frame.Position = UDim2.new(0, 0, 0, currentOffset)
             sec.Content.Position = UDim2.new(0, 0, 0, currentOffset + 50)
-            -- 更新当前偏移量
             currentOffset = currentOffset + 50
             if sec.IsExpanded then
                 currentOffset = currentOffset + sec.ContentY
             end
         end
-        -- 保持MenuContainer大小不变，确保所有子菜单都能显示
         self.MenuContainer.Size = UDim2.new(1, 0, 1, 0)
-        -- 更新主窗口高度以跟随子菜单大小
-        local newHeight = math.max(150, 40 + self.CurrentY + 20) -- 40 是标题栏高度，20 是底部边距
+        local newHeight = math.max(150, 40 + self.CurrentY + 20) -- 40 is the title bar height; 20 is the bottom margin
         TweenService:Create(self.Window, TweenInfo.new(0.2), {
             Size = UDim2.new(0, 150, 0, newHeight)
         }):Play()
-        -- 确保内容容器大小正确
         self.ContentContainer.Size = UDim2.new(1, 0, 1, -40)
-        -- 确保所有子菜单都可见
         for _, sec in ipairs(self.Sections) do
             sec.Frame.Visible = true
             sec.Content.Visible = true
         end
     end)
-    -- 创建开关按钮
     function section:CreateToggle(text, callback)
-        -- 计算按钮位置
         local isEven = #section.Buttons % 2 == 0
         local btnSize = UDim2.new(0.50, 0, 0, 35)
         local btnPosition
@@ -395,11 +334,9 @@ function UI:NewSection(title)
         btn.BackgroundColor3 = Color3.fromRGB(44, 44, 50)
         btn.BackgroundTransparency = 0
         btn.Parent = section.Content
-        -- 按钮圆角
         local corner = Instance.new("UICorner")
         corner.CornerRadius = UDim.new(0, 4)
         corner.Parent = btn
-        -- 按钮文字
         local btnText = Instance.new("TextLabel")
         btnText.Size = UDim2.new(1, 0, 1, 0)
         btnText.Position = UDim2.new(0, 0, 0, 0)
@@ -410,15 +347,12 @@ function UI:NewSection(title)
         btnText.TextColor3 = Color3.fromRGB(255, 255, 255)
         btnText.TextXAlignment = Enum.TextXAlignment.Center
         btnText.Parent = btn
-        -- 开关状态
         local toggleState = false
-        -- 按钮点击事件
         btn.MouseButton1Click:Connect(function()
             toggleState = not toggleState
             btn.BackgroundColor3 = toggleState and Color3.fromRGB(60, 180, 60) or Color3.fromRGB(44, 44, 50)
             callback(toggleState)
         end)
-        -- 按钮悬停效果
         btn.MouseEnter:Connect(function()
             TweenService:Create(btn, TweenInfo.new(0.1), {
                 BackgroundColor3 = toggleState and Color3.fromRGB(70, 190, 70) or Color3.fromRGB(54, 54, 60)
@@ -429,16 +363,13 @@ function UI:NewSection(title)
                 BackgroundColor3 = toggleState and Color3.fromRGB(60, 180, 60) or Color3.fromRGB(44, 44, 50)
             }):Play()
         end)
-        -- 更新容器高度
         if not isEven then
             section.ContentY = section.ContentY + 35
         end
         table.insert(section.Buttons, btn)
         return btn
     end
-    -- 创建普通按钮
     function section:CreateButton(text, callback)
-        -- 计算按钮位置
         local isEven = #section.Buttons % 2 == 0
         local btnSize = UDim2.new(0.50, 0, 0, 35)
         local btnPosition
@@ -455,11 +386,9 @@ function UI:NewSection(title)
         btn.BackgroundTransparency = 0
         btn.Text = ""
         btn.Parent = section.Content
-        -- 按钮圆角
         local corner = Instance.new("UICorner")
         corner.CornerRadius = UDim.new(0, 4)
         corner.Parent = btn
-        -- 按钮文字
         local btnText = Instance.new("TextLabel")
         btnText.Size = UDim2.new(1, 0, 1, 0)
         btnText.Position = UDim2.new(0, 0, 0, 0)
@@ -470,11 +399,9 @@ function UI:NewSection(title)
         btnText.TextColor3 = Color3.fromRGB(255, 255, 255)
         btnText.TextXAlignment = Enum.TextXAlignment.Center
         btnText.Parent = btn
-        -- 按钮点击事件
         btn.MouseButton1Click:Connect(function()
             callback()
         end)
-        -- 按钮悬停效果
         btn.MouseEnter:Connect(function()
             TweenService:Create(btn, TweenInfo.new(0.1), {
                 BackgroundColor3 = Color3.fromRGB(54, 54, 60)
@@ -485,7 +412,6 @@ function UI:NewSection(title)
                 BackgroundColor3 = Color3.fromRGB(44, 44, 50)
             }):Play()
         end)
-        -- 更新容器高度
         if not isEven then
             section.ContentY = section.ContentY + 35
         end
@@ -495,7 +421,6 @@ function UI:NewSection(title)
     table.insert(self.Sections, section)
     return section
 end
--- 消息提示函数
 function UI:Message(Title, Text, Time)
     local notification = Instance.new("ScreenGui")
     notification.Name = "Notification_" .. math.random(1000, 9999)
@@ -526,11 +451,9 @@ function UI:Message(Title, Text, Time)
     text.TextColor3 = Color3.fromRGB(200, 200, 200)
     text.TextWrapped = true
     text.Parent = frame
-    -- 淡入动画
     TweenService:Create(frame, TweenInfo.new(0.2), {
         Transparency = 0
     }):Play()
-    -- 自动关闭
     task.delay(Time or 3, function()
         TweenService:Create(frame, TweenInfo.new(0.3), {
             Transparency = 1
@@ -539,7 +462,6 @@ function UI:Message(Title, Text, Time)
         notification:Destroy()
     end)
 end
--- ===================== 核心功能变量 =====================
 local autofarm = config.autofarm
 local autoCollectingCubes = config.autoCollectingCubes
 local autoClaimRewards = config.autoClaimRewards
@@ -552,47 +474,37 @@ local SpeedUI = nil
 local farmMoving = config.farmMoving
 local showMap = config.showMap
 local autoeat = config.autoeat
--- 打滑消除相关变量
 local slippageEliminationEnabled = config.slippageEliminationEnabled
 local slippageConnection = nil
 local currentVelocity = Vector3.new(0, 0, 0)
 local ACCELERATION = 0.2
 local DECELERATION = 0.15
--- 重力锁定相关变量
 local gravityLockEnabled = config.gravityLockEnabled
 local gravityLockConnection = nil
--- 传送砸人相关变量
 local teleportThrowUI = nil
--- 传送抓人相关变量
 local teleportGrabUI = nil
--- 持续抓取相关变量
 local continuousGrabEnabled = false
 local continuousGrabUI = nil
 local continuousGrabConnection = nil
--- 布娃娃相关变量
 local ragdolled = false
 local createdAttachments = {}
 local createdConstraints = {}
 local disabledMotors = {}
 local ragdollGUI = nil
--- 透视相关变量
 local espEnabled = false
 local espConnections = {}
 local playerInfos = {}
 local espUI = nil
 local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 character:WaitForChild("HumanoidRootPart")
--- 监听角色重生事件
 LocalPlayer.CharacterAdded:Connect(function(newCharacter)
     character = newCharacter
     character:WaitForChild("HumanoidRootPart")
 end)
--- ===================== 工具函数 =====================
 local function Message(Title, Text, Time)
     if mainUI then
         mainUI:Message(Title, Text, Time)
     else
-        -- 当mainUI未初始化时使用Roblox默认通知系统
         game:GetService("StarterGui"):SetCore("SendNotification", {
             Title = Title,
             Text = Text,
@@ -608,20 +520,16 @@ local function getRespawnPosition()
         return Vector3.new(0, 40, 0), 0
     end
 end
--- ===================== 自定义动作功能 =====================
 local function loadCustomEmotes()
-    -- 显示加载通知
     game:GetService("StarterGui"):SetCore("SendNotification", {
         Title = "Wait!",
         Text = "Please Wait, it just loading the button",
         Duration = 15
     })
-    -- 清理旧的Emotes GUI
     if game:GetService("CoreGui"):FindFirstChild("Emotes") then
         game:GetService("CoreGui"):FindFirstChild("Emotes"):Destroy()
     end
     wait(1)
-    -- 服务初始化
     local ContextActionService = game:GetService("ContextActionService")
     local HttpService = game:GetService("HttpService")
     local GuiService = game:GetService("GuiService")
@@ -630,18 +538,15 @@ local function loadCustomEmotes()
     local Players = game:GetService("Players")
     local StarterGui = game:GetService("StarterGui")
     local UserInputService = game:GetService("UserInputService")
-    -- 变量初始化
     local LoadedEmotes, Emotes = {}, {}
     local FavoriteOff = "rbxassetid://10651060677"
     local FavoriteOn = "rbxassetid://10651061109"
     local FavoritedEmotes = {}
-    -- 创建主GUI
     local ScreenGui = Instance.new("ScreenGui")
     ScreenGui.Name = "Emotes"
     ScreenGui.DisplayOrder = 2
     ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     ScreenGui.Enabled = true
-    -- 创建背景框架
     local BackFrame = Instance.new("Frame")
     BackFrame.Size = UDim2.new(0.9, 0, 0.5, 0)
     BackFrame.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -650,7 +555,6 @@ local function loadCustomEmotes()
     BackFrame.BackgroundTransparency = 1
     BackFrame.BorderSizePixel = 0
     BackFrame.Parent = ScreenGui
-    -- 创建打开/关闭按钮
     local Open = Instance.new("TextButton")
     Open.Name = "Open"
     Open.Parent = ScreenGui
@@ -664,12 +568,10 @@ local function loadCustomEmotes()
     Open.TextSize = 20
     Open.Visible = true
     Open.BackgroundTransparency = 0.5
-    -- 添加圆角
     local UICorner = Instance.new("UICorner")
     UICorner.Name = "UICorner"
     UICorner.Parent = Open
     UICorner.CornerRadius = UDim.new(1, 0)
-    -- 打开/关闭按钮功能
     Open.MouseButton1Up:Connect(function()
         if Open.Text == "Open" then
             Open.Text = "Close"
@@ -679,7 +581,6 @@ local function loadCustomEmotes()
             BackFrame.Visible = false
         end
     end)
-    -- 创建动作名称显示
     local EmoteName = Instance.new("TextLabel")
     EmoteName.Name = "EmoteName"
     EmoteName.TextScaled = true
@@ -691,10 +592,8 @@ local function loadCustomEmotes()
     EmoteName.TextColor3 = Color3.new(1, 1, 1)
     EmoteName.BorderSizePixel = 0
     EmoteName.Parent = BackFrame
-    -- 添加圆角
     local Corner = Instance.new("UICorner")
     Corner.Parent = EmoteName
-    -- 创建加载提示
     local Loading = Instance.new("TextLabel", BackFrame)
     Loading.AnchorPoint = Vector2.new(0.5, 0.5)
     Loading.Text = "Loading.."
@@ -705,7 +604,6 @@ local function loadCustomEmotes()
     Loading.Size = UDim2.fromScale(0.2, 0.1)
     Loading.Position = UDim2.fromScale(0.5, 0.2)
     Corner:Clone().Parent = Loading
-    -- 创建滚动框架
     local Frame = Instance.new("ScrollingFrame")
     Frame.Size = UDim2.new(1, 0, 1, 0)
     Frame.CanvasSize = UDim2.new(0, 0, 0, 0)
@@ -717,17 +615,14 @@ local function loadCustomEmotes()
     Frame.ScrollBarThickness = 5
     Frame.BorderSizePixel = 0
     Frame.Parent = BackFrame
-    -- 鼠标离开时重置动作名称
     Frame.MouseLeave:Connect(function()
         EmoteName.Text = "Select an Emote"
     end)
-    -- 创建网格布局
     local Grid = Instance.new("UIGridLayout")
     Grid.CellSize = UDim2.new(0.105, 0, 0, 0)
     Grid.CellPadding = UDim2.new(0.006, 0, 0.006, 0)
     Grid.SortOrder = Enum.SortOrder.LayoutOrder
     Grid.Parent = Frame
-    -- 创建收藏框架
     local FavoritesFrame = Instance.new("Frame")
     FavoritesFrame.Visible = false
     FavoritesFrame.BorderSizePixel = 0
@@ -737,19 +632,16 @@ local function loadCustomEmotes()
     FavoritesFrame.BackgroundTransparency = 1
     Corner:Clone().Parent = FavoritesFrame
     FavoritesFrame.Parent = BackFrame
-    -- 创建收藏列表
     local FavoritesList = Instance.new("UIListLayout")
     FavoritesList.Padding = UDim.new(0.02, 0)
     FavoritesList.HorizontalAlignment = Enum.HorizontalAlignment.Center
     FavoritesList.VerticalAlignment = Enum.VerticalAlignment.Top
     FavoritesList.SortOrder = Enum.SortOrder.LayoutOrder
     FavoritesList.Parent = FavoritesFrame
-    -- 显示/隐藏收藏的动作
     local function ToggleFavorites()
         local showFavorites = not FavoritesFrame.Visible
         FavoritesFrame.Visible = showFavorites
         Open.Text = "Open"
-        -- 过滤动作按钮
         for _, button in pairs(Frame:GetChildren()) do
             if button:IsA("ImageButton") and button.Name ~= "Random" then
                 local emoteId = tonumber(button.Name)
@@ -758,7 +650,6 @@ local function loadCustomEmotes()
             end
         end
     end
-    -- 创建收藏按钮
     local FavoritesButton = Instance.new("TextButton")
     FavoritesButton.BorderSizePixel = 0
     FavoritesButton.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -768,12 +659,10 @@ local function loadCustomEmotes()
     FavoritesButton.TextColor3 = Color3.new(1, 1, 1)
     FavoritesButton.BackgroundColor3 = Color3.new(0, 0, 0)
     FavoritesButton.BackgroundTransparency = 0.3
-    FavoritesButton.Text = "收藏"
+    FavoritesButton.Text = "Favorites"
     FavoritesButton.Parent = BackFrame
     Corner:Clone().Parent = FavoritesButton
-    -- 收藏按钮功能
     FavoritesButton.MouseButton1Click:Connect(ToggleFavorites)
-    -- 创建关闭按钮
     local CloseButton = Instance.new("TextButton")
     CloseButton.BorderSizePixel = 0
     CloseButton.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -783,14 +672,12 @@ local function loadCustomEmotes()
     CloseButton.TextColor3 = Color3.new(1, 1, 1)
     CloseButton.BackgroundColor3 = Color3.new(0.5, 0, 0)
     CloseButton.BackgroundTransparency = 0.3
-    CloseButton.Text = "关闭"
+    CloseButton.Text = "Close"
     CloseButton.Parent = BackFrame
     Corner:Clone().Parent = CloseButton
-    -- 关闭按钮功能
     CloseButton.MouseButton1Click:Connect(function()
         ScreenGui:Destroy()
     end)
-    -- 创建搜索栏
     local SearchBar = Instance.new("TextBox")
     SearchBar.BorderSizePixel = 0
     SearchBar.AnchorPoint = Vector2.new(0.5, 0.5)
@@ -803,16 +690,13 @@ local function loadCustomEmotes()
     SearchBar.BackgroundTransparency = 0.3
     SearchBar.Parent = BackFrame
     Corner:Clone().Parent = SearchBar
-    -- 搜索功能
     SearchBar:GetPropertyChangedSignal("Text"):Connect(function()
         local text = SearchBar.Text:lower()
         local buttons = Frame:GetChildren()
-        -- 限制搜索文本长度
         if text ~= text:sub(1, 50) then
             SearchBar.Text = SearchBar.Text:sub(1, 50)
             text = SearchBar.Text:lower()
         end
-        -- 过滤动作按钮
         for _, button in pairs(buttons) do
             if button:IsA("GuiButton") then
                 local name = button:GetAttribute("name")
@@ -826,14 +710,12 @@ local function loadCustomEmotes()
             end
         end
     end)
-    -- 打开动作菜单的函数
     local function openEmotesMenu(name, state, input)
         if state == Enum.UserInputState.Begin then
             BackFrame.Visible = not BackFrame.Visible
-            Open.Text = "打开"
+            Open.Text = "Open"
         end
     end
-    -- 绑定逗号键打开菜单
     ContextActionService:BindCoreActionAtPriority(
         "Emote Menu",
         openEmotesMenu,
@@ -841,7 +723,6 @@ local function loadCustomEmotes()
         2001,
         Enum.KeyCode.Comma
     )
-    -- 处理输入
     local inputConnect
     ScreenGui:GetPropertyChangedSignal("Enabled"):Connect(function()
         if BackFrame.Visible == false then
@@ -860,23 +741,19 @@ local function loadCustomEmotes()
             end
         end
     end)
-    -- 处理系统表情菜单打开
     GuiService.EmotesMenuOpenChanged:Connect(function(isOpen)
         if isOpen then
             BackFrame.Visible = false
             Open.Text = "Open"
         end
     end)
-    -- 处理系统菜单打开
     GuiService.MenuOpened:Connect(function()
         BackFrame.Visible = false
         Open.Text = "Open"
     end)
-    -- 等待游戏加载完成
     if not game:IsLoaded() then
         game.Loaded:Wait()
     end
-    -- 处理不同的执行环境
     local SynV3 = syn and DrawingImmediate
     if (not is_sirhurt_closure) and (not SynV3) and (syn and syn.protect_gui) then
         syn.protect_gui(ScreenGui)
@@ -887,7 +764,6 @@ local function loadCustomEmotes()
     else
         ScreenGui.Parent = CoreGui
     end
-    -- 发送通知函数
     local function SendNotification(title, text)
         if syn and syn.toast_notification then
             syn.toast_notification({
@@ -903,7 +779,6 @@ local function loadCustomEmotes()
         end
     end
     local LocalPlayer = Players.LocalPlayer
-    -- 播放动作函数
     local function PlayEmote(name, id)
         BackFrame.Visible = false
         Open.Text = "Open"
@@ -933,7 +808,6 @@ local function loadCustomEmotes()
             SendNotification("r6? lol", "you gotta be r15 dude")
         end
     end
-    -- 等待子对象加载
     local function WaitForChildOfClass(parent, class)
         local child = parent:FindFirstChildOfClass(class)
         while not child or child.ClassName ~= class do
@@ -941,7 +815,6 @@ local function loadCustomEmotes()
         end
         return child
     end
-    -- 添加动作函数
     local function addEmote(name, id, price, date)
         local months = {
             Jan = 1, Feb = 2, Mar = 3, Apr = 4, May = 5, Jun = 6,
@@ -968,7 +841,6 @@ local function loadCustomEmotes()
             sort = {}
         })
     end
-    -- 添加动作
 addEmote("PARROT PARTY DANCE", 121067808279598, 39, "Aug 08, 2025")
 addEmote("stretch-like-this", 126017588998166, 39, "Aug 08, 2025")
 addEmote("High-Bird-Flight-SMOOTH-READ-DESC", 106894076202843, 39, "Aug 08, 2025")
@@ -1775,7 +1647,6 @@ addEmote("Laying-Down-Splits-Pose", 119973148778428, 39, "Aug 08, 2025")
 addEmote("Headless-Aura-fly-pose-idle", 89463618231199, 39, "Aug 08, 2025")
 addEmote("Halloween-Ghost-Float", 82736455463728, 39, "Aug 08, 2025")
 addEmote("Dab-Classic", 10293847566547, 39, "Aug 08, 2025")
-    -- 等待动作加载完成
     local function EmotesLoaded()
         for _, loaded in pairs(LoadedEmotes) do
             if not loaded then
@@ -1787,13 +1658,10 @@ addEmote("Dab-Classic", 10293847566547, 39, "Aug 08, 2025")
     while not EmotesLoaded() do
         task.wait()
     end
-    -- 移除加载提示
     Loading:Destroy()
-    -- 按名称排序动作
     table.sort(Emotes, function(a, b)
         return a.name:lower() < b.name:lower()
     end)
-    -- 加载收藏的动作
     if isfile("FavoritedEmotes.txt") then
         local success, data = pcall(function()
             return HttpService:JSONDecode(readfile("FavoritedEmotes.txt"))
@@ -1806,13 +1674,11 @@ addEmote("Dab-Classic", 10293847566547, 39, "Aug 08, 2025")
     else
         writefile("FavoritedEmotes.txt", HttpService:JSONEncode(FavoritedEmotes))
     end
-    -- 更新收藏的动作
     local UpdatedFavorites = {}
     for _, id in pairs(FavoritedEmotes) do
         if typeof(id) == "number" then
             table.insert(UpdatedFavorites, id)
         elseif typeof(id) == "string" then
-            -- 兼容旧格式
             for _, emote in pairs(Emotes) do
                 if emote.name == id then
                     table.insert(UpdatedFavorites, emote.id)
@@ -1825,9 +1691,7 @@ addEmote("Dab-Classic", 10293847566547, 39, "Aug 08, 2025")
         FavoritedEmotes = UpdatedFavorites
         writefile("FavoritedEmotes.txt", HttpService:JSONEncode(FavoritedEmotes))
     end
-    -- 角色加载时创建动作按钮
     local function CharacterAdded(Character)
-        -- 清理旧按钮
         for _, v in pairs(Frame:GetChildren()) do
             if not v:IsA("UIGridLayout") then
                 v:Destroy()
@@ -1835,7 +1699,6 @@ addEmote("Dab-Classic", 10293847566547, 39, "Aug 08, 2025")
         end
         local Humanoid = WaitForChildOfClass(Character, "Humanoid")
         local Description = Humanoid:WaitForChild("HumanoidDescription", 5) or Instance.new("HumanoidDescription", Humanoid)
-        -- 创建随机动作按钮
         local randomButton = Instance.new("TextButton")
         local ratio = Instance.new("UIAspectRatioConstraint")
         ratio.AspectType = Enum.AspectType.ScaleWithParentSize
@@ -1859,7 +1722,6 @@ addEmote("Dab-Classic", 10293847566547, 39, "Aug 08, 2025")
             EmoteName.Text = "Random"
         end)
         randomButton.Parent = Frame
-        -- 创建动作按钮
         for i, Emote in pairs(Emotes) do
             pcall(function()
                 Description:AddEmote(Emote.name, Emote.id)
@@ -1875,7 +1737,6 @@ addEmote("Dab-Classic", 10293847566547, 39, "Aug 08, 2025")
             EmoteButton.BackgroundColor3 = Color3.new(0, 0, 0)
             EmoteButton.BorderSizePixel = 0
             ratio:Clone().Parent = EmoteButton
-            -- 创建动作编号
             local EmoteNumber = Instance.new("TextLabel")
             EmoteNumber.Name = "number"
             EmoteNumber.TextScaled = true
@@ -1893,15 +1754,12 @@ addEmote("Dab-Classic", 10293847566547, 39, "Aug 08, 2025")
             UIStroke.Parent = EmoteNumber
             EmoteNumber.Parent = EmoteButton
             EmoteButton.Parent = Frame
-            -- 播放动作
             EmoteButton.MouseButton1Click:Connect(function()
                 PlayEmote(Emote.name, Emote.id)
             end)
-            -- 显示动作名称
             EmoteButton.MouseEnter:Connect(function()
                 EmoteName.Text = Emote.name
             end)
-            -- 创建收藏按钮
             local Favorite = Instance.new("ImageButton")
             Favorite.Name = "favorite"
             Favorite.Image = IsFavorited and FavoriteOn or FavoriteOff
@@ -1911,7 +1769,6 @@ addEmote("Dab-Classic", 10293847566547, 39, "Aug 08, 2025")
             Favorite.BorderSizePixel = 0
             Favorite.BackgroundTransparency = 1
             Favorite.Parent = EmoteButton
-            -- 收藏功能
             Favorite.MouseButton1Click:Connect(function()
                 local index = table.find(FavoritedEmotes, Emote.id)
                 if index then
@@ -1923,17 +1780,14 @@ addEmote("Dab-Classic", 10293847566547, 39, "Aug 08, 2025")
                     Favorite.Image = FavoriteOn
                     EmoteButton.LayoutOrder = i
                 end
-                -- 保存收藏
                 pcall(function()
                     writefile("FavoritedEmotes.txt", HttpService:JSONEncode(FavoritedEmotes))
                 end)
-                -- 如果当前显示的是收藏列表，更新显示
                 if FavoritesFrame.Visible then
                     EmoteButton.Visible = table.find(FavoritedEmotes, Emote.id) ~= nil
                 end
             end)
         end
-        -- 添加填充按钮
         for i = 1, 9 do
             local filler = Instance.new("Frame")
             filler.LayoutOrder = 2147483647
@@ -1948,29 +1802,23 @@ addEmote("Dab-Classic", 10293847566547, 39, "Aug 08, 2025")
             end)
         end
     end
-    -- 处理角色加载
     if LocalPlayer.Character then
         CharacterAdded(LocalPlayer.Character)
     end
     LocalPlayer.CharacterAdded:Connect(CharacterAdded)
     wait(1)
-    -- 启用Emotes GUI
     if game.CoreGui:FindFirstChild("Emotes") then
         game.CoreGui.Emotes.Enabled = true
     end
-    -- 显示完成通知
     game:GetService("StarterGui"):SetCore("SendNotification", {
         Title = "Done!",
         Text = "Emotes gui is here!",
         Duration = 10
     })
-    -- 清理ContextActionGui
     pcall(function()
         game.Players.LocalPlayer.PlayerGui.ContextActionGui:Destroy()
     end)
 end
--- ===================== 功能实现 =====================
--- 防踢
 do
     LocalPlayer.Idled:Connect(function()
         VirtualUser:CaptureController()
@@ -1978,7 +1826,6 @@ do
         task.wait(2)
     end)
 end
--- 掉落拉回
 local function startAntiFall(character)
     if antiFallConnection and antiFallConnection.Connected then
         antiFallConnection:Disconnect()
@@ -2003,7 +1850,7 @@ local function stopAntiFall()
         antiFallConnection = nil
     end
 end
--- 速度修改
+-- Speed Settings
 local function CreateSpeedUI()
     if SpeedUI then
         SpeedUI:Destroy()
@@ -2038,14 +1885,14 @@ local function CreateSpeedUI()
     TitleText.Size = UDim2.new(1, -40, 1, 0)
     TitleText.Position = UDim2.new(0, 10, 0, 0)
     TitleText.BackgroundTransparency = 1
-    TitleText.Text = "速度修改"
+    TitleText.Text = "Speed Settings"
     TitleText.Font = Enum.Font.SourceSansBold
     TitleText.TextSize = 18
     TitleText.TextColor3 = Color3.fromRGB(255, 255, 255)
     TitleText.TextXAlignment = Enum.TextXAlignment.Left
     TitleText.Parent = TitleBar
     local CloseBtn = Instance.new("TextButton")
-    CloseBtn.Text = "×"
+    CloseBtn.Text = "Ã—"
     CloseBtn.TextSize = 20
     CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     CloseBtn.BackgroundTransparency = 1
@@ -2088,7 +1935,7 @@ local function CreateSpeedUI()
         btn.MouseButton1Click:Connect(function()
             CurrentSpeed = value
             ApplySpeed()
-            Message("速度修改", "已应用速度：" .. CurrentSpeed, 2)
+            Message("Speed Settings", "Speed applied: " .. CurrentSpeed, 2)
             for _, b in ipairs(speedButtons) do
                 b.BackgroundColor3 = Color3.fromRGB(44, 44, 50)
             end
@@ -2148,9 +1995,9 @@ local function ToggleSpeedUI()
         CreateSpeedUI()
     end
     SpeedUI.Enabled = not SpeedUI.Enabled
-    local status = SpeedUI.Enabled and "打开" or "关闭"
+    local status = SpeedUI.Enabled and "Open" or "Close"
 end
--- 取消锚固
+-- Unanchor
 local function cancelAnchored()
     local character = LocalPlayer.Character
     if character then
@@ -2159,21 +2006,19 @@ local function cancelAnchored()
                 part.Anchored = false
             end
         end
-        Message("取消锚固", "已解除角色所有部件锚固", 2)
+        Message("Unanchor", "All character parts have been unanchored", 2)
     else
-        Message("取消锚固", "角色不存在", 3)
+        Message("Unanchor", "Character not found", 3)
     end
 end
--- 查看玩家数据
+-- View Player Data
 local function loadAndRunPlayerDataScript()
-    -- 本地化表
     local localization = {
         MaxSize = "MaxSize",
         Speed = "Speed",
         Multiplier = "Multiplier",
         EatSpeed = "EatSpeed",
     }
-    -- 成长函数
     local function sizeGrowth(level)
         return math.floor(((level + 0.5) ^ 2 - 0.25) / 2 * 100)
     end
@@ -2186,7 +2031,6 @@ local function loadAndRunPlayerDataScript()
     local function eatSpeedGrowth(level)
         return math.floor((1 + (level - 1) * 0.2) * 10) / 10
     end
-    -- 价格函数
     local function sizePrice(level)
         return math.floor(level ^ 3 / 2) * 20
     end
@@ -2199,40 +2043,37 @@ local function loadAndRunPlayerDataScript()
     local function eatSpeedPrice(level)
         return math.floor((level * 10) ^ 3 / 200) * 2000
     end
-    -- 成长函数表
     local growthFunctions = {
         MaxSize = sizeGrowth,
         Speed = speedGrowth,
         Multiplier = multiplierGrowth,
         EatSpeed = eatSpeedGrowth,
     }
-    -- 价格函数表
     local priceFunctions = {
         MaxSize = sizePrice,
         Speed = speedPrice,
         Multiplier = multiplierPrice,
         EatSpeed = eatSpeedPrice,
     }
-    -- 查看玩家数据核心函数
     local function showPlayerData()
         print("=======================================")
         print("Viewing player data")
         print("=======================================")
         for _, player in Players:GetPlayers() do
             print()
-            print("player：" .. player.Name)
+            print("playerï¼š" .. player.Name)
             print("=======================================")
             local hasUpgrades = false
             if player.Upgrades then
                 for _, upg in player.Upgrades:GetChildren() do
                     hasUpgrades = true
-                    local content = "  " .. localization[upg.Name] .. "："
+                    local content = "  " .. localization[upg.Name] .. "ï¼š"
                     local cost = 0
                     for l = 2, upg.Value do
                         cost += priceFunctions[upg.Name](l)
                     end
-                    content = content .. " " .. upg.Value .. "level；"
-                    content = content .. " " .. growthFunctions[upg.Name](upg.Value) .. "value；"
+                    content = content .. " " .. upg.Value .. "levelï¼›"
+                    content = content .. " " .. growthFunctions[upg.Name](upg.Value) .. "valueï¼›"
                     content = content .. " " .. cost .. "cost"
                     print(content)
                 end
@@ -2244,19 +2085,16 @@ local function loadAndRunPlayerDataScript()
         print("=======================================")
         print("Data viewing completed")
         print("=======================================")
-        -- 显示开发者控制台（可选）
         pcall(function()
             game.StarterGui:SetCore("DevConsoleVisible", true)
         end)
     end
-    -- 执行查看玩家数据
     showPlayerData()
-    Message("查看玩家数据", "数据加载成功", 2)
+    Message("View Player Data", "Data loaded successfully", 2)
 end
--- 打滑消除
+-- No Slip
 local function toggleSlippageElimination(enabled)
     if enabled then
-        -- 开启打滑消除
         if slippageConnection then
             slippageConnection:Disconnect()
             slippageConnection = nil
@@ -2269,39 +2107,31 @@ local function toggleSlippageElimination(enabled)
             local humanoid = character:FindFirstChildOfClass("Humanoid")
             local rootPart = character:FindFirstChild("HumanoidRootPart")
             if not humanoid or not rootPart then return end
-            -- 获取玩家输入的移动方向
             local moveDirection = humanoid.MoveDirection
-            -- 直接使用Humanoid当前的WalkSpeed作为最大速度
             local maxSpeed = humanoid.WalkSpeed
-            -- 计算目标速度向量
             local targetVelocity = moveDirection * maxSpeed
-            -- 使用线性插值平滑过渡速度
             if moveDirection.Magnitude > 0 then
-                -- 加速时：向目标速度靠近
                 currentVelocity = currentVelocity:Lerp(targetVelocity, ACCELERATION)
             else
-                -- 减速时：逐渐归零
                 currentVelocity = currentVelocity:Lerp(Vector3.new(0, 0, 0), DECELERATION)
             end
-            -- 应用速度到角色（保留Y轴速度）
             local rootVelocity = rootPart.Velocity
             rootPart.Velocity = Vector3.new(currentVelocity.X, rootVelocity.Y, currentVelocity.Z)
         end)
-        Message("打滑消除", "已开启打滑消除", 2)
+        Message("No Slip", "No Slip enabled", 2)
     else
-        -- 关闭打滑消除
+        -- CloseNo Slip
         slippageEliminationEnabled = false
         if slippageConnection then
             slippageConnection:Disconnect()
             slippageConnection = nil
         end
-        Message("打滑消除", "已关闭打滑消除", 2)
+        Message("No Slip", "No Slip disabled", 2)
     end
 end
--- 重力锁定
+-- Gravity Lock
 local function toggleGravityLock(enabled)
     if enabled then
-        -- 开启重力锁定
         if gravityLockConnection then
             task.cancel(gravityLockConnection)
             gravityLockConnection = nil
@@ -2309,22 +2139,21 @@ local function toggleGravityLock(enabled)
         gravityLockEnabled = true
         gravityLockConnection = task.spawn(function()
             while gravityLockEnabled do
-                workspace.Gravity = 99999999 -- 默认重力
+                workspace.Gravity = 99999999 -- Default gravity
                 task.wait(0.1)
             end
         end)
-        Message("重力锁定", "已开启重力锁定", 2)
+        Message("Gravity Lock", "Gravity Lock enabled", 2)
     else
-        -- 关闭重力锁定
+        -- CloseGravity Lock
         gravityLockEnabled = false
         if gravityLockConnection then
             task.cancel(gravityLockConnection)
             gravityLockConnection = nil
         end
-        Message("重力锁定", "已关闭重力锁定", 2)
+        Message("Gravity Lock", "Gravity Lock disabled", 2)
     end
 end
--- 抓取功能
 local function grabForwardObject()
     local character = LocalPlayer.Character
     if not character then return end
@@ -2334,7 +2163,6 @@ local function grabForwardObject()
     if not grabEvent then return end
     grabEvent:FireServer(false, false, true)
 end
--- 创建持续抓取UI
 local function CreateContinuousGrabUI()
     if continuousGrabUI then
         continuousGrabUI:Destroy()
@@ -2378,7 +2206,7 @@ local function CreateContinuousGrabUI()
     grabButton.Size = UDim2.new(1, 0, 1, 0)
     grabButton.Position = UDim2.new(0, 0, 0, 0)
     grabButton.Font = Enum.Font.SourceSansBold
-    grabButton.Text = "按F抓取"
+    grabButton.Text = "Press F to Grab"
     grabButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     grabButton.TextSize = 18
     grabButton.ZIndex = 2
@@ -2441,7 +2269,7 @@ local function CreateContinuousGrabUI()
     continuousGrabUI = gui
     return gui
 end
--- 持续抓取
+-- Constant Grab
 local function toggleContinuousGrab(enabled)
     if enabled then
         continuousGrabEnabled = true
@@ -2452,7 +2280,7 @@ local function toggleContinuousGrab(enabled)
                 grabForwardObject()
             end
         end)
-        Message("持续抓取", "已开启持续抓取\n按F键抓取", 2)
+        Message("Constant Grab", "Constant Grab enabled\nPress F to grab", 2)
     else
         continuousGrabEnabled = false
         if continuousGrabConnection then
@@ -2463,18 +2291,14 @@ local function toggleContinuousGrab(enabled)
             continuousGrabUI:Destroy()
             continuousGrabUI = nil
         end
-        Message("持续抓取", "已关闭持续抓取", 2)
+        Message("Constant Grab", "Constant Grab disabled", 2)
     end
 end
--- 获取玩家进食量
 local function getCurrency()
-    -- 尝试从不同位置获取进食量
     local currency = 0
-    -- 方法1: 检查Leaderstats
     if LocalPlayer:FindFirstChild("leaderstats") then
         local leaderstats = LocalPlayer.leaderstats
-        -- 常见的货币名称
-        local currencyNames = {"Money", "Cash", "Coins", "Gold", "Currency", "美元", "金币", "钱", "Dollars", "Credits", "Points", "Tokens", "Gems"}
+        local currencyNames = {"Money", "Cash", "Coins", "Gold", "Currency", "Dollars", "Coins", "Cash", "Dollars", "Credits", "Points", "Tokens", "Gems"}
         for _, name in ipairs(currencyNames) do
             local currencyValue = leaderstats:FindFirstChild(name)
             if currencyValue and (currencyValue:IsA("IntValue") or currencyValue:IsA("NumberValue") or currencyValue:IsA("Int64Value")) then
@@ -2482,7 +2306,6 @@ local function getCurrency()
                 return currency
             end
         end
-        -- 检查leaderstats中的所有数值类型子对象
         for _, child in ipairs(leaderstats:GetChildren()) do
             if child:IsA("IntValue") or child:IsA("NumberValue") or child:IsA("Int64Value") then
                 currency = child.Value
@@ -2490,7 +2313,6 @@ local function getCurrency()
             end
         end
     end
-    -- 方法2: 检查Currencies文件夹
     if LocalPlayer:FindFirstChild("Currencies") then
         local currencies = LocalPlayer.Currencies
         for _, currencyValue in ipairs(currencies:GetChildren()) do
@@ -2500,7 +2322,6 @@ local function getCurrency()
             end
         end
     end
-    -- 方法3: 检查Player属性
     for _, child in ipairs(LocalPlayer:GetChildren()) do
         if (child:IsA("IntValue") or child:IsA("NumberValue") or child:IsA("Int64Value")) and 
            (string.lower(child.Name):find("money") or string.lower(child.Name):find("cash") or 
@@ -2512,7 +2333,6 @@ local function getCurrency()
             return currency
         end
     end
-    -- 方法4: 检查可能的特殊存储位置
     local specialLocations = {
         LocalPlayer:FindFirstChild("Stats"),
         LocalPlayer:FindFirstChild("Data"),
@@ -2531,7 +2351,6 @@ local function getCurrency()
     end
     return currency
 end
--- 根据进食量计算传送距离
 local function getDistanceByCurrency(currency)
     if currency < 3000 then
         return 0
@@ -2567,7 +2386,7 @@ local function getDistanceByCurrency(currency)
         return 210
     end
 end
--- 传送抓人
+-- Teleport Grab
     local function getForwardGrabPosition(character)
         local rootPart = character.HumanoidRootPart
         local direction = rootPart.CFrame.LookVector
@@ -2602,11 +2421,9 @@ local function CreateTeleportGrabUI()
     mainFrame.Active = true
     mainFrame.Draggable = false
     mainFrame.ClipsDescendants = true
-    -- 窗口圆角
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 8)
     corner.Parent = mainFrame
-    -- 窗口阴影
     local shadow = Instance.new("UIStroke")
     shadow.Color = Color3.fromRGB(0, 0, 0)
     shadow.Transparency = 0.5
@@ -2628,7 +2445,7 @@ local function CreateTeleportGrabUI()
     titleLabel.Size = UDim2.new(1, -40, 1, 0)
     titleLabel.Position = UDim2.new(0, 10, 0, 0)
     titleLabel.Font = Enum.Font.SourceSansBold
-    titleLabel.Text = "传送抓人"
+    titleLabel.Text = "Teleport Grab"
     titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     titleLabel.TextSize = 16
     titleLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -2641,7 +2458,7 @@ local function CreateTeleportGrabUI()
     closeButton.Position = UDim2.new(1, -40, 0, 0)
     closeButton.Size = UDim2.new(0, 40, 1, 0)
     closeButton.Font = Enum.Font.SourceSansBold
-    closeButton.Text = "×"
+    closeButton.Text = "Ã—"
     closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     closeButton.TextSize = 20
     closeButton.MouseButton1Click:Connect(function()
@@ -2686,25 +2503,20 @@ local function CreateTeleportGrabUI()
             if not localPlayer or not localPlayer.Character then return end
             local localHumanoidRootPart = localPlayer.Character:FindFirstChild("HumanoidRootPart")
             if not localHumanoidRootPart then return end
-            -- 先执行抓取命令（检查角色状态）
             if character and character:FindFirstChild("Humanoid") and character.Humanoid.Health > 0 then
                 grabForwardObject()
-                task.wait(0.2) -- 短暂延迟，确保抓取命令执行
+                task.wait(0.2) -- Short delay to ensure the grab command executes
             end
             if plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
-                -- 计算玩家身后的位置，使用目标玩家的Y轴
                 local playerRootPart = plr.Character.HumanoidRootPart
                 local currency = getCurrency()
                 local distance = getDistanceByCurrency(currency)
                 local behindPosition = playerRootPart.Position - playerRootPart.CFrame.LookVector * distance
-                -- 改为使用目标玩家的Y轴
                 behindPosition = Vector3.new(behindPosition.X, playerRootPart.Position.Y, behindPosition.Z)
-                -- 传送到玩家身后，确保人物保持直立
                 local direction = (playerRootPart.Position - behindPosition).Unit
                 localHumanoidRootPart.CFrame = CFrame.new(behindPosition, behindPosition + Vector3.new(direction.X, 0, direction.Z))
             end
         end)
-        -- 按钮悬停效果
         playerbutton.MouseEnter:Connect(function()
             TweenService:Create(playerbutton, TweenInfo.new(0.1), {
                 BackgroundColor3 = Color3.fromRGB(54, 54, 60)
@@ -2738,7 +2550,6 @@ local function CreateTeleportGrabUI()
             con:Disconnect()
         end
     end)
-    -- 窗口拖拽功能
     local dragging = false
     local dragStart = Vector2.new()
     local startPos = UDim2.new()
@@ -2778,7 +2589,7 @@ local function ToggleTeleportGrabUI()
         teleportGrabUI = nil
     end
 end
--- 传送砸人
+-- Teleport Slam
 local function CreateTeleportThrowUI()
     if teleportThrowUI then
         teleportThrowUI:Destroy()
@@ -2806,11 +2617,9 @@ local function CreateTeleportThrowUI()
     mainFrame.Active = true
     mainFrame.Draggable = false
     mainFrame.ClipsDescendants = true
-    -- 窗口圆角
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 8)
     corner.Parent = mainFrame
-    -- 窗口阴影
     local shadow = Instance.new("UIStroke")
     shadow.Color = Color3.fromRGB(0, 0, 0)
     shadow.Transparency = 0.5
@@ -2832,7 +2641,7 @@ local function CreateTeleportThrowUI()
     titleLabel.Size = UDim2.new(1, -40, 1, 0)
     titleLabel.Position = UDim2.new(0, 10, 0, 0)
     titleLabel.Font = Enum.Font.SourceSansBold
-    titleLabel.Text = "传送砸人"
+    titleLabel.Text = "Teleport Slam"
     titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     titleLabel.TextSize = 16
     titleLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -2845,7 +2654,7 @@ local function CreateTeleportThrowUI()
     closeButton.Position = UDim2.new(1, -40, 0, 0)
     closeButton.Size = UDim2.new(0, 40, 1, 0)
     closeButton.Font = Enum.Font.SourceSansBold
-    closeButton.Text = "×"
+    closeButton.Text = "Ã—"
     closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     closeButton.TextSize = 20
     closeButton.MouseButton1Click:Connect(function()
@@ -2890,22 +2699,18 @@ local function CreateTeleportThrowUI()
             if not localPlayer or not localPlayer.Character then return end
             local localHumanoidRootPart = localPlayer.Character:FindFirstChild("HumanoidRootPart")
             if not localHumanoidRootPart then return end
-            -- 先执行抓取命令
             grabForwardObject()
             task.wait(0.4)
             if plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
-                -- 计算玩家身后的位置，保持自身Y轴不变
                 local playerRootPart = plr.Character.HumanoidRootPart
                 local currency = getCurrency()
                 local distance = getDistanceByCurrency(currency)
                 local behindPosition = playerRootPart.Position - playerRootPart.CFrame.LookVector * distance
                 behindPosition = Vector3.new(behindPosition.X, localHumanoidRootPart.Position.Y, behindPosition.Z)
-                -- 传送到玩家身后，确保人物保持直立
                 local direction = (playerRootPart.Position - behindPosition).Unit
                 localHumanoidRootPart.CFrame = CFrame.new(behindPosition, behindPosition + Vector3.new(direction.X, 0, direction.Z))
             end
         end)
-        -- 按钮悬停效果
         playerbutton.MouseEnter:Connect(function()
             TweenService:Create(playerbutton, TweenInfo.new(0.1), {
                 BackgroundColor3 = Color3.fromRGB(54, 54, 60)
@@ -2939,7 +2744,6 @@ local function CreateTeleportThrowUI()
             con:Disconnect()
         end
     end)
-    -- 窗口拖拽功能
     local dragging = false
     local dragStart = Vector2.new()
     local startPos = UDim2.new()
@@ -2968,7 +2772,6 @@ local function CreateTeleportThrowUI()
             UserInputService.MouseIconEnabled = true
         end
     end)
-    -- 确保标题栏位置固定
     titleBar.Position = UDim2.new(0, 0, 0, 0)
     titleBar.Size = UDim2.new(1, 0, 0, 40)
     teleportThrowUI = gui
@@ -2982,7 +2785,6 @@ local function ToggleTeleportThrowUI()
         teleportThrowUI = nil
     end
 end
--- 布娃娃功能
 local function ragdollCharacter()
     local char = LocalPlayer.Character
     if not char then return end
@@ -3047,20 +2849,17 @@ local function ToggleRagdoll()
     ragdolled = not ragdolled
     if ragdolled then
         ragdollCharacter()
-        Message("布娃娃", "已开启布娃娃模式", 2)
+        Message("Ragdoll", "Ragdoll enabled", 2)
     else
         unragdollCharacter()
-        Message("布娃娃", "已关闭布娃娃模式", 2)
+        Message("Ragdoll", "Ragdoll disabled", 2)
     end
 end
--- 透视功能
 local function createESPForPlayer(player)
     if not player or not player.Character then return end
     local character = player.Character
-    -- 为每个部件添加ESP
     for _, part in pairs(character:GetChildren()) do
         if (part:IsA("MeshPart") or part:IsA("Part")) and part.Name ~= "HumanoidRootPart" then
-            -- 为每个面添加SurfaceGui
             local faces = {
                 Enum.NormalId.Front,
                 Enum.NormalId.Back,
@@ -3077,13 +2876,12 @@ local function createESPForPlayer(player)
                 surfaceGui.AlwaysOnTop = true
                 local frame = Instance.new("Frame")
                 frame.Parent = surfaceGui
-                frame.BackgroundColor3 = Color3.new(1, 0, 0) -- 统一红色
+                frame.BackgroundColor3 = Color3.new(1, 0, 0) -- Solid red
                 frame.Size = UDim2.new(1, 0, 1, 0)
                 frame.BackgroundTransparency = 0.5
             end
         end
     end
-    -- 创建名称标签
     local billboardGui = Instance.new("BillboardGui")
     billboardGui.Name = "ESPNameTag"
     billboardGui.Parent = character.Head
@@ -3136,7 +2934,6 @@ local function cleanupESPForPlayer(player)
 end
 local function updateESP()
     if not espEnabled then return end
-    -- 更新现有玩家
     for _, player in pairs(Players:GetPlayers()) do
         if player ~= Players.LocalPlayer then
             if player.Character and player.Character:FindFirstChild("Head") then
@@ -3150,18 +2947,15 @@ local function updateESP()
     end
 end
 local function startESP()
-    -- 清理旧连接
     for _, connection in pairs(espConnections) do
         connection:Disconnect()
     end
     espConnections = {}
-    -- 初始创建所有玩家的ESP
     for _, player in pairs(Players:GetPlayers()) do
         if player ~= Players.LocalPlayer then
             createESPForPlayer(player)
         end
     end
-    -- 监听玩家加入
     table.insert(espConnections, Players.PlayerAdded:Connect(function(player)
         if player ~= Players.LocalPlayer then
             player.CharacterAdded:Connect(function()
@@ -3169,13 +2963,10 @@ local function startESP()
             end)
         end
     end))
-    -- 监听玩家离开
     table.insert(espConnections, Players.PlayerRemoving:Connect(function(player)
         cleanupESPForPlayer(player)
     end))
-    -- 监听角色重生
     table.insert(espConnections, Players.LocalPlayer.CharacterAdded:Connect(function()
-        -- 本地玩家重生时重新创建所有ESP
         for _, player in pairs(Players:GetPlayers()) do
             if player ~= Players.LocalPlayer then
                 cleanupESPForPlayer(player)
@@ -3183,37 +2974,32 @@ local function startESP()
             end
         end
     end))
-    -- 每帧更新
     table.insert(espConnections, game:GetService("RunService").RenderStepped:Connect(updateESP))
-    print("ESP 已开启")
+    print("ESP Enabled")
 end
 local function stopESP()
-    -- 清理所有连接
     for _, connection in pairs(espConnections) do
         connection:Disconnect()
     end
     espConnections = {}
-    -- 清理所有ESP
     for _, player in pairs(Players:GetPlayers()) do
         if player ~= Players.LocalPlayer then
             cleanupESPForPlayer(player)
         end
     end
-    print("ESP 已关闭")
+    print("ESP Disabled")
 end
 local function ToggleESP()
     espEnabled = not espEnabled
     if espEnabled then
         startESP()
-        Message("透视", "已开启透视功能", 2)
+        Message("ESP", "ESP enabled", 2)
     else
         stopESP()
-        Message("透视", "已关闭透视功能", 2)
+        Message("ESP", "ESP disabled", 2)
     end
 end
--- ===================== UI初始化 =====================
 local mainUI = UI:NewWindow("Eat-the-World")
--- 自动子菜单
 local autoSection = mainUI:NewSection("Auto")
 autoSection:CreateToggle("Auto Farm", function(enabled)
     autofarm = enabled
@@ -3485,7 +3271,6 @@ autoSection:CreateToggle("Auto Eat", function(enabled)
         end
     end)()
 end)
--- 人物子菜单
 local figureSection = mainUI:NewSection("Player")
 figureSection:CreateToggle("No Slip", function(enabled)
     toggleSlippageElimination(enabled)
@@ -3520,7 +3305,6 @@ figureSection:CreateToggle("Anti Fall", function(enabled)
 end)
 figureSection:CreateToggle("Speed", function(enabled)
     ToggleSpeedUI()
-    -- 自动关闭开关
     for _, btn in ipairs(figureSection.Buttons) do
         if btn.Name == "ToggleBtn_Speed" then
             local stateLabel = btn:FindFirstChildOfClass("TextLabel")
@@ -3532,7 +3316,6 @@ figureSection:CreateToggle("Speed", function(enabled)
         end
     end
 end)
--- 隐身功能变量
 local invisibilityGui = nil
 local invisibilityConnections = {}
 figureSection:CreateToggle("Invisible", function(enabled)
@@ -3542,7 +3325,6 @@ figureSection:CreateToggle("Invisible", function(enabled)
         local humanoid = character:WaitForChild("Humanoid")
         local rootPart = character:WaitForChild("HumanoidRootPart")
         local parts = {}
-        -- 收集角色所有部件
         for _, part in pairs(character:GetDescendants()) do
             if part:IsA("BasePart") then
                 if part.Transparency == 0 then
@@ -3552,7 +3334,6 @@ figureSection:CreateToggle("Invisible", function(enabled)
         end
         local isInvisible = false
         local connections = {}
-        -- 创建 GUI 界面
         local gui = Instance.new("ScreenGui")
         gui.Name = "InvisibilityGui"
         gui.ResetOnSpawn = false
@@ -3563,7 +3344,6 @@ figureSection:CreateToggle("Invisible", function(enabled)
         button.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
         button.Parent = gui
         gui.Parent = player:WaitForChild("PlayerGui")
-        -- 按钮拖拽功能
         local dragging = false
         local dragStart = Vector2.new()
         local startPos = button.Position
@@ -3590,7 +3370,6 @@ figureSection:CreateToggle("Invisible", function(enabled)
                 dragging = false
             end
         end)
-        -- 切换隐身状态
         local function toggleInvisibility()
             isInvisible = not isInvisible
             for _, part in pairs(parts) do
@@ -3601,16 +3380,13 @@ figureSection:CreateToggle("Invisible", function(enabled)
                 end
             end
         end
-        -- 按钮点击事件
         button.MouseButton1Click:Connect(toggleInvisibility)
-        -- 键盘事件 (Press the G key)
         local mouse = player:GetMouse()
         connections[1] = mouse.KeyDown:Connect(function(key)
             if key == "g" then
                 toggleInvisibility()
             end
         end)
-        -- 相机偏移效果
         connections[2] = game:GetService("RunService").Heartbeat:Connect(function()
             if isInvisible then
                 local cf = rootPart.CFrame
@@ -3619,13 +3395,11 @@ figureSection:CreateToggle("Invisible", function(enabled)
                 local camOffset = newCf:ToObjectSpace(CFrame.new(cf.Position)).Position
                 rootPart.CFrame = newCf
                 humanoid.CameraOffset = camOffset
-                -- 短暂延迟后恢复
                 game:GetService("RunService").RenderStepped:Wait()
                 rootPart.CFrame = cf
                 humanoid.CameraOffset = Vector3.new(0, 0, 0)
             end
         end)
-        -- 角色重生时重新收集部件
         connections[3] = player.CharacterAdded:Connect(function(newCharacter)
             isInvisible = false
             parts = {}
@@ -3641,24 +3415,20 @@ figureSection:CreateToggle("Invisible", function(enabled)
                 end
             end
         end)
-        -- 存储引用以便后续清理
         invisibilityGui = gui
         invisibilityConnections = connections
-        Message("隐身", "功能已执行", 2)
+        Message("Invisible", "Feature activated", 2)
     else
-        -- 关闭隐身功能
         if invisibilityGui then
             invisibilityGui:Destroy()
             invisibilityGui = nil
         end
-        -- 断开所有连接
         for _, connection in pairs(invisibilityConnections) do
             if connection and connection.Connected then
                 connection:Disconnect()
             end
         end
         invisibilityConnections = {}
-        -- 恢复角色透明度
         local player = game.Players.LocalPlayer
         local character = player.Character
         if character then
@@ -3668,11 +3438,10 @@ figureSection:CreateToggle("Invisible", function(enabled)
                 end
             end
         end
-        Message("隐身", "功能已关闭", 2)
+        Message("Invisible", "Feature disabled", 2)
     end
-    -- 自动关闭开关
     for _, btn in ipairs(figureSection.Buttons) do
-        if btn.Name == "ToggleBtn_隐身" then
+        if btn.Name == "ToggleBtn_Invisible" then
             local stateLabel = btn:FindFirstChildOfClass("TextLabel")
             if stateLabel then
                 stateLabel.Text = "Invisible"
@@ -3692,12 +3461,11 @@ figureSection:CreateToggle("Constant Grab", function(enabled)
 end)
 figureSection:CreateToggle("Ragdoll", function(enabled)
     ToggleRagdoll()
-    -- 自动关闭开关
     for _, btn in ipairs(figureSection.Buttons) do
-        if btn.Name == "ToggleBtn_布娃娃" then
+        if btn.Name == "ToggleBtn_Ragdoll" then
             local stateLabel = btn:FindFirstChildOfClass("TextLabel")
             if stateLabel then
-                stateLabel.Text = "布娃娃"
+                stateLabel.Text = "Ragdoll"
                 stateLabel.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
             end
             break
@@ -3706,9 +3474,8 @@ figureSection:CreateToggle("Ragdoll", function(enabled)
 end)
 figureSection:CreateToggle("X-Ray", function(enabled)
     ToggleESP()
-    -- 自动关闭开关
     for _, btn in ipairs(figureSection.Buttons) do
-        if btn.Name == "ToggleBtn_透视" then
+        if btn.Name == "ToggleBtn_ESP" then
             local stateLabel = btn:FindFirstChildOfClass("TextLabel")
             if stateLabel then
                 stateLabel.Text = "X-Ray"
@@ -3718,102 +3485,86 @@ figureSection:CreateToggle("X-Ray", function(enabled)
         end
     end
 end)
--- 重新加入当前服务器函数
 local function rejoinCurrentServer()
-    -- 获取必要的服务
     local Players = game:GetService("Players")
     local TeleportService = game:GetService("TeleportService")
-    -- 验证本地玩家存在
     local localPlayer = Players.LocalPlayer
     if not localPlayer then
-        warn("无法获取本地玩家")
+        warn("Unable to get LocalPlayer")
         return
     end
-    -- 验证当前在服务器中
     if not game.PlaceId or game.PlaceId <= 0 then
-        warn("当前不在有效的游戏中")
+        warn("Not in a valid game")
         return
     end
     if not game.JobId or game.JobId == "" then
-        warn("当前不在服务器中")
+        warn("Not currently in a server")
         return
     end
-    -- 获取当前服务器信息
     local placeId = game.PlaceId
     local jobId = game.JobId
-    print("=== 服务器信息 ===")
-    print("游戏ID (PlaceId):", placeId)
-    print("服务器ID (JobId):", jobId)
+    print("=== Server Information ===")
+    print("Game ID (PlaceId):", placeId)
+    print("Server ID (JobId):", jobId)
     print("=================")
-    -- 执行重新加入
-    print("正在发送重新加入请求...")
+    print("Sending rejoin request...")
     local success, errorMsg = pcall(function()
-        -- 核心方法：传送到指定的服务器实例
         TeleportService:TeleportToPlaceInstance(placeId, jobId, localPlayer)
     end)
     if success then
-        print("重新加入请求发送成功")
-        print("正在连接到服务器...")
+        print("Rejoin request sent successfully")
+        print("Connecting to server...")
     else
-        warn("重新加入失败:", errorMsg)
-        -- 失败后尝试备用方法
-        print("尝试备用方法...")
+        warn("Rejoin failed:", errorMsg)
+        print("Trying fallback method...")
         local backupSuccess, backupError = pcall(function()
-            -- 备用方法：普通传送（可能进入新服务器）
             TeleportService:Teleport(placeId, localPlayer)
         end)
         if backupSuccess then
-            print("备用方法执行成功（可能进入新服务器）")
+            print("Fallback succeeded (may have joined a new server)")
         else
-            warn("备用方法也失败:", backupError)
+            warn("Fallback also failed:", backupError)
         end
     end
 end
-figureSection:CreateToggle("动作包", function(enabled)
+figureSection:CreateToggle("Action Pack", function(enabled)
     loadCustomEmotes()
-    -- 自动关闭开关
     for _, btn in ipairs(figureSection.Buttons) do
-        if btn.Name == "ToggleBtn_动作包" then
+        if btn.Name == "ToggleBtn_Action Pack" then
             local stateLabel = btn:FindFirstChildOfClass("TextLabel")
             if stateLabel then
-                stateLabel.Text = "动作包"
+                stateLabel.Text = "Action Pack"
                 stateLabel.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
             end
             break
         end
     end
 end)
--- 隐藏和恢复地图功能
 local map = workspace:FindFirstChild("Map")
 local chunks = workspace:FindFirstChild("Chunks")
 local bedrock = nil
 local mapHidden = false
--- 隐藏地图显示状态
 local function toggleMap()
     if mapHidden then
-        -- 恢复环境对象
         if map then
             map.Parent = workspace
         end
         if chunks then
             chunks.Parent = workspace
         end
-        -- 移除基岩
         if bedrock and bedrock.Parent then
             bedrock:Destroy()
             bedrock = nil
         end
-        Message("提示", "环境对象已恢复，基岩已移除", 2)
+        Message("Notice", "Environment restored; platform removed", 2)
         mapHidden = false
     else
-        -- 隐藏环境对象
         if map then
             map.Parent = nil
         end
         if chunks then
             chunks.Parent = nil
         end
-        -- 生成基岩
         bedrock = Instance.new("Part")
         bedrock.Name = "HiddenEnvironmentBedrock"
         bedrock.Anchored = true
@@ -3821,26 +3572,23 @@ local function toggleMap()
         bedrock.Position = Vector3.new(0, 0, 0)
         bedrock.BrickColor = BrickColor.new("grey")
         bedrock.Parent = workspace
-        Message("提示", "环境对象已隐藏，基岩已生成", 2)
+        Message("Notice", "Environment hidden; platform created", 2)
         mapHidden = true
     end
 end
--- 平台创建功能
 local platformBedrock = nil
 local platformEnabled = config.platformEnabled
 local function togglePlatform()
     if platformEnabled then
-        -- 移除基岩平台
         if platformBedrock and platformBedrock.Parent then
             platformBedrock:Destroy()
             platformBedrock = nil
-            Message("平台创建", "基岩平台已移除", 2)
+            Message("Platform", "Platform removed", 2)
         end
         platformEnabled = false
         config.platformEnabled = false
         autoSaveConfig()
     else
-        -- 生成基岩平台
         platformBedrock = Instance.new("Part")
         platformBedrock.Name = "PlatformBedrock"
         platformBedrock.Anchored = true
@@ -3848,20 +3596,18 @@ local function togglePlatform()
         platformBedrock.Position = Vector3.new(0, 0, 0)
         platformBedrock.BrickColor = BrickColor.new("grey")
         platformBedrock.Parent = workspace
-        Message("平台创建", "基岩平台已创建", 2)
+        Message("Platform", "Platform created", 2)
         platformEnabled = true
         config.platformEnabled = true
         autoSaveConfig()
     end
 end
--- 其他子菜单
 local otherSection = mainUI:NewSection("Other")
 otherSection:CreateToggle("Create Platform", function(enabled)
     togglePlatform()
 end)
 otherSection:CreateToggle("Hide Map", function(enabled)
     toggleMap()
-    -- 自动关闭开关
     for _, btn in ipairs(otherSection.Buttons) do
         if btn.Name == "ToggleBtn_Hide Map" then
             local stateLabel = btn:FindFirstChildOfClass("TextLabel")
@@ -3876,9 +3622,8 @@ end)
 otherSection:CreateToggle("Rejoin", function(enabled)
     if enabled then
         rejoinCurrentServer()
-        -- 自动关闭开关
         for _, btn in ipairs(otherSection.Buttons) do
-            if btn.Name == "ToggleBtn_重进载入当前服务器" then
+            if btn.Name == "ToggleBtn_Rejoin" then
                 local stateLabel = btn:FindFirstChildOfClass("TextLabel")
                 if stateLabel then
                     stateLabel.Text = "Rejoin"
@@ -3892,7 +3637,6 @@ end)
 otherSection:CreateToggle("View Data", function(enabled)
     if enabled then
         loadAndRunPlayerDataScript()
-        -- 自动关闭开关
         for _, btn in ipairs(otherSection.Buttons) do
             if btn.Name == "ToggleBtn_View Data" then
                 local stateLabel = btn:FindFirstChildOfClass("TextLabel")
@@ -3907,7 +3651,6 @@ otherSection:CreateToggle("View Data", function(enabled)
 end)
 otherSection:CreateToggle("Teleport Slam", function(enabled)
     ToggleTeleportThrowUI()
-    -- 自动关闭开关
     for _, btn in ipairs(otherSection.Buttons) do
         if btn.Name == "ToggleBtn_Teleport Slam" then
             local stateLabel = btn:FindFirstChildOfClass("TextLabel")
@@ -3921,7 +3664,6 @@ otherSection:CreateToggle("Teleport Slam", function(enabled)
 end)
 otherSection:CreateToggle("Teleport Grab", function(enabled)
     ToggleTeleportGrabUI()
-    -- 自动关闭开关
     for _, btn in ipairs(otherSection.Buttons) do
         if btn.Name == "ToggleBtn_Teleport Grab" then
             local stateLabel = btn:FindFirstChildOfClass("TextLabel")
@@ -3933,7 +3675,6 @@ otherSection:CreateToggle("Teleport Grab", function(enabled)
         end
     end
 end)
--- 持续抓取功能
 local function grabPlayerNonStop()
     local args = {
         false,
@@ -3950,7 +3691,6 @@ local connection
 connection = runService.Heartbeat:Connect(function() 
 	if character and character:FindFirstChild("HumanoidRootPart") then 
 		local rootPart = character.HumanoidRootPart 
-		-- 保持Y轴旋转不变，确保玩家身体直立 
 		local currentCFrame = rootPart.CFrame 
 		local x, y, z = currentCFrame:ToEulerAnglesYXZ() 
 		local newCFrame = CFrame.new(currentCFrame.Position) * CFrame.Angles(0, y, 0) 
@@ -3986,11 +3726,9 @@ local function CreateGrabUI()
     mainFrame.Active = true
     mainFrame.Draggable = false
     mainFrame.ClipsDescendants = true
-    -- 窗口圆角
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 8)
     corner.Parent = mainFrame
-    -- 窗口阴影
     local shadow = Instance.new("UIStroke")
     shadow.Color = Color3.fromRGB(0, 0, 0)
     shadow.Transparency = 0.5
@@ -4012,7 +3750,7 @@ local function CreateGrabUI()
     titleLabel.Size = UDim2.new(1, -40, 1, 0)
     titleLabel.Position = UDim2.new(0, 10, 0, 0)
     titleLabel.Font = Enum.Font.SourceSansBold
-    titleLabel.Text = "持续抓取"
+    titleLabel.Text = "Constant Grab"
     titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     titleLabel.TextSize = 16
     titleLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -4025,7 +3763,7 @@ local function CreateGrabUI()
     closeButton.Position = UDim2.new(1, -40, 0, 0)
     closeButton.Size = UDim2.new(0, 40, 1, 0)
     closeButton.Font = Enum.Font.SourceSansBold
-    closeButton.Text = "×"
+    closeButton.Text = "Ã—"
     closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     closeButton.TextSize = 20
     closeButton.MouseButton1Click:Connect(function()
@@ -4049,9 +3787,8 @@ local function CreateGrabUI()
     buttonCorner.Parent = grabButton
     grabButton.MouseButton1Click:Connect(function()
         grabPlayerNonStop()
-        Message("持续抓取", "已执行抓取操作", 2)
+        Message("Constant Grab", "Grab executed", 2)
     end)
-    -- 按钮悬停效果
     grabButton.MouseEnter:Connect(function()
         TweenService:Create(grabButton, TweenInfo.new(0.1), {
             BackgroundColor3 = Color3.fromRGB(70, 130, 230)
@@ -4062,7 +3799,6 @@ local function CreateGrabUI()
             BackgroundColor3 = Color3.fromRGB(60, 120, 220)
         }):Play()
     end)
-    -- 窗口拖拽功能
     local dragging = false
     local dragStart = Vector2.new()
     local startPos = UDim2.new()
@@ -4104,7 +3840,6 @@ local function ToggleGrabUI()
 end
 otherSection:CreateToggle("Constant Grab", function(enabled)
     ToggleGrabUI()
-    -- 自动关闭开关
     for _, btn in ipairs(otherSection.Buttons) do
         if btn.Name == "ToggleBtn_Constant Grab" then
             local stateLabel = btn:FindFirstChildOfClass("TextLabel")
@@ -4116,22 +3851,17 @@ otherSection:CreateToggle("Constant Grab", function(enabled)
         end
     end
 end)
--- 绑定F键执行持续抓取
 UserInputService.InputBegan:Connect(function(input, processed)
     if not processed and input.KeyCode == Enum.KeyCode.F then
         grabPlayerNonStop()
-        Message("持续抓取", "已执行抓取操作", 2)
+        Message("Constant Grab", "Grab executed", 2)
     end
 end)
--- ===================== 事件绑定 =====================
--- 角色重生处理
 LocalPlayer.CharacterAdded:Connect(function(newCharacter)
     task.wait(0.5)
-    -- 掉落拉回状态恢复
     if antiFallEnabled then
         startAntiFall(newCharacter)
     end
 end)
--- 初始化
 getgenv().FPDH = workspace.FallenPartsDestroyHeight
-Message("UI加载完成", "吃吃世界辅助已加载完毕", 3)
+-- Built-in startup notification removed; dEnzCreator startup UI is used instead.
