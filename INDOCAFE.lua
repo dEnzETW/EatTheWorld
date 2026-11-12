@@ -1892,7 +1892,7 @@ local function CreateSpeedUI()
     TitleText.TextXAlignment = Enum.TextXAlignment.Left
     TitleText.Parent = TitleBar
     local CloseBtn = Instance.new("TextButton")
-    CloseBtn.Text = "Ã—"
+    CloseBtn.Text = "Ãƒâ€”"
     CloseBtn.TextSize = 20
     CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     CloseBtn.BackgroundTransparency = 1
@@ -2061,19 +2061,19 @@ local function loadAndRunPlayerDataScript()
         print("=======================================")
         for _, player in Players:GetPlayers() do
             print()
-            print("playerï¼š" .. player.Name)
+            print("playerÃ¯Â¼Å¡" .. player.Name)
             print("=======================================")
             local hasUpgrades = false
             if player.Upgrades then
                 for _, upg in player.Upgrades:GetChildren() do
                     hasUpgrades = true
-                    local content = "  " .. localization[upg.Name] .. "ï¼š"
+                    local content = "  " .. localization[upg.Name] .. "Ã¯Â¼Å¡"
                     local cost = 0
                     for l = 2, upg.Value do
                         cost += priceFunctions[upg.Name](l)
                     end
-                    content = content .. " " .. upg.Value .. "levelï¼›"
-                    content = content .. " " .. growthFunctions[upg.Name](upg.Value) .. "valueï¼›"
+                    content = content .. " " .. upg.Value .. "levelÃ¯Â¼â€º"
+                    content = content .. " " .. growthFunctions[upg.Name](upg.Value) .. "valueÃ¯Â¼â€º"
                     content = content .. " " .. cost .. "cost"
                     print(content)
                 end
@@ -2458,7 +2458,7 @@ local function CreateTeleportGrabUI()
     closeButton.Position = UDim2.new(1, -40, 0, 0)
     closeButton.Size = UDim2.new(0, 40, 1, 0)
     closeButton.Font = Enum.Font.SourceSansBold
-    closeButton.Text = "Ã—"
+    closeButton.Text = "Ãƒâ€”"
     closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     closeButton.TextSize = 20
     closeButton.MouseButton1Click:Connect(function()
@@ -2654,7 +2654,7 @@ local function CreateTeleportThrowUI()
     closeButton.Position = UDim2.new(1, -40, 0, 0)
     closeButton.Size = UDim2.new(0, 40, 1, 0)
     closeButton.Font = Enum.Font.SourceSansBold
-    closeButton.Text = "Ã—"
+    closeButton.Text = "Ãƒâ€”"
     closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     closeButton.TextSize = 20
     closeButton.MouseButton1Click:Connect(function()
@@ -3763,7 +3763,7 @@ local function CreateGrabUI()
     closeButton.Position = UDim2.new(1, -40, 0, 0)
     closeButton.Size = UDim2.new(0, 40, 1, 0)
     closeButton.Font = Enum.Font.SourceSansBold
-    closeButton.Text = "Ã—"
+    closeButton.Text = "Ãƒâ€”"
     closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     closeButton.TextSize = 20
     closeButton.MouseButton1Click:Connect(function()
