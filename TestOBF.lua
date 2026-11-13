@@ -216,9 +216,9 @@ function UI:ToggleCollapse()
         local currentOffset = 0
         for _, section in ipairs(self.Sections) do
             section.Frame.Position = UDim2.new(0, 0, 0, currentOffset)
-            section.Content.Position = UDim2.new(0, 0, 0, currentOffset + 50)
-            currentOffset = currentOffset + 50
-            self.CurrentY = self.CurrentY + 50
+            section.Content.Position = UDim2.new(0, 0, 0, currentOffset + 42)
+            currentOffset = currentOffset + 42
+            self.CurrentY = self.CurrentY + 42
         end
         local newHeight = math.max(150, 40 + self.CurrentY + 20) -- 40 is the title bar height; 20 is the bottom margin
         TweenService:Create(self.Window, TweenInfo.new(0.2), {
@@ -239,7 +239,7 @@ function UI:NewSection(title)
     local section = {}
     section.Title = title
     section.Frame = Instance.new("Frame")
-    section.Frame.Size = UDim2.new(1, 0, 0, 50)
+    section.Frame.Size = UDim2.new(1, 0, 0, 42)
     section.Frame.Position = UDim2.new(0, 0, 0, self.CurrentY)
     section.Frame.BackgroundColor3 = Color3.fromRGB(36, 36, 42)
     section.Frame.Parent = self.MenuContainer
@@ -256,6 +256,38 @@ function UI:NewSection(title)
     section.TitleText.TextColor3 = Color3.fromRGB(255, 255, 255)
     section.TitleText.TextXAlignment = Enum.TextXAlignment.Left
     section.TitleText.Parent = section.Frame
+    section.TitleText.Active = true
+
+    -- Drag any folder title to move the complete panel; the + / - button remains clickable.
+    local sectionDragging = false
+    local sectionDragStart = Vector2.new()
+    local windowStart = self.Window.Position
+    section.TitleText.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            sectionDragging = true
+            sectionDragStart = input.Position
+            windowStart = self.Window.Position
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if sectionDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - sectionDragStart
+            if math.abs(delta.X) + math.abs(delta.Y) > 4 then
+                self.Window.Position = UDim2.new(
+                    windowStart.X.Scale,
+                    windowStart.X.Offset + delta.X,
+                    windowStart.Y.Scale,
+                    windowStart.Y.Offset + delta.Y
+                )
+            end
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            sectionDragging = false
+        end
+    end)
+
     section.ToggleBtn = Instance.new("TextButton")
     section.ToggleBtn.Size = UDim2.new(0, 40, 1, 0)
     section.ToggleBtn.Position = UDim2.new(1, -40, 0, 0)
@@ -267,14 +299,14 @@ function UI:NewSection(title)
     section.ToggleBtn.Parent = section.Frame
     section.Content = Instance.new("Frame")
     section.Content.Size = UDim2.new(1, 0, 0, 0)
-    section.Content.Position = UDim2.new(0, 0, 0, self.CurrentY + 50)
+    section.Content.Position = UDim2.new(0, 0, 0, self.CurrentY + 42)
     section.Content.BackgroundTransparency = 1
     section.Content.ClipsDescendants = true
     section.Content.Parent = self.MenuContainer
     section.IsExpanded = false
     section.Buttons = {}
     section.ContentY = 0
-    self.CurrentY = self.CurrentY + 50
+    self.CurrentY = self.CurrentY + 42
     self.MenuContainer.Size = UDim2.new(1, 0, 0, self.CurrentY)
     section.Frame.Visible = true
     section.Content.Visible = true
@@ -301,8 +333,8 @@ function UI:NewSection(title)
         local currentOffset = 0
         for i, sec in ipairs(self.Sections) do
             sec.Frame.Position = UDim2.new(0, 0, 0, currentOffset)
-            sec.Content.Position = UDim2.new(0, 0, 0, currentOffset + 50)
-            currentOffset = currentOffset + 50
+            sec.Content.Position = UDim2.new(0, 0, 0, currentOffset + 42)
+            currentOffset = currentOffset + 42
             if sec.IsExpanded then
                 currentOffset = currentOffset + sec.ContentY
             end
@@ -320,7 +352,7 @@ function UI:NewSection(title)
     end)
     function section:CreateToggle(text, callback)
         local isEven = #section.Buttons % 2 == 0
-        local btnSize = UDim2.new(0.50, 0, 0, 35)
+        local btnSize = UDim2.new(0.50, 0, 0, 31)
         local btnPosition
         if isEven then
             btnPosition = UDim2.new(0.50, 0, 0, section.ContentY)
@@ -364,14 +396,14 @@ function UI:NewSection(title)
             }):Play()
         end)
         if not isEven then
-            section.ContentY = section.ContentY + 35
+            section.ContentY = section.ContentY + 31
         end
         table.insert(section.Buttons, btn)
         return btn
     end
     function section:CreateButton(text, callback)
         local isEven = #section.Buttons % 2 == 0
-        local btnSize = UDim2.new(0.50, 0, 0, 35)
+        local btnSize = UDim2.new(0.50, 0, 0, 31)
         local btnPosition
         if isEven then
             btnPosition = UDim2.new(0.50, 0, 0, section.ContentY)
@@ -413,7 +445,7 @@ function UI:NewSection(title)
             }):Play()
         end)
         if not isEven then
-            section.ContentY = section.ContentY + 35
+            section.ContentY = section.ContentY + 31
         end
         table.insert(section.Buttons, btn)
         return btn
