@@ -121,6 +121,9 @@ function UI:NewWindow(title)
     self.TitleBar.Size = UDim2.new(1, 0, 0, 40)
     self.TitleBar.BackgroundColor3 = Color3.fromRGB(36, 36, 42)
     self.TitleBar.Parent = self.Window
+    local titleCorner = Instance.new("UICorner")
+    titleCorner.CornerRadius = UDim.new(0, 8)
+    titleCorner.Parent = self.TitleBar
     self.TitleText = Instance.new("TextLabel")
     self.TitleText.Name = "TitleText"
     self.TitleText.Size = UDim2.new(1, -40, 1, 0)
@@ -244,7 +247,7 @@ function UI:NewSection(title)
     section.Frame.BackgroundColor3 = Color3.fromRGB(36, 36, 42)
     section.Frame.Parent = self.MenuContainer
     local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 6)
+    corner.CornerRadius = UDim.new(0, 8)
     corner.Parent = section.Frame
     section.TitleText = Instance.new("TextLabel")
     section.TitleText.Size = UDim2.new(1, -40, 1, 0)
@@ -3031,7 +3034,7 @@ local function ToggleESP()
         Message("ESP", "ESP disabled", 2)
     end
 end
-local mainUI = UI:NewWindow("Eat-the-World")
+local mainUI = UI:NewWindow("dEnzCreator")
 local autoSection = mainUI:NewSection("Auto")
 autoSection:CreateToggle("Auto Farm", function(enabled)
     autofarm = enabled
