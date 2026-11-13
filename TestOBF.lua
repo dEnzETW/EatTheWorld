@@ -239,9 +239,9 @@ function UI:ToggleCollapse()
         local currentOffset = 0
         for _, section in ipairs(self.Sections) do
             section.Frame.Position = UDim2.new(0, 0, 0, currentOffset)
-            section.Content.Position = UDim2.new(0, 0, 0, currentOffset + 42)
-            currentOffset = currentOffset + 42
-            self.CurrentY = self.CurrentY + 42
+            section.Content.Position = UDim2.new(0, 0, 0, currentOffset + 36)
+            currentOffset = currentOffset + 36
+            self.CurrentY = self.CurrentY + 36
         end
         local newHeight = math.max(150, 40 + self.CurrentY + 20) -- 40 is the title bar height; 20 is the bottom margin
         TweenService:Create(self.Window, TweenInfo.new(0.2), {
@@ -262,7 +262,7 @@ function UI:NewSection(title)
     local section = {}
     section.Title = title
     section.Frame = Instance.new("Frame")
-    section.Frame.Size = UDim2.new(1, 0, 0, 42)
+    section.Frame.Size = UDim2.new(1, 0, 0, 36)
     section.Frame.Position = UDim2.new(0, 0, 0, self.CurrentY)
     local sectionColor = UI.Theme.Other
     if title == "Auto" then
@@ -330,14 +330,14 @@ function UI:NewSection(title)
     section.ToggleBtn.Parent = section.Frame
     section.Content = Instance.new("Frame")
     section.Content.Size = UDim2.new(1, 0, 0, 0)
-    section.Content.Position = UDim2.new(0, 0, 0, self.CurrentY + 42)
+    section.Content.Position = UDim2.new(0, 0, 0, self.CurrentY + 36)
     section.Content.BackgroundTransparency = 1
     section.Content.ClipsDescendants = true
     section.Content.Parent = self.MenuContainer
     section.IsExpanded = false
     section.Buttons = {}
     section.ContentY = 0
-    self.CurrentY = self.CurrentY + 42
+    self.CurrentY = self.CurrentY + 36
     self.MenuContainer.Size = UDim2.new(1, 0, 0, self.CurrentY)
     section.Frame.Visible = true
     section.Content.Visible = true
@@ -364,8 +364,8 @@ function UI:NewSection(title)
         local currentOffset = 0
         for i, sec in ipairs(self.Sections) do
             sec.Frame.Position = UDim2.new(0, 0, 0, currentOffset)
-            sec.Content.Position = UDim2.new(0, 0, 0, currentOffset + 42)
-            currentOffset = currentOffset + 42
+            sec.Content.Position = UDim2.new(0, 0, 0, currentOffset + 36)
+            currentOffset = currentOffset + 36
             if sec.IsExpanded then
                 currentOffset = currentOffset + sec.ContentY
             end
