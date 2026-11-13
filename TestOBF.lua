@@ -96,7 +96,6 @@ local function autoSaveConfig()
     saveConfig()
 end
 loadConfig()
-local DenzToggleCallbacks = {}
 local UI = {}
 UI.__index = UI
 function UI:NewWindow(title)
@@ -128,8 +127,8 @@ function UI:NewWindow(title)
     self.TitleText.Position = UDim2.new(0, 10, 0, 0)
     self.TitleText.BackgroundTransparency = 1
     self.TitleText.Text = title
-    self.TitleText.Font = Enum.Font.SourceSansBold
-    self.TitleText.TextSize = 18
+    self.TitleText.Font = Enum.Font.GothamBold
+    self.TitleText.TextSize = 16
     self.TitleText.TextColor3 = Color3.fromRGB(255, 255, 255)
     self.TitleText.TextXAlignment = Enum.TextXAlignment.Left
     self.TitleText.Parent = self.TitleBar
@@ -139,8 +138,8 @@ function UI:NewWindow(title)
     self.CollapseBtn.Position = UDim2.new(1, -40, 0, 0)
     self.CollapseBtn.BackgroundTransparency = 1
     self.CollapseBtn.Text = "-"
-    self.CollapseBtn.Font = Enum.Font.SourceSansBold
-    self.CollapseBtn.TextSize = 20
+    self.CollapseBtn.Font = Enum.Font.GothamBold
+    self.CollapseBtn.TextSize = 18
     self.CollapseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     self.CollapseBtn.Parent = self.TitleBar
     self.ContentContainer = Instance.new("Frame")
@@ -252,8 +251,8 @@ function UI:NewSection(title)
     section.TitleText.Position = UDim2.new(0, 10, 0, 0)
     section.TitleText.BackgroundTransparency = 1
     section.TitleText.Text = title
-    section.TitleText.Font = Enum.Font.SourceSansBold
-    section.TitleText.TextSize = 16
+    section.TitleText.Font = Enum.Font.GothamBold
+    section.TitleText.TextSize = 14
     section.TitleText.TextColor3 = Color3.fromRGB(255, 255, 255)
     section.TitleText.TextXAlignment = Enum.TextXAlignment.Left
     section.TitleText.Parent = section.Frame
@@ -262,8 +261,8 @@ function UI:NewSection(title)
     section.ToggleBtn.Position = UDim2.new(1, -40, 0, 0)
     section.ToggleBtn.BackgroundTransparency = 1
     section.ToggleBtn.Text = "+"
-    section.ToggleBtn.Font = Enum.Font.SourceSansBold
-    section.ToggleBtn.TextSize = 18
+    section.ToggleBtn.Font = Enum.Font.GothamBold
+    section.ToggleBtn.TextSize = 16
     section.ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     section.ToggleBtn.Parent = section.Frame
     section.Content = Instance.new("Frame")
@@ -320,7 +319,6 @@ function UI:NewSection(title)
         end
     end)
     function section:CreateToggle(text, callback)
-        if DenzToggleCallbacks[text] == nil then DenzToggleCallbacks[text] = callback end
         local isEven = #section.Buttons % 2 == 0
         local btnSize = UDim2.new(0.50, 0, 0, 35)
         local btnPosition
@@ -344,8 +342,8 @@ function UI:NewSection(title)
         btnText.Position = UDim2.new(0, 0, 0, 0)
         btnText.BackgroundTransparency = 1
         btnText.Text = text
-        btnText.Font = Enum.Font.SourceSans
-        btnText.TextSize = 18
+        btnText.Font = Enum.Font.GothamMedium
+        btnText.TextSize = 14
         btnText.TextColor3 = Color3.fromRGB(255, 255, 255)
         btnText.TextXAlignment = Enum.TextXAlignment.Center
         btnText.Parent = btn
@@ -396,8 +394,8 @@ function UI:NewSection(title)
         btnText.Position = UDim2.new(0, 0, 0, 0)
         btnText.BackgroundTransparency = 1
         btnText.Text = text
-        btnText.Font = Enum.Font.SourceSans
-        btnText.TextSize = 18
+        btnText.Font = Enum.Font.GothamMedium
+        btnText.TextSize = 14
         btnText.TextColor3 = Color3.fromRGB(255, 255, 255)
         btnText.TextXAlignment = Enum.TextXAlignment.Center
         btnText.Parent = btn
@@ -3001,73 +2999,6 @@ local function ToggleESP()
         Message("ESP", "ESP disabled", 2)
     end
 end
-
---==================================================
-local DenzFarmTelemetry = {Cycle=0, SeasonStartedAt=nil, SeasonSeconds=0, EstimatedTime="--", BlockCount=0, DailyEarnings=0}
--- dEnzCreator | CANDY-ONLY COLLECTOR (CANGCUD MODULE)
--- Coin/Token collection is intentionally excluded. Cube collection stays in INDOCAFE.
---==================================================
-local DenzCandy = {Enabled=false, Total=0, ScanDelay=0.35, TouchCooldown=0.8}
-local candyTargets = {}
-local candyLastTouch = setmetatable({}, {__mode="k"})
-local pendingCandyPickup = setmetatable({}, {__mode="k"})
-local candyTouchWarned = false
-local function registerCandy(obj)
-    if obj and obj:IsA("BasePart") and obj.Name == "Candy" then candyTargets[obj] = true end
-end
-local function unregisterCandy(obj)
-    if not candyTargets[obj] then return end
-    candyTargets[obj] = nil
-    candyLastTouch[obj] = nil
-    if pendingCandyPickup[obj] then
-        pendingCandyPickup[obj] = nil
-        DenzCandy.Total = DenzCandy.Total + 1
-    end
-end
-for _, obj in ipairs(Workspace:GetDescendants()) do registerCandy(obj) end
-Workspace.DescendantAdded:Connect(registerCandy)
-Workspace.DescendantRemoving:Connect(unregisterCandy)
-local lastCandyScanAt = 0
-local function candyCollectStep()
-    if not DenzCandy.Enabled then return end
-    local now = os.clock()
-    if now - lastCandyScanAt < DenzCandy.ScanDelay then return end
-    lastCandyScanAt = now
-    local char = LocalPlayer.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    if type(firetouchinterest) ~= "function" then
-        if not candyTouchWarned then
-            candyTouchWarned = true
-            warn("[dEnzCreator] Candy collection requires firetouchinterest support.")
-        end
-        return
-    end
-    for item in pairs(candyTargets) do
-        if item.Parent then
-            local owner = item:FindFirstChild("Owner")
-            local timeLeft = item:FindFirstChild("TimeLeft")
-            local allowed = true
-            if owner and owner.Value ~= "" and owner.Value ~= LocalPlayer.Name then
-                local remaining = timeLeft and tonumber(timeLeft.Value)
-                if remaining and remaining > 0 then allowed = false end
-            end
-            local previous = candyLastTouch[item] or 0
-            if allowed and now - previous >= DenzCandy.TouchCooldown then
-                candyLastTouch[item] = now
-                local touched = pcall(function()
-                    firetouchinterest(root, item, 0)
-                    firetouchinterest(root, item, 1)
-                end)
-                if touched then pendingCandyPickup[item] = true end
-            end
-        else
-            unregisterCandy(item)
-        end
-    end
-end
-RunService.Heartbeat:Connect(candyCollectStep)
-
 local mainUI = UI:NewWindow("Eat-the-World")
 local autoSection = mainUI:NewSection("Auto")
 autoSection:CreateToggle("Auto Farm", function(enabled)
@@ -3147,8 +3078,6 @@ autoSection:CreateToggle("Auto Farm", function(enabled)
                 local minuteEarn = secondEarn * 60
                 local hourEarn = minuteEarn * 60
                 local dayEarn = hourEarn * 24
-                DenzFarmTelemetry.EstimatedTime = string.format("%02d:%02d", math.floor(sellTime/60), math.floor(sellTime%60))
-                DenzFarmTelemetry.DailyEarnings = dayEarn
                 text.Text = ""
                     .. "\nRun Time: " .. string.format("%ih%im%is", hours, minutes % 60, seconds % 60)
                     .. "\nActual Time: " .. string.format("%im%is", eatMinutes % 60, eatSeconds % 60)
@@ -3159,11 +3088,8 @@ autoSection:CreateToggle("Auto Farm", function(enabled)
                 grab:FireServer()
                 root.Anchored = false
                 eat:FireServer()
-                if not DenzFarmTelemetry.SeasonStartedAt then DenzFarmTelemetry.SeasonStartedAt = os.clock() end
-                DenzFarmTelemetry.BlockCount = numChunks
                 sendTrack:FireServer()
                 if chunk.Value then
-                    DenzFarmTelemetry.BlockCount = numChunks
                     if timer > 0 then
                         numChunks += 1
                     end
@@ -3208,11 +3134,6 @@ autoSection:CreateToggle("Auto Farm", function(enabled)
                     numChunks = 0
                 elseif size.Value == 0 then
                     if sellDebounce then
-                        if DenzFarmTelemetry.SeasonStartedAt then
-                            DenzFarmTelemetry.SeasonSeconds = os.clock() - DenzFarmTelemetry.SeasonStartedAt
-                            DenzFarmTelemetry.SeasonStartedAt = nil
-                            DenzFarmTelemetry.Cycle = DenzFarmTelemetry.Cycle + 1
-                        end
                         local currentEatTime = tick()
                         eatTime = currentEatTime - lastEatTime
                         lastEatTime = currentEatTime
@@ -3290,7 +3211,6 @@ autoSection:CreateToggle("Auto Farm", function(enabled)
     end)()
 end)
 autoSection:CreateToggle("Auto Collect", function(enabled)
-    DenzCandy.Enabled = enabled
     autoCollectingCubes = enabled
     config.autoCollectingCubes = enabled
     autoSaveConfig()
@@ -3943,749 +3863,5 @@ LocalPlayer.CharacterAdded:Connect(function(newCharacter)
         startAntiFall(newCharacter)
     end
 end)
-
---==================================================
--- dEnzCreator PANEL V4.1 | CALLBACK INTEGRATION
--- Legacy INDOCAFE callback definitions remain available as a recoverable source.
---==================================================
-if mainUI and mainUI.MainGui then mainUI.MainGui.Enabled = false end
--- dEnzCreator PANEL ONLY v1.8 - INDEPENDENT ACCORDIONS
--- UI shell only: no autofarm, teleport, grab, sell, or claim automation.
--- Integrate from your main LocalScript with:
--- _G.DenzPanel.SetData({Runtime="00:12:34", SeasonTime="00:04:21",
---   EstimatedTime="2h 35m", BlockCount="1,284", DailyEarnings="125,000"})
--- _G.DenzPanel.SetToggleState("AutoFarm", true)
--- _G.DenzPanel.OnToggle:Connect(function(name, enabled) ... end)
-
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local Stats = game:GetService("Stats")
-local UserInputService = game:GetService("UserInputService")
-local player = Players.LocalPlayer
-local playerGui = player:WaitForChild("PlayerGui")
-
-local old = playerGui:FindFirstChild("dEnzCreatorPanel")
-if old then old:Destroy() end
-
-local C = {
-    bg=Color3.fromRGB(15,23,32), header=Color3.fromRGB(25,39,52),
-    card=Color3.fromRGB(34,51,66), card2=Color3.fromRGB(29,44,57),
-    border=Color3.fromRGB(63,84,101), text=Color3.fromRGB(239,246,250),
-    muted=Color3.fromRGB(158,179,194), green=Color3.fromRGB(91,213,145)
-}
-local function corner(o,r)
-    local x=Instance.new("UICorner"); x.CornerRadius=UDim.new(0,r or 8); x.Parent=o
-end
-local function label(parent,txt,size,color,bold)
-    local x=Instance.new("TextLabel"); x.BackgroundTransparency=1
-    x.Text=txt; x.TextSize=size or 12; x.TextColor3=color or C.text
-    x.Font=bold and Enum.Font.GothamBold or Enum.Font.Gotham
-    x.TextXAlignment=Enum.TextXAlignment.Left; x.Parent=parent
-    return x
-end
-local function button(parent,txt)
-    local x=Instance.new("TextButton"); x.Text=txt; x.TextSize=12
-    x.Font=Enum.Font.GothamBold; x.TextColor3=C.text
-    x.BackgroundColor3=C.card; x.BorderSizePixel=0; x.Parent=parent
-    corner(x,8); return x
-end
-
-local gui=Instance.new("ScreenGui")
-gui.Name="dEnzCreatorPanel"; gui.ResetOnSpawn=false; gui.DisplayOrder=50
-gui.Parent=playerGui
-
-local main=Instance.new("Frame")
-main.Name="Main"; main.Position=UDim2.new(0,14,0,90)
-main.Size=UDim2.new(0,200,0,430); main.BackgroundColor3=C.bg
-main.BorderSizePixel=0; main.Parent=gui; corner(main,13)
-local outline=Instance.new("UIStroke"); outline.Color=C.border; outline.Parent=main
-
-local header=Instance.new("Frame")
-header.Position=UDim2.new(0,8,0,8); header.Size=UDim2.new(1,-16,0,39)
-header.BackgroundColor3=C.header; header.BorderSizePixel=0
-header.Parent=main; corner(header,9)
-local title=label(header,"dEnzCreator",14,C.text,true)
-title.Position=UDim2.new(0,11,0,0); title.Size=UDim2.new(0,112,1,0)
-local tag=label(header,"STATUS HUB",9,C.green,true)
-tag.TextXAlignment=Enum.TextXAlignment.Right
-tag.Position=UDim2.new(1,-84,0,0); tag.Size=UDim2.new(0,54,1,0)
-local minimize=button(header,"âˆ’")
-minimize.Position=UDim2.new(1,-27,0,6); minimize.Size=UDim2.new(0,20,0,26)
-
-local content=Instance.new("ScrollingFrame")
-content.Name="Content"; content.Position=UDim2.new(0,7,0,53)
-content.Size=UDim2.new(1,-14,1,-60); content.BackgroundTransparency=1
-content.BorderSizePixel=0; content.ScrollBarThickness=3
-content.AutomaticCanvasSize=Enum.AutomaticSize.Y
-content.CanvasSize=UDim2.new(0,0,0,0); content.Parent=main
-local list=Instance.new("UIListLayout"); list.Padding=UDim.new(0,5)
-list.SortOrder=Enum.SortOrder.LayoutOrder; list.Parent=content
-
-local function card(parent,name,order,height)
-    local f=Instance.new("Frame"); f.Name=name; f.LayoutOrder=order
-    f.Size=UDim2.new(1,0,0,height); f.BackgroundColor3=C.card2
-    f.BorderSizePixel=0; f.Parent=parent; corner(f,9); return f
-end
-local function section(text,order)
-    local b=button(content,text.."     â–¾"); b.LayoutOrder=order
-    b.Size=UDim2.new(1,0,0,27); b.TextXAlignment=Enum.TextXAlignment.Left
-    local p=Instance.new("UIPadding"); p.PaddingLeft=UDim.new(0,10); p.Parent=b
-    return b
-end
-
--- Status Hub remains visible under the dEnzCreator header.
-local status=card(content,"StatusHub",1,80)
-local grid=Instance.new("UIGridLayout"); grid.CellPadding=UDim2.new(0,5,0,4)
-grid.CellSize=UDim2.new(0.5,-3,0,29); grid.Parent=status
-local function statusCell(key,value)
-    local f=Instance.new("Frame"); f.BackgroundColor3=C.card
-    f.BorderSizePixel=0; f.Parent=status; corner(f,6)
-    local k=label(f,key,9,C.muted,true); k.Position=UDim2.new(0,7,0,1)
-    k.Size=UDim2.new(1,-12,0,12)
-    local v=label(f,value,12,C.text,true); v.Name="Value"
-    v.Position=UDim2.new(0,7,0,13); v.Size=UDim2.new(1,-12,0,15)
-    return v
-end
-local pingV=statusCell("PING","-- ms")
-local serverV=statusCell("SERVER","CHECKING")
-local fpsV=statusCell("FPS","--")
-local playersV=statusCell("PLAYERS","--")
-
--- Reusable accordion header. Each category opens/closes independently.
-local function section(text,order)
-    local b=button(content,text.."   +")
-    b.LayoutOrder=order
-    b.Size=UDim2.new(1,0,0,27)
-    b.TextXAlignment=Enum.TextXAlignment.Left
-    local p=Instance.new("UIPadding")
-    p.PaddingLeft=UDim.new(0,10)
-    p.PaddingRight=UDim.new(0,10)
-    p.Parent=b
-    return b
-end
-
-local function card(parent,name,order,height)
-    local f=Instance.new("Frame")
-    f.Name=name
-    f.LayoutOrder=order
-    f.Size=UDim2.new(1,0,0,height)
-    f.BackgroundColor3=C.card2
-    f.BorderSizePixel=0
-    f.Parent=parent
-    corner(f,9)
-    return f
-end
-
--- INDOCAFE STATISTICS accordion.
-local indoBtn=section("INDOCAFE STATISTICS",2)
-local indo=card(content,"IndoCafeStatistics",3,164)
-indo.Visible=false
-local indoList=Instance.new("UIListLayout")
-indoList.Padding=UDim.new(0,1)
-indoList.SortOrder=Enum.SortOrder.LayoutOrder
-indoList.Parent=indo
-
-local function dataRow(parent,key,value,order)
-    local row=Instance.new("Frame")
-    row.LayoutOrder=order
-    row.Size=UDim2.new(1,-12,0,22)
-    row.BackgroundTransparency=1
-    row.Parent=parent
-
-    local l=label(row,key,10,C.muted,true)
-    l.Position=UDim2.new(0,2,0,0)
-    l.Size=UDim2.new(.62,0,1,0)
-
-    local v=label(row,value,11,C.text,true)
-    v.Name="Value"
-    v.TextXAlignment=Enum.TextXAlignment.Right
-    v.Position=UDim2.new(.62,0,0,0)
-    v.Size=UDim2.new(.38,-2,1,0)
-    return v
-end
-
-local runtimeV=dataRow(indo,"RUNTIME","00:00:00",1)
-local seasonV=dataRow(indo,"SEASON TIME","00:00:00",2)
-local estimatedV=dataRow(indo,"ESTIMATED TIME","--",3)
-local blockV=dataRow(indo,"BLOCK COUNT","0",4)
-local earningsV=dataRow(indo,"DAILY EARNINGS","0",5)
-local farmCycleV=dataRow(indo,"FARM CYCLE","--",6)
-local candyV=dataRow(indo,"CANDY","0",7)
-
--- AUTO accordion: two columns per row.
-local farmBtn=section("AUTO",4)
-local farm=card(content,"AutoSection",5,0)
-farm.Visible=false
-local farmGrid=Instance.new("UIGridLayout")
-farmGrid.CellPadding=UDim2.new(0,5,0,4)
-farmGrid.CellSize=UDim2.new(.5,-3,0,30)
-farmGrid.SortOrder=Enum.SortOrder.LayoutOrder
-farmGrid.Parent=farm
-
--- PLAYER CHARACTER accordion: two columns per row.
-local playerBtn=section("PLAYER CHARACTER",6)
-local playerCard=card(content,"PlayerCharacterSection",7,0)
-playerCard.Visible=false
-local playerGrid=Instance.new("UIGridLayout")
-playerGrid.CellPadding=UDim2.new(0,5,0,4)
-playerGrid.CellSize=UDim2.new(.5,-3,0,30)
-playerGrid.SortOrder=Enum.SortOrder.LayoutOrder
-playerGrid.Parent=playerCard
-
--- OTHER accordion: two columns per row. Six entries occupy three compact rows.
-local otherBtn=section("OTHER",8)
-local otherCard=card(content,"OtherSection",9,0)
-otherCard.Visible=false
-local otherGrid=Instance.new("UIGridLayout")
-otherGrid.CellPadding=UDim2.new(0,5,0,4)
-otherGrid.CellSize=UDim2.new(.5,-3,0,30)
-otherGrid.SortOrder=Enum.SortOrder.LayoutOrder
-otherGrid.Parent=otherCard
-
-local toggles={}
-local function addToggle(parent,name,order)
-    local b=button(parent,name)
-    b.Name=name:gsub("%W","").."Button"
-    b.LayoutOrder=order
-    b.TextXAlignment=Enum.TextXAlignment.Center
-    b.TextSize=11
-    toggles[name]={Button=b,Enabled=false}
-    return b
-end
-
-for i,name in ipairs({
-    "Auto Farm","Auto Collect","Auto Claim",
-    "Move Mode","Show Map","Auto Eat"
-}) do
-    addToggle(farm,name,i)
-end
-
-local dragMoved=false
-
-local actionPanel=Instance.new("Frame")
-actionPanel.Name="ActionPackPanel"
-actionPanel.Size=UDim2.new(0,190,0,232)
-actionPanel.Position=UDim2.new(1,8,0,0) -- updated dynamically to align with PLAYER CHARACTER
-actionPanel.BackgroundColor3=C.bg
-actionPanel.BorderSizePixel=0
-actionPanel.Visible=false
-actionPanel.ZIndex=20
-actionPanel.Parent=main
-corner(actionPanel,10)
-local actionStroke=Instance.new("UIStroke")
-actionStroke.Color=C.border
-actionStroke.Parent=actionPanel
-
-local actionTitle=label(actionPanel,"ACTION PACK",12,C.text,true)
-actionTitle.Position=UDim2.new(0,9,0,7)
-actionTitle.Size=UDim2.new(1,-60,0,25)
-actionTitle.ZIndex=21
-
-local actionClose=button(actionPanel,"Ã—")
-actionClose.Position=UDim2.new(1,-31,0,6)
-actionClose.Size=UDim2.new(0,24,0,24)
-actionClose.ZIndex=21
-actionClose.MouseButton1Click:Connect(function()
-    actionPanel.Visible=false
-end)
-
-local actionSearch=Instance.new("TextBox")
-actionSearch.Name="Search"
-actionSearch.Position=UDim2.new(0,8,0,35)
-actionSearch.Size=UDim2.new(1,-16,0,25)
-actionSearch.BackgroundColor3=C.card
-actionSearch.BorderSizePixel=0
-actionSearch.Font=Enum.Font.Gotham
-actionSearch.TextSize=10
-actionSearch.TextColor3=C.text
-actionSearch.PlaceholderColor3=C.muted
-actionSearch.PlaceholderText="Search..."
-actionSearch.ClearTextOnFocus=false
-actionSearch.ZIndex=21
-actionSearch.Parent=actionPanel
-corner(actionSearch,6)
-
-local favoriteButton=button(actionPanel,"Favorites")
-favoriteButton.Position=UDim2.new(0,8,0,66)
-favoriteButton.Size=UDim2.new(.5,-12,0,25)
-favoriteButton.TextSize=10
-favoriteButton.ZIndex=21
-
-local randomButton=button(actionPanel,"Random")
-randomButton.Position=UDim2.new(.5,4,0,66)
-randomButton.Size=UDim2.new(.5,-12,0,25)
-randomButton.TextSize=10
-randomButton.ZIndex=21
-
-local actionList=Instance.new("ScrollingFrame")
-actionList.Name="AnimationList"
-actionList.Position=UDim2.new(0,8,0,97)
-actionList.Size=UDim2.new(1,-16,1,-105)
-actionList.BackgroundColor3=C.card2
-actionList.BorderSizePixel=0
-actionList.ScrollBarThickness=2
-actionList.AutomaticCanvasSize=Enum.AutomaticSize.Y
-actionList.CanvasSize=UDim2.new(0,0,0,0)
-actionList.ZIndex=21
-actionList.Parent=actionPanel
-corner(actionList,6)
-local actionListLayout=Instance.new("UIGridLayout")
-actionListLayout.CellPadding=UDim2.new(0,4,0,4)
-actionListLayout.CellSize=UDim2.new(0.5,-3,0,42)
-actionListLayout.SortOrder=Enum.SortOrder.LayoutOrder
-actionListLayout.Parent=actionList
-
--- Visual placeholders only; two emotes per row. Connect the real
--- animation IDs/catalog separately. The larger symbol is a visual icon.
-for i=1,8 do
-    local item=button(actionList,string.format("ðŸŽ­  %02d\\nAnimation %d\\nâ˜†",i,i))
-    item.Size=UDim2.new(0,0,0,42)
-    item.TextSize=11
-    item.TextWrapped=true
-    item.TextXAlignment=Enum.TextXAlignment.Center
-    item.LayoutOrder=i
-    item.ZIndex=22
-end
-
-for i,name in ipairs({
-    "No Slip","Unanchor","Anti Fall","Speed","Invisible",
-    "Gravity Lock","Constant Grab","Ragdoll","X-Ray"
-}) do
-    addToggle(playerCard,name,i)
-end
-
-local actionPackButton=button(playerCard,"Action Pack  â€º")
-actionPackButton.Name="ActionPackButton"
-actionPackButton.LayoutOrder=10
-actionPackButton.TextSize=11
-actionPackButton.BackgroundColor3=C.card
-actionPackButton.MouseButton1Click:Connect(function()
-    if dragMoved then return end
-    actionPanel.Visible=not actionPanel.Visible
-end)
-
--- Submenu alignment is initialized after both submenu frames exist.
-
-for i,name in ipairs({
-    "Create Platform","Hide Map","Rejoin","View Data"
-}) do
-    addToggle(otherCard,name,i)
-end
-
--- TP GRAB / TP SLAM open a live Player List submenu, like Action Pack.
--- Selecting a player emits OnPlayerAction(mode, player) for integration
--- with the existing TP Grab / TP Slam implementation.
-local playerListPanel=Instance.new("Frame")
-playerListPanel.Name="PlayerListPanel"
-playerListPanel.Size=UDim2.new(0,190,0,232)
-playerListPanel.Position=UDim2.new(1,8,0,0)
-playerListPanel.BackgroundColor3=C.bg
-playerListPanel.BorderSizePixel=0
-playerListPanel.Visible=false
-playerListPanel.ZIndex=20
-playerListPanel.Parent=main
-corner(playerListPanel,10)
-
--- Keep both subpanels aligned with their corresponding folder headers.
--- This block intentionally comes AFTER playerListPanel is created.
-local function alignActionPanel()
-    local y=playerBtn.AbsolutePosition.Y-main.AbsolutePosition.Y
-    actionPanel.Position=UDim2.fromOffset(main.AbsoluteSize.X+8,y)
-end
-
-local function alignPlayerListPanel()
-    local y=otherBtn.AbsolutePosition.Y-main.AbsolutePosition.Y
-    playerListPanel.Position=UDim2.fromOffset(main.AbsoluteSize.X+8,y)
-end
-
-local function alignSubpanels()
-    alignActionPanel()
-    alignPlayerListPanel()
-end
-
-alignSubpanels()
-playerBtn:GetPropertyChangedSignal("AbsolutePosition"):Connect(alignActionPanel)
-otherBtn:GetPropertyChangedSignal("AbsolutePosition"):Connect(alignPlayerListPanel)
-main:GetPropertyChangedSignal("AbsolutePosition"):Connect(alignSubpanels)
-main:GetPropertyChangedSignal("AbsoluteSize"):Connect(alignSubpanels)
-content:GetPropertyChangedSignal("CanvasPosition"):Connect(alignSubpanels)
-
-local playerListStroke=Instance.new("UIStroke")
-playerListStroke.Color=C.border
-playerListStroke.Parent=playerListPanel
-
-local playerListTitle=label(playerListPanel,"PLAYER LIST",12,C.text,true)
-playerListTitle.Position=UDim2.new(0,9,0,7)
-playerListTitle.Size=UDim2.new(1,-60,0,25)
-playerListTitle.ZIndex=21
-
-local playerListMode=label(playerListPanel,"SELECT TARGET",9,C.green,true)
-playerListMode.Position=UDim2.new(0,9,0,27)
-playerListMode.Size=UDim2.new(1,-18,0,16)
-playerListMode.ZIndex=21
-
-local playerListClose=button(playerListPanel,"Ã—")
-playerListClose.Position=UDim2.new(1,-31,0,6)
-playerListClose.Size=UDim2.new(0,24,0,24)
-playerListClose.ZIndex=21
-playerListClose.MouseButton1Click:Connect(function()
-    playerListPanel.Visible=false
-end)
-
-local playerSearch=Instance.new("TextBox")
-playerSearch.Name="SearchPlayer"
-playerSearch.Position=UDim2.new(0,8,0,44)
-playerSearch.Size=UDim2.new(1,-16,0,25)
-playerSearch.BackgroundColor3=C.card
-playerSearch.BorderSizePixel=0
-playerSearch.Font=Enum.Font.Gotham
-playerSearch.TextSize=10
-playerSearch.TextColor3=C.text
-playerSearch.PlaceholderColor3=C.muted
-playerSearch.PlaceholderText="Search player..."
-playerSearch.ClearTextOnFocus=false
-playerSearch.ZIndex=21
-playerSearch.Parent=playerListPanel
-corner(playerSearch,6)
-
-local playerList=Instance.new("ScrollingFrame")
-playerList.Name="Players"
-playerList.Position=UDim2.new(0,8,0,75)
-playerList.Size=UDim2.new(1,-16,1,-83)
-playerList.BackgroundColor3=C.card2
-playerList.BorderSizePixel=0
-playerList.ScrollBarThickness=2
-playerList.AutomaticCanvasSize=Enum.AutomaticSize.Y
-playerList.CanvasSize=UDim2.new(0,0,0,0)
-playerList.ZIndex=21
-playerList.Parent=playerListPanel
-corner(playerList,6)
-local playerListLayout=Instance.new("UIListLayout")
-playerListLayout.Padding=UDim.new(0,5)
-playerListLayout.SortOrder=Enum.SortOrder.LayoutOrder
-playerListLayout.Parent=playerList
-
-local selectedPlayerMode="TP GRAB"
-local playerActionEvent=Instance.new("BindableEvent")
-local playerRows={}
-local function rebuildPlayerList()
-    for _,row in ipairs(playerRows) do
-        row:Destroy()
-    end
-    table.clear(playerRows)
-    local query=string.lower(playerSearch.Text or "")
-    local targets={}
-    for _,target in ipairs(Players:GetPlayers()) do
-        if target~=player then
-            local display=target.DisplayName or target.Name
-            if query=="" or string.find(string.lower(target.Name),query,1,true)
-                or string.find(string.lower(display),query,1,true) then
-                table.insert(targets,target)
-            end
-        end
-    end
-    table.sort(targets,function(a,b)
-        return string.lower(a.Name)<string.lower(b.Name)
-    end)
-    for index,target in ipairs(targets) do
-        local row=button(playerList,(target.DisplayName~=target.Name and (target.DisplayName.."  (@"..target.Name..")") or target.Name))
-        row.Name="Player_"..target.UserId
-        row.Size=UDim2.new(1,-6,0,28)
-        row.LayoutOrder=index
-        row.TextSize=10
-        row.TextXAlignment=Enum.TextXAlignment.Left
-        row.ZIndex=22
-        local pad=Instance.new("UIPadding")
-        pad.PaddingLeft=UDim.new(0,8)
-        pad.Parent=row
-        row.MouseButton1Click:Connect(function()
-            if target.Parent==Players then
-                playerActionEvent:Fire(selectedPlayerMode,target)
-            end
-        end)
-        table.insert(playerRows,row)
-    end
-    if #targets==0 then
-        local empty=label(playerList,"No players found",10,C.muted,false)
-        empty.Size=UDim2.new(1,-8,0,30)
-        empty.Position=UDim2.fromOffset(5,4)
-        empty.TextXAlignment=Enum.TextXAlignment.Center
-        empty.ZIndex=22
-        table.insert(playerRows,empty)
-    end
-end
-
-playerSearch:GetPropertyChangedSignal("Text"):Connect(rebuildPlayerList)
-Players.PlayerAdded:Connect(rebuildPlayerList)
-Players.PlayerRemoving:Connect(rebuildPlayerList)
-
-local function openPlayerList(mode)
-    selectedPlayerMode=mode
-    playerListMode.Text="MODE: "..mode
-    playerSearch.Text=""
-    playerListPanel.Visible=true
-    rebuildPlayerList()
-end
-
-local tpGrabButton=button(otherCard,"TP Grab  â€º")
-tpGrabButton.Name="TPGrabPlayerListButton"
-tpGrabButton.LayoutOrder=5
-tpGrabButton.TextSize=11
-tpGrabButton.MouseButton1Click:Connect(function()
-    if not dragMoved then openPlayerList("TP GRAB") end
-end)
-local tpSlamButton=button(otherCard,"TP Slam  â€º")
-tpSlamButton.Name="TPSlamPlayerListButton"
-tpSlamButton.LayoutOrder=6
-tpSlamButton.TextSize=11
-tpSlamButton.MouseButton1Click:Connect(function()
-    if not dragMoved then openPlayerList("TP SLAM") end
-end)
-
--- Keep each folder card height matched to its 2-column grid contents.
-local function fitGridCard(cardFrame,gridLayout,fallbackRows)
-    local function update()
-        local contentHeight=gridLayout.AbsoluteContentSize.Y
-        -- Use the actual measured grid height. During first layout pass it can
-        -- still be zero, so retain a safe height based on the expected rows.
-        if contentHeight<=0 then
-            local cellHeight=gridLayout.CellSize.Y.Offset
-            local gap=gridLayout.CellPadding.Y.Offset
-            contentHeight=fallbackRows*cellHeight+math.max(0,fallbackRows-1)*gap
-        end
-        cardFrame.Size=UDim2.new(1,0,0,contentHeight+4)
-    end
-    gridLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(update)
-    task.defer(update)
-    update()
-end
-fitGridCard(farm,farmGrid,3)
-fitGridCard(playerCard,playerGrid,5)
-fitGridCard(otherCard,otherGrid,2)
-
--- Shared drag flag is declared before click callbacks so they capture this local.
-
--- Every accordion can be opened or closed independently.
-local accordionStates={
-    indo=false,
-    farm=false,
-    player=false,
-    other=false
-}
-local function setAccordion(which,body,headerButton,titleText)
-    accordionStates[which]=not accordionStates[which]
-    body.Visible=accordionStates[which]
-    headerButton.Text=titleText.."   "..(accordionStates[which] and "âˆ’" or "+")
-end
-
-indoBtn.MouseButton1Click:Connect(function()
-    if dragMoved then dragMoved=false; return end
-    setAccordion("indo",indo,indoBtn,"INDOCAFE STATISTICS")
-end)
-
-farmBtn.MouseButton1Click:Connect(function()
-    if dragMoved then dragMoved=false; return end
-    setAccordion("farm",farm,farmBtn,"AUTO")
-end)
-
-playerBtn.MouseButton1Click:Connect(function()
-    if dragMoved then dragMoved=false; return end
-    setAccordion("player",playerCard,playerBtn,"PLAYER CHARACTER")
-end)
-
-otherBtn.MouseButton1Click:Connect(function()
-    if dragMoved then dragMoved=false; return end
-    setAccordion("other",otherCard,otherBtn,"OTHER")
-end)
-
--- Manual minimize only.
-local minimized=false
-local expandedSize=main.Size
-minimize.MouseButton1Click:Connect(function()
-    minimized=not minimized
-    if minimized then
-        expandedSize=main.Size; content.Visible=false
-        main.Size=UDim2.new(0,200,0,59); minimize.Text="+"
-    else
-        content.Visible=true; main.Size=expandedSize; minimize.Text="âˆ’"
-    end
-end)
-
--- Multi-point drag: title, Status Hub, and accordion headers.
--- A short movement threshold separates dragging from tapping an accordion.
-local dragging=false
-local dragInput=nil
-local dragStart=nil
-local startPos=nil
-local DRAG_THRESHOLD=7
-
-local dragSources={title,tag,indoBtn,farmBtn,playerBtn,otherBtn,tpGrabButton,tpSlamButton}
-for _,entry in pairs(toggles) do
-    table.insert(dragSources,entry.Button)
-end
-table.insert(dragSources,actionPackButton)
-
-local function beginPanelDrag(input)
-    if input.UserInputType~=Enum.UserInputType.MouseButton1
-        and input.UserInputType~=Enum.UserInputType.Touch then
-        return
-    end
-    dragging=true
-    dragInput=input
-    dragStart=input.Position
-    startPos=main.Position
-    dragMoved=false
-end
-
-for _,source in ipairs(dragSources) do
-    source.Active=true
-    source.InputBegan:Connect(beginPanelDrag)
-end
-
-UserInputService.InputChanged:Connect(function(input)
-    if not dragging then return end
-    local isMouseMove=input.UserInputType==Enum.UserInputType.MouseMovement
-    local isTouchMove=dragInput
-        and dragInput.UserInputType==Enum.UserInputType.Touch
-        and input==dragInput
-    if isMouseMove or isTouchMove then
-        local delta=input.Position-dragStart
-        if math.abs(delta.X)+math.abs(delta.Y)>=DRAG_THRESHOLD then
-            dragMoved=true
-        end
-        if dragMoved then
-            main.Position=UDim2.new(
-                startPos.X.Scale,startPos.X.Offset+delta.X,
-                startPos.Y.Scale,startPos.Y.Offset+delta.Y
-            )
-        end
-    end
-end)
-
-UserInputService.InputEnded:Connect(function(input)
-    if input==dragInput then
-        dragging=false
-        dragInput=nil
-        -- Give the UI click event time to consume dragMoved.
-        task.delay(0.25,function()
-            dragMoved=false
-        end)
-    end
-end)
-
--- Public integration API.
-local api={}
-local toggleEvent=Instance.new("BindableEvent")
-api.OnToggle=toggleEvent.Event
-api.OnPlayerAction=playerActionEvent.Event
-api.RuntimeWasSet=false
-function api.SetData(data)
-    if type(data)~="table" then return end
-    if data.Runtime~=nil then runtimeV.Text=tostring(data.Runtime); api.RuntimeWasSet=true end
-    if data.SeasonTime~=nil then seasonV.Text=tostring(data.SeasonTime) end
-    if data.EstimatedTime~=nil then estimatedV.Text=tostring(data.EstimatedTime) end
-    if data.BlockCount~=nil then blockV.Text=tostring(data.BlockCount) end
-    if data.DailyEarnings~=nil then earningsV.Text=tostring(data.DailyEarnings) end
-    if data.FarmCycle~=nil then farmCycleV.Text=tostring(data.FarmCycle) end
-    if data.Candy~=nil then candyV.Text=tostring(data.Candy) end
-    if data.Server~=nil then serverV.Text=tostring(data.Server) end
-end
-local function applyToggleAppearance(entry, name)
-    -- ON = green background; OFF = original/base background.
-    entry.Button.Text = name
-    entry.Button.BackgroundColor3 = entry.Enabled
-        and Color3.fromRGB(35,112,76)
-        or C.card
-    entry.Button.TextColor3 = entry.Enabled
-        and Color3.fromRGB(235,255,243)
-        or C.muted
-end
-
-function api.SetToggleState(name,enabled)
-    local entry=toggles[name]
-    if not entry then return end
-    entry.Enabled=(enabled==true)
-    applyToggleAppearance(entry,name)
-end
-for name,entry in pairs(toggles) do
-    applyToggleAppearance(entry,name)
-    entry.Button.MouseButton1Click:Connect(function()
-        if dragMoved then return end
-        api.SetToggleState(name,not entry.Enabled)
-        toggleEvent:Fire(name,entry.Enabled)
-    end)
-end
-_G.DenzPanel=api
-
--- Live local indicators. INDOCAFE values remain placeholders until SetData is called.
-local startClock=os.clock()
-local frames,elapsed,lastPing=0,0,0
-RunService.RenderStepped:Connect(function(dt)
-    if actionPanel.Visible then alignActionPanel() end
-    if playerListPanel.Visible then alignPlayerListPanel() end
-    frames=frames+1; elapsed=elapsed+dt
-    if elapsed>=1 then
-        fpsV.Text=tostring(math.floor(frames/elapsed+0.5))
-        frames=0; elapsed=0
-    end
-    if os.clock()-lastPing>=2 then
-        lastPing=os.clock()
-        local ok,ping=pcall(function()
-            return Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
-        end)
-        if ok and ping then pingV.Text=tostring(math.floor(ping+0.5)).." ms" end
-        playersV.Text=tostring(#Players:GetPlayers())
-        serverV.Text="CONNECTED"
-    end
-    if not api.RuntimeWasSet then
-        local n=math.floor(os.clock()-startClock)
-        runtimeV.Text=string.format("%02d:%02d:%02d",
-            math.floor(n/3600),math.floor(n%3600/60),n%60)
-    end
-end)
-
-print("[dEnzCreator] V4.1 panel and INDOCAFE callbacks initialized.")
-
--- Route panel toggles into the original INDOCAFE callbacks (no duplicated feature engines).
-local panelToggleMap = {
-    ["Auto Farm"]="Auto Farm", ["Auto Collect"]="Auto Collect",
-    ["Auto Claim"]="Auto Claim", ["Move Mode"]="Move Mode",
-    ["Show Map"]="Show Map", ["Auto Eat"]="Auto Eat",
-    ["No Slip"]="No Slip", ["Unanchor"]="Unanchor",
-    ["Anti Fall"]="Anti Fall", ["Speed"]="Speed",
-    ["Invisible"]="Invisible", ["Gravity Lock"]="Gravity Lock",
-    ["Constant Grab"]="Constant Grab", ["Ragdoll"]="Ragdoll",
-    ["X-Ray"]="X-Ray", ["Create Platform"]="Create Platform",
-    ["Hide Map"]="Hide Map", ["Rejoin"]="Rejoin", ["View Data"]="View Data"
-}
-local panelToggleState = {}
-api.OnToggle:Connect(function(panelName, enabled)
-    local callbackName = panelToggleMap[panelName]
-    local callback = callbackName and DenzToggleCallbacks[callbackName]
-    if callback then
-        panelToggleState[panelName] = enabled == true
-        local ok, err = pcall(callback, enabled == true)
-        if not ok then warn("[dEnzCreator] Toggle callback failed: "..tostring(panelName).." / "..tostring(err)) end
-    else
-        warn("[dEnzCreator] No active callback mapped for panel toggle: "..tostring(panelName))
-    end
-end)
-
--- Feed panel statistics from the live session; Farm Cycle/Season Time are updated
--- from Auto Farm's actual sale-confirmation state in a later telemetry hook.
-local function denzFormatClock(seconds)
-    seconds = math.max(0, math.floor(tonumber(seconds) or 0))
-    return string.format("%02d:%02d:%02d", math.floor(seconds/3600), math.floor(seconds%3600/60), seconds%60)
-end
-local panelStartedAt = os.clock()
-task.spawn(function()
-    while gui and gui.Parent do
-        task.wait(1)
-        local runtime = os.clock() - panelStartedAt
-        local seasonSeconds = DenzFarmTelemetry.SeasonStartedAt and (os.clock() - DenzFarmTelemetry.SeasonStartedAt) or DenzFarmTelemetry.SeasonSeconds
-        api.SetData({Runtime=denzFormatClock(runtime), SeasonTime=denzFormatClock(seasonSeconds), EstimatedTime=tostring(DenzFarmTelemetry.EstimatedTime), BlockCount=tostring(DenzFarmTelemetry.BlockCount), DailyEarnings=tostring(DenzFarmTelemetry.DailyEarnings), FarmCycle=tostring(DenzFarmTelemetry.Cycle), Candy=tostring(DenzCandy.Total)})
-    end
-end)
-
 getgenv().FPDH = workspace.FallenPartsDestroyHeight
 -- Built-in startup notification removed; dEnzCreator startup UI is used instead.
