@@ -98,6 +98,21 @@ end
 loadConfig()
 local UI = {}
 UI.__index = UI
+
+-- CANGCUD visual theme: dark navy surfaces with restrained purple borders.
+UI.Theme = {
+    Background = Color3.fromRGB(20, 22, 38),
+    Header = Color3.fromRGB(37, 39, 62),
+    Border = Color3.fromRGB(104, 93, 160),
+    BorderBright = Color3.fromRGB(125, 105, 195),
+    Text = Color3.fromRGB(240, 243, 248),
+    Muted = Color3.fromRGB(170, 175, 195),
+    Off = Color3.fromRGB(54, 52, 76),
+    Auto = Color3.fromRGB(35, 150, 112),
+    Player = Color3.fromRGB(105, 80, 165),
+    Other = Color3.fromRGB(60, 75, 108),
+    Row = Color3.fromRGB(37, 39, 62)
+}
 function UI:NewWindow(title)
     local self = setmetatable({}, UI)
     self.MainGui = Instance.new("ScreenGui")
@@ -109,21 +124,30 @@ function UI:NewWindow(title)
     self.Window.Name = "MainWindow"
     self.Window.Size = UDim2.new(0, 150, 0, 150)
     self.Window.Position = UDim2.new(0.1, 0, 0.1, 0)
-    self.Window.BackgroundTransparency = 1
+    self.Window.BackgroundColor3 = UI.Theme.Background
+    self.Window.BackgroundTransparency = 0
     self.Window.BorderSizePixel = 0
     self.Window.ClipsDescendants = true
     self.Window.Parent = self.MainGui
     local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 8)
+    corner.CornerRadius = UDim.new(0, 10)
     corner.Parent = self.Window
+    local windowStroke = Instance.new("UIStroke")
+    windowStroke.Color = UI.Theme.Border
+    windowStroke.Thickness = 1
+    windowStroke.Parent = self.Window
     self.TitleBar = Instance.new("Frame")
     self.TitleBar.Name = "TitleBar"
     self.TitleBar.Size = UDim2.new(1, 0, 0, 40)
-    self.TitleBar.BackgroundColor3 = Color3.fromRGB(36, 36, 42)
+    self.TitleBar.BackgroundColor3 = UI.Theme.Header
     self.TitleBar.Parent = self.Window
     local titleCorner = Instance.new("UICorner")
     titleCorner.CornerRadius = UDim.new(0, 8)
     titleCorner.Parent = self.TitleBar
+    local titleStroke = Instance.new("UIStroke")
+    titleStroke.Color = UI.Theme.BorderBright
+    titleStroke.Thickness = 1
+    titleStroke.Parent = self.TitleBar
     self.TitleText = Instance.new("TextLabel")
     self.TitleText.Name = "TitleText"
     self.TitleText.Size = UDim2.new(1, -40, 1, 0)
@@ -132,7 +156,7 @@ function UI:NewWindow(title)
     self.TitleText.Text = title
     self.TitleText.Font = Enum.Font.GothamBold
     self.TitleText.TextSize = 16
-    self.TitleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    self.TitleText.TextColor3 = UI.Theme.Text
     self.TitleText.TextXAlignment = Enum.TextXAlignment.Left
     self.TitleText.Parent = self.TitleBar
     self.CollapseBtn = Instance.new("TextButton")
@@ -143,7 +167,7 @@ function UI:NewWindow(title)
     self.CollapseBtn.Text = "-"
     self.CollapseBtn.Font = Enum.Font.GothamBold
     self.CollapseBtn.TextSize = 18
-    self.CollapseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    self.CollapseBtn.TextColor3 = UI.Theme.Text
     self.CollapseBtn.Parent = self.TitleBar
     self.ContentContainer = Instance.new("Frame")
     self.ContentContainer.Name = "ContentContainer"
@@ -244,11 +268,24 @@ function UI:NewSection(title)
     section.Frame = Instance.new("Frame")
     section.Frame.Size = UDim2.new(1, 0, 0, 42)
     section.Frame.Position = UDim2.new(0, 0, 0, self.CurrentY)
-    section.Frame.BackgroundColor3 = Color3.fromRGB(36, 36, 42)
+    local sectionColor = UI.Theme.Other
+    if title == "Auto" then
+        sectionColor = UI.Theme.Auto
+    elseif title == "Player" then
+        sectionColor = UI.Theme.Player
+    elseif title == "Other" then
+        sectionColor = UI.Theme.Other
+    end
+    section.Frame.BackgroundColor3 = sectionColor
     section.Frame.Parent = self.MenuContainer
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 8)
     corner.Parent = section.Frame
+    local sectionStroke = Instance.new("UIStroke")
+    sectionStroke.Color = UI.Theme.BorderBright
+    sectionStroke.Transparency = 0.25
+    sectionStroke.Thickness = 1
+    sectionStroke.Parent = section.Frame
     section.TitleText = Instance.new("TextLabel")
     section.TitleText.Size = UDim2.new(1, -40, 1, 0)
     section.TitleText.Position = UDim2.new(0, 10, 0, 0)
@@ -256,7 +293,7 @@ function UI:NewSection(title)
     section.TitleText.Text = title
     section.TitleText.Font = Enum.Font.GothamBold
     section.TitleText.TextSize = 14
-    section.TitleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    section.TitleText.TextColor3 = UI.Theme.Text
     section.TitleText.TextXAlignment = Enum.TextXAlignment.Left
     section.TitleText.Parent = section.Frame
     section.TitleText.Active = true
@@ -298,7 +335,7 @@ function UI:NewSection(title)
     section.ToggleBtn.Text = "+"
     section.ToggleBtn.Font = Enum.Font.GothamBold
     section.ToggleBtn.TextSize = 16
-    section.ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    section.ToggleBtn.TextColor3 = UI.Theme.Text
     section.ToggleBtn.Parent = section.Frame
     section.Content = Instance.new("Frame")
     section.Content.Size = UDim2.new(1, 0, 0, 0)
@@ -366,12 +403,17 @@ function UI:NewSection(title)
         btn.Name = "ToggleBtn_" .. text
         btn.Size = btnSize
         btn.Position = btnPosition
-        btn.BackgroundColor3 = Color3.fromRGB(44, 44, 50)
+        btn.BackgroundColor3 = UI.Theme.Off
         btn.BackgroundTransparency = 0
         btn.Parent = section.Content
         local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 4)
+        corner.CornerRadius = UDim.new(0, 7)
         corner.Parent = btn
+        local buttonStroke = Instance.new("UIStroke")
+        buttonStroke.Color = UI.Theme.Border
+        buttonStroke.Transparency = 0.35
+        buttonStroke.Thickness = 1
+        buttonStroke.Parent = btn
         local btnText = Instance.new("TextLabel")
         btnText.Size = UDim2.new(1, 0, 1, 0)
         btnText.Position = UDim2.new(0, 0, 0, 0)
@@ -385,17 +427,17 @@ function UI:NewSection(title)
         local toggleState = false
         btn.MouseButton1Click:Connect(function()
             toggleState = not toggleState
-            btn.BackgroundColor3 = toggleState and Color3.fromRGB(60, 180, 60) or Color3.fromRGB(44, 44, 50)
+            btn.BackgroundColor3 = toggleState and UI.Theme.Auto or UI.Theme.Off
             callback(toggleState)
         end)
         btn.MouseEnter:Connect(function()
             TweenService:Create(btn, TweenInfo.new(0.1), {
-                BackgroundColor3 = toggleState and Color3.fromRGB(70, 190, 70) or Color3.fromRGB(54, 54, 60)
+                BackgroundColor3 = toggleState and Color3.fromRGB(45, 165, 125) or UI.Theme.Row
             }):Play()
         end)
         btn.MouseLeave:Connect(function()
             TweenService:Create(btn, TweenInfo.new(0.1), {
-                BackgroundColor3 = toggleState and Color3.fromRGB(60, 180, 60) or Color3.fromRGB(44, 44, 50)
+                BackgroundColor3 = toggleState and UI.Theme.Auto or UI.Theme.Off
             }):Play()
         end)
         if not isEven then
@@ -417,13 +459,18 @@ function UI:NewSection(title)
         btn.Name = "Button_" .. text
         btn.Size = btnSize
         btn.Position = btnPosition
-        btn.BackgroundColor3 = Color3.fromRGB(44, 44, 50)
+        btn.BackgroundColor3 = UI.Theme.Off
         btn.BackgroundTransparency = 0
         btn.Text = ""
         btn.Parent = section.Content
         local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 4)
+        corner.CornerRadius = UDim.new(0, 7)
         corner.Parent = btn
+        local buttonStroke = Instance.new("UIStroke")
+        buttonStroke.Color = UI.Theme.Border
+        buttonStroke.Transparency = 0.35
+        buttonStroke.Thickness = 1
+        buttonStroke.Parent = btn
         local btnText = Instance.new("TextLabel")
         btnText.Size = UDim2.new(1, 0, 1, 0)
         btnText.Position = UDim2.new(0, 0, 0, 0)
