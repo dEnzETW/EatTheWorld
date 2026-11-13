@@ -103,14 +103,14 @@ UI.__index = UI
 UI.Theme = {
     Background = Color3.fromRGB(7, 10, 27),
     Header = Color3.fromRGB(7, 10, 27),
-    Border = Color3.fromRGB(82, 98, 220),
-    BorderBright = Color3.fromRGB(91, 108, 238),
+    Border = Color3.fromRGB(83, 99, 226),
+    BorderBright = Color3.fromRGB(83, 99, 226),
     Text = Color3.fromRGB(245, 247, 255),
     Muted = Color3.fromRGB(190, 197, 220),
     Off = Color3.fromRGB(15, 20, 43),
-    Auto = Color3.fromRGB(10, 103, 190),
-    Player = Color3.fromRGB(91, 32, 176),
-    Other = Color3.fromRGB(48, 65, 99),
+    Auto = Color3.fromRGB(17, 103, 190),
+    Player = Color3.fromRGB(88, 35, 177),
+    Other = Color3.fromRGB(48, 66, 103),
     Row = Color3.fromRGB(17, 22, 48)
 }
 function UI:NewWindow(title)
@@ -134,7 +134,7 @@ function UI:NewWindow(title)
     corner.Parent = self.Window
     local windowStroke = Instance.new("UIStroke")
     windowStroke.Color = UI.Theme.Border
-    windowStroke.Thickness = 3
+    windowStroke.Thickness = 2
     windowStroke.Parent = self.Window
     self.TitleBar = Instance.new("Frame")
     self.TitleBar.Name = "TitleBar"
@@ -144,10 +144,6 @@ function UI:NewWindow(title)
     local titleCorner = Instance.new("UICorner")
     titleCorner.CornerRadius = UDim.new(0, 14)
     titleCorner.Parent = self.TitleBar
-    local titleStroke = Instance.new("UIStroke")
-    titleStroke.Color = UI.Theme.BorderBright
-    titleStroke.Thickness = 2
-    titleStroke.Parent = self.TitleBar
     self.TitleText = Instance.new("TextLabel")
     self.TitleText.Name = "TitleText"
     self.TitleText.Size = UDim2.new(1, -40, 1, 0)
@@ -271,7 +267,7 @@ function UI:NewSection(title)
     local sectionColor = UI.Theme.Other
     if title == "Auto" then
         sectionColor = UI.Theme.Auto
-    elseif title == "Player" then
+    elseif title == "Character" then
         sectionColor = UI.Theme.Player
     elseif title == "Other" then
         sectionColor = UI.Theme.Other
@@ -279,13 +275,8 @@ function UI:NewSection(title)
     section.Frame.BackgroundColor3 = sectionColor
     section.Frame.Parent = self.MenuContainer
     local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 14)
+    corner.CornerRadius = UDim.new(0, 12)
     corner.Parent = section.Frame
-    local sectionStroke = Instance.new("UIStroke")
-    sectionStroke.Color = UI.Theme.BorderBright
-    sectionStroke.Transparency = 0.25
-    sectionStroke.Thickness = 2
-    sectionStroke.Parent = section.Frame
     section.TitleText = Instance.new("TextLabel")
     section.TitleText.Size = UDim2.new(1, -40, 1, 0)
     section.TitleText.Position = UDim2.new(0, 10, 0, 0)
@@ -409,11 +400,6 @@ function UI:NewSection(title)
         local corner = Instance.new("UICorner")
         corner.CornerRadius = UDim.new(0, 7)
         corner.Parent = btn
-        local buttonStroke = Instance.new("UIStroke")
-        buttonStroke.Color = UI.Theme.Border
-        buttonStroke.Transparency = 0.35
-        buttonStroke.Thickness = 1
-        buttonStroke.Parent = btn
         local btnText = Instance.new("TextLabel")
         btnText.Size = UDim2.new(1, 0, 1, 0)
         btnText.Position = UDim2.new(0, 0, 0, 0)
@@ -466,11 +452,6 @@ function UI:NewSection(title)
         local corner = Instance.new("UICorner")
         corner.CornerRadius = UDim.new(0, 7)
         corner.Parent = btn
-        local buttonStroke = Instance.new("UIStroke")
-        buttonStroke.Color = UI.Theme.Border
-        buttonStroke.Transparency = 0.35
-        buttonStroke.Thickness = 1
-        buttonStroke.Parent = btn
         local btnText = Instance.new("TextLabel")
         btnText.Size = UDim2.new(1, 0, 1, 0)
         btnText.Position = UDim2.new(0, 0, 0, 0)
