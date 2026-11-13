@@ -130,7 +130,7 @@ function UI:NewWindow(title)
     self.Window.ClipsDescendants = true
     self.Window.Parent = self.MainGui
     local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 18)
+    corner.CornerRadius = UDim.new(0, 10)
     corner.Parent = self.Window
     local windowStroke = Instance.new("UIStroke")
     windowStroke.Color = UI.Theme.Border
@@ -142,7 +142,7 @@ function UI:NewWindow(title)
     self.TitleBar.BackgroundColor3 = UI.Theme.Header
     self.TitleBar.Parent = self.Window
     local titleCorner = Instance.new("UICorner")
-    titleCorner.CornerRadius = UDim.new(0, 14)
+    titleCorner.CornerRadius = UDim.new(0, 8)
     titleCorner.Parent = self.TitleBar
     self.TitleText = Instance.new("TextLabel")
     self.TitleText.Name = "TitleText"
@@ -2480,24 +2480,24 @@ local function CreateTeleportGrabUI()
     mainFrame.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
     mainFrame.BorderSizePixel = 0
     mainFrame.Position = UDim2.new(0, 20, 0, 20)
-    mainFrame.Size = UDim2.new(0, 200, 0, 300)
+    mainFrame.Size = UDim2.new(0, 150, 0, 250)
     mainFrame.Active = true
     mainFrame.Draggable = false
     mainFrame.ClipsDescendants = true
     local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 8)
+    corner.CornerRadius = UDim.new(0, 7)
     corner.Parent = mainFrame
     local shadow = Instance.new("UIStroke")
     shadow.Color = Color3.fromRGB(0, 0, 0)
     shadow.Transparency = 0.5
-    shadow.Thickness = 4
+    shadow.Thickness = 2
     shadow.Parent = mainFrame
     local titleBar = Instance.new("Frame")
     titleBar.Name = "titleBar"
     titleBar.Parent = mainFrame
     titleBar.BackgroundColor3 = Color3.fromRGB(36, 36, 42)
     titleBar.BorderSizePixel = 0
-    titleBar.Size = UDim2.new(1, 0, 0, 40)
+    titleBar.Size = UDim2.new(1, 0, 0, 32)
     titleBar.Position = UDim2.new(0, 0, 0, 0)
     titleBar.Active = true
     titleBar.Draggable = false
@@ -2505,12 +2505,12 @@ local function CreateTeleportGrabUI()
     titleLabel.Name = "titleLabel"
     titleLabel.Parent = titleBar
     titleLabel.BackgroundTransparency = 1
-    titleLabel.Size = UDim2.new(1, -40, 1, 0)
-    titleLabel.Position = UDim2.new(0, 10, 0, 0)
-    titleLabel.Font = Enum.Font.SourceSansBold
+    titleLabel.Size = UDim2.new(1, -30, 1, 0)
+    titleLabel.Position = UDim2.new(0, 8, 0, 0)
+    titleLabel.Font = Enum.Font.GothamBold
     titleLabel.Text = "TP Grab"
     titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    titleLabel.TextSize = 16
+    titleLabel.TextSize = 13
     titleLabel.TextXAlignment = Enum.TextXAlignment.Left
     titleBar.Active = true
     titleBar.Draggable = false
@@ -2518,12 +2518,12 @@ local function CreateTeleportGrabUI()
     closeButton.Name = "closeButton"
     closeButton.Parent = titleBar
     closeButton.BackgroundTransparency = 1
-    closeButton.Position = UDim2.new(1, -40, 0, 0)
-    closeButton.Size = UDim2.new(0, 40, 1, 0)
-    closeButton.Font = Enum.Font.SourceSansBold
-    closeButton.Text = "Ãƒâ€”"
+    closeButton.Position = UDim2.new(1, -30, 0, 0)
+    closeButton.Size = UDim2.new(0, 30, 1, 0)
+    closeButton.Font = Enum.Font.GothamBold
+    closeButton.Text = "Ã—"
     closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    closeButton.TextSize = 20
+    closeButton.TextSize = 16
     closeButton.MouseButton1Click:Connect(function()
         gui.Enabled = not gui.Enabled
     end)
@@ -2533,33 +2533,33 @@ local function CreateTeleportGrabUI()
     playersScroll.Active = true
     playersScroll.BackgroundTransparency = 1
     playersScroll.BorderSizePixel = 0
-    playersScroll.Position = UDim2.new(0, 10, 0, 45)
-    playersScroll.Size = UDim2.new(1, -20, 1, -50)
+    playersScroll.Position = UDim2.new(0, 6, 0, 37)
+    playersScroll.Size = UDim2.new(1, -12, 1, -43)
     playersScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-    playersScroll.ScrollBarThickness = 4
+    playersScroll.ScrollBarThickness = 3
     playersScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
     local UIListLayout = Instance.new("UIListLayout")
     UIListLayout.Parent = playersScroll
     UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    UIListLayout.Padding = UDim.new(0, 5)
+    UIListLayout.Padding = UDim.new(0, 4)
     local function addbtn(parent, plr)
         local playerbutton = Instance.new("TextButton")
         playerbutton.Name = plr.Name
         playerbutton.Parent = parent
         playerbutton.BackgroundColor3 = Color3.fromRGB(44, 44, 50)
         playerbutton.BorderSizePixel = 0
-        playerbutton.Size = UDim2.new(1, 0, 0, 35)
-        playerbutton.Font = Enum.Font.SourceSans
+        playerbutton.Size = UDim2.new(1, 0, 0, 29)
+        playerbutton.Font = Enum.Font.GothamMedium
         playerbutton.Text = plr.Name
         if plr.Name ~= plr.DisplayName then
             playerbutton.Text = playerbutton.Text .. " (" .. plr.DisplayName .. ")"
         end
         playerbutton.TextColor3 = Color3.fromRGB(255, 255, 255)
-        playerbutton.TextSize = 14
+        playerbutton.TextSize = 11
         playerbutton.TextXAlignment = Enum.TextXAlignment.Left
         playerbutton.TextYAlignment = Enum.TextYAlignment.Center
         local buttonCorner = Instance.new("UICorner")
-        buttonCorner.CornerRadius = UDim.new(0, 4)
+        buttonCorner.CornerRadius = UDim.new(0, 5)
         buttonCorner.Parent = playerbutton
         playerbutton.MouseButton1Click:Connect(function()
             local localPlayer = LocalPlayer
@@ -2676,24 +2676,24 @@ local function CreateTeleportThrowUI()
     mainFrame.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
     mainFrame.BorderSizePixel = 0
     mainFrame.Position = UDim2.new(0, 20, 0, 20)
-    mainFrame.Size = UDim2.new(0, 200, 0, 300)
+    mainFrame.Size = UDim2.new(0, 150, 0, 250)
     mainFrame.Active = true
     mainFrame.Draggable = false
     mainFrame.ClipsDescendants = true
     local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 8)
+    corner.CornerRadius = UDim.new(0, 7)
     corner.Parent = mainFrame
     local shadow = Instance.new("UIStroke")
     shadow.Color = Color3.fromRGB(0, 0, 0)
     shadow.Transparency = 0.5
-    shadow.Thickness = 4
+    shadow.Thickness = 2
     shadow.Parent = mainFrame
     local titleBar = Instance.new("Frame")
     titleBar.Name = "titleBar"
     titleBar.Parent = mainFrame
     titleBar.BackgroundColor3 = Color3.fromRGB(36, 36, 42)
     titleBar.BorderSizePixel = 0
-    titleBar.Size = UDim2.new(1, 0, 0, 40)
+    titleBar.Size = UDim2.new(1, 0, 0, 32)
     titleBar.Position = UDim2.new(0, 0, 0, 0)
     titleBar.Active = true
     titleBar.Draggable = false
@@ -2701,12 +2701,12 @@ local function CreateTeleportThrowUI()
     titleLabel.Name = "titleLabel"
     titleLabel.Parent = titleBar
     titleLabel.BackgroundTransparency = 1
-    titleLabel.Size = UDim2.new(1, -40, 1, 0)
-    titleLabel.Position = UDim2.new(0, 10, 0, 0)
-    titleLabel.Font = Enum.Font.SourceSansBold
+    titleLabel.Size = UDim2.new(1, -30, 1, 0)
+    titleLabel.Position = UDim2.new(0, 8, 0, 0)
+    titleLabel.Font = Enum.Font.GothamBold
     titleLabel.Text = "TP Slam"
     titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    titleLabel.TextSize = 16
+    titleLabel.TextSize = 13
     titleLabel.TextXAlignment = Enum.TextXAlignment.Left
     titleBar.Active = true
     titleBar.Draggable = false
@@ -2714,12 +2714,12 @@ local function CreateTeleportThrowUI()
     closeButton.Name = "closeButton"
     closeButton.Parent = titleBar
     closeButton.BackgroundTransparency = 1
-    closeButton.Position = UDim2.new(1, -40, 0, 0)
-    closeButton.Size = UDim2.new(0, 40, 1, 0)
-    closeButton.Font = Enum.Font.SourceSansBold
-    closeButton.Text = "Ãƒâ€”"
+    closeButton.Position = UDim2.new(1, -30, 0, 0)
+    closeButton.Size = UDim2.new(0, 30, 1, 0)
+    closeButton.Font = Enum.Font.GothamBold
+    closeButton.Text = "Ã—"
     closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    closeButton.TextSize = 20
+    closeButton.TextSize = 16
     closeButton.MouseButton1Click:Connect(function()
         gui.Enabled = not gui.Enabled
     end)
@@ -2729,33 +2729,33 @@ local function CreateTeleportThrowUI()
     playersScroll.Active = true
     playersScroll.BackgroundTransparency = 1
     playersScroll.BorderSizePixel = 0
-    playersScroll.Position = UDim2.new(0, 10, 0, 45)
-    playersScroll.Size = UDim2.new(1, -20, 1, -50)
+    playersScroll.Position = UDim2.new(0, 6, 0, 37)
+    playersScroll.Size = UDim2.new(1, -12, 1, -43)
     playersScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-    playersScroll.ScrollBarThickness = 4
+    playersScroll.ScrollBarThickness = 3
     playersScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
     local UIListLayout = Instance.new("UIListLayout")
     UIListLayout.Parent = playersScroll
     UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    UIListLayout.Padding = UDim.new(0, 5)
+    UIListLayout.Padding = UDim.new(0, 4)
     local function addbtn(parent, plr)
         local playerbutton = Instance.new("TextButton")
         playerbutton.Name = plr.Name
         playerbutton.Parent = parent
         playerbutton.BackgroundColor3 = Color3.fromRGB(44, 44, 50)
         playerbutton.BorderSizePixel = 0
-        playerbutton.Size = UDim2.new(1, 0, 0, 35)
-        playerbutton.Font = Enum.Font.SourceSans
+        playerbutton.Size = UDim2.new(1, 0, 0, 29)
+        playerbutton.Font = Enum.Font.GothamMedium
         playerbutton.Text = plr.Name
         if plr.Name ~= plr.DisplayName then
             playerbutton.Text = playerbutton.Text .. " (" .. plr.DisplayName .. ")"
         end
         playerbutton.TextColor3 = Color3.fromRGB(255, 255, 255)
-        playerbutton.TextSize = 14
+        playerbutton.TextSize = 11
         playerbutton.TextXAlignment = Enum.TextXAlignment.Left
         playerbutton.TextYAlignment = Enum.TextYAlignment.Center
         local corner = Instance.new("UICorner")
-        corner.CornerRadius = UDim.new(0, 4)
+        corner.CornerRadius = UDim.new(0, 5)
         corner.Parent = playerbutton
         playerbutton.MouseButton1Click:Connect(function()
             local localPlayer = LocalPlayer
@@ -2836,7 +2836,7 @@ local function CreateTeleportThrowUI()
         end
     end)
     titleBar.Position = UDim2.new(0, 0, 0, 0)
-    titleBar.Size = UDim2.new(1, 0, 0, 40)
+    titleBar.Size = UDim2.new(1, 0, 0, 32)
     teleportThrowUI = gui
     return gui
 end
