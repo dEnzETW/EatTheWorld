@@ -101,17 +101,17 @@ UI.__index = UI
 
 -- CANGCUD visual theme: dark navy surfaces with restrained purple borders.
 UI.Theme = {
-    Background = Color3.fromRGB(20, 22, 38),
-    Header = Color3.fromRGB(37, 39, 62),
-    Border = Color3.fromRGB(104, 93, 160),
-    BorderBright = Color3.fromRGB(125, 105, 195),
-    Text = Color3.fromRGB(240, 243, 248),
-    Muted = Color3.fromRGB(170, 175, 195),
-    Off = Color3.fromRGB(54, 52, 76),
-    Auto = Color3.fromRGB(35, 150, 112),
-    Player = Color3.fromRGB(105, 80, 165),
-    Other = Color3.fromRGB(60, 75, 108),
-    Row = Color3.fromRGB(37, 39, 62)
+    Background = Color3.fromRGB(7, 10, 27),
+    Header = Color3.fromRGB(7, 10, 27),
+    Border = Color3.fromRGB(82, 98, 220),
+    BorderBright = Color3.fromRGB(91, 108, 238),
+    Text = Color3.fromRGB(245, 247, 255),
+    Muted = Color3.fromRGB(190, 197, 220),
+    Off = Color3.fromRGB(15, 20, 43),
+    Auto = Color3.fromRGB(10, 103, 190),
+    Player = Color3.fromRGB(91, 32, 176),
+    Other = Color3.fromRGB(48, 65, 99),
+    Row = Color3.fromRGB(17, 22, 48)
 }
 function UI:NewWindow(title)
     local self = setmetatable({}, UI)
@@ -130,11 +130,11 @@ function UI:NewWindow(title)
     self.Window.ClipsDescendants = true
     self.Window.Parent = self.MainGui
     local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 10)
+    corner.CornerRadius = UDim.new(0, 18)
     corner.Parent = self.Window
     local windowStroke = Instance.new("UIStroke")
     windowStroke.Color = UI.Theme.Border
-    windowStroke.Thickness = 1
+    windowStroke.Thickness = 3
     windowStroke.Parent = self.Window
     self.TitleBar = Instance.new("Frame")
     self.TitleBar.Name = "TitleBar"
@@ -142,11 +142,11 @@ function UI:NewWindow(title)
     self.TitleBar.BackgroundColor3 = UI.Theme.Header
     self.TitleBar.Parent = self.Window
     local titleCorner = Instance.new("UICorner")
-    titleCorner.CornerRadius = UDim.new(0, 8)
+    titleCorner.CornerRadius = UDim.new(0, 14)
     titleCorner.Parent = self.TitleBar
     local titleStroke = Instance.new("UIStroke")
     titleStroke.Color = UI.Theme.BorderBright
-    titleStroke.Thickness = 1
+    titleStroke.Thickness = 2
     titleStroke.Parent = self.TitleBar
     self.TitleText = Instance.new("TextLabel")
     self.TitleText.Name = "TitleText"
@@ -279,12 +279,12 @@ function UI:NewSection(title)
     section.Frame.BackgroundColor3 = sectionColor
     section.Frame.Parent = self.MenuContainer
     local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 8)
+    corner.CornerRadius = UDim.new(0, 14)
     corner.Parent = section.Frame
     local sectionStroke = Instance.new("UIStroke")
     sectionStroke.Color = UI.Theme.BorderBright
     sectionStroke.Transparency = 0.25
-    sectionStroke.Thickness = 1
+    sectionStroke.Thickness = 2
     sectionStroke.Parent = section.Frame
     section.TitleText = Instance.new("TextLabel")
     section.TitleText.Size = UDim2.new(1, -40, 1, 0)
@@ -2527,7 +2527,7 @@ local function CreateTeleportGrabUI()
     titleLabel.Size = UDim2.new(1, -40, 1, 0)
     titleLabel.Position = UDim2.new(0, 10, 0, 0)
     titleLabel.Font = Enum.Font.SourceSansBold
-    titleLabel.Text = "Teleport Grab"
+    titleLabel.Text = "TP Grab"
     titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     titleLabel.TextSize = 16
     titleLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -2723,7 +2723,7 @@ local function CreateTeleportThrowUI()
     titleLabel.Size = UDim2.new(1, -40, 1, 0)
     titleLabel.Position = UDim2.new(0, 10, 0, 0)
     titleLabel.Font = Enum.Font.SourceSansBold
-    titleLabel.Text = "Teleport Slam"
+    titleLabel.Text = "TP Slam"
     titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     titleLabel.TextSize = 16
     titleLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -3353,7 +3353,7 @@ autoSection:CreateToggle("Auto Eat", function(enabled)
         end
     end)()
 end)
-local figureSection = mainUI:NewSection("Player")
+local figureSection = mainUI:NewSection("Character")
 figureSection:CreateToggle("No Slip", function(enabled)
     toggleSlippageElimination(enabled)
     config.slippageEliminationEnabled = enabled
@@ -3731,26 +3731,26 @@ otherSection:CreateToggle("View Data", function(enabled)
         end
     end
 end)
-otherSection:CreateToggle("Teleport Slam", function(enabled)
+otherSection:CreateToggle("TP Slam", function(enabled)
     ToggleTeleportThrowUI()
     for _, btn in ipairs(otherSection.Buttons) do
         if btn.Name == "ToggleBtn_Teleport Slam" then
             local stateLabel = btn:FindFirstChildOfClass("TextLabel")
             if stateLabel then
-                stateLabel.Text = "Teleport Slam"
+                stateLabel.Text = "TP Slam"
                 stateLabel.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
             end
             break
         end
     end
 end)
-otherSection:CreateToggle("Teleport Grab", function(enabled)
+otherSection:CreateToggle("TP Grab", function(enabled)
     ToggleTeleportGrabUI()
     for _, btn in ipairs(otherSection.Buttons) do
         if btn.Name == "ToggleBtn_Teleport Grab" then
             local stateLabel = btn:FindFirstChildOfClass("TextLabel")
             if stateLabel then
-                stateLabel.Text = "Teleport Grab"
+                stateLabel.Text = "TP Grab"
                 stateLabel.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
             end
             break
