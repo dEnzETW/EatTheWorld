@@ -17,7 +17,7 @@ local WhitelistedUsers = {
     "ibrak4dabra",
     "chimicaramel",
     "miskalagi",
-    "syunako52",
+    "STREZBTMTVAY",
     "Carlydemul",
     "ChickenMcNuggetsBG",
     "orewaoreda9",
