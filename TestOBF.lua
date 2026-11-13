@@ -2343,7 +2343,7 @@ local function toggleContinuousGrab(enabled)
                 grabForwardObject()
             end
         end)
-        Message("Constant Grab", "Constant Grab enabled\nPress F to grab", 2)
+        Message("CS Grab", "Constant Grab enabled\nPress F to grab", 2)
     else
         continuousGrabEnabled = false
         if continuousGrabConnection then
@@ -2354,7 +2354,7 @@ local function toggleContinuousGrab(enabled)
             continuousGrabUI:Destroy()
             continuousGrabUI = nil
         end
-        Message("Constant Grab", "Constant Grab disabled", 2)
+        Message("CS Grab", "Constant Grab disabled", 2)
     end
 end
 local function getCurrency()
@@ -3519,7 +3519,7 @@ figureSection:CreateToggle("Gravity Lock", function(enabled)
     config.gravityLockEnabled = enabled
     autoSaveConfig()
 end)
-figureSection:CreateToggle("Constant Grab", function(enabled)
+figureSection:CreateToggle("CS Grab", function(enabled)
     toggleContinuousGrab(enabled)
 end)
 figureSection:CreateToggle("Ragdoll", function(enabled)
@@ -3535,13 +3535,13 @@ figureSection:CreateToggle("Ragdoll", function(enabled)
         end
     end
 end)
-figureSection:CreateToggle("X-Ray", function(enabled)
+figureSection:CreateToggle("ESP", function(enabled)
     ToggleESP()
     for _, btn in ipairs(figureSection.Buttons) do
         if btn.Name == "ToggleBtn_ESP" then
             local stateLabel = btn:FindFirstChildOfClass("TextLabel")
             if stateLabel then
-                stateLabel.Text = "X-Ray"
+                stateLabel.Text = "ESP"
                 stateLabel.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
             end
             break
@@ -3666,7 +3666,7 @@ local function togglePlatform()
     end
 end
 local otherSection = mainUI:NewSection("Other")
-otherSection:CreateToggle("Create Platform", function(enabled)
+otherSection:CreateToggle("Platform", function(enabled)
     togglePlatform()
 end)
 otherSection:CreateToggle("Hide Map", function(enabled)
@@ -3813,7 +3813,7 @@ local function CreateGrabUI()
     titleLabel.Size = UDim2.new(1, -40, 1, 0)
     titleLabel.Position = UDim2.new(0, 10, 0, 0)
     titleLabel.Font = Enum.Font.SourceSansBold
-    titleLabel.Text = "Constant Grab"
+    titleLabel.Text = "CS Grab"
     titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     titleLabel.TextSize = 16
     titleLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -3850,7 +3850,7 @@ local function CreateGrabUI()
     buttonCorner.Parent = grabButton
     grabButton.MouseButton1Click:Connect(function()
         grabPlayerNonStop()
-        Message("Constant Grab", "Grab executed", 2)
+        Message("CS Grab", "Grab executed", 2)
     end)
     grabButton.MouseEnter:Connect(function()
         TweenService:Create(grabButton, TweenInfo.new(0.1), {
@@ -3901,13 +3901,13 @@ local function ToggleGrabUI()
         grabUI = nil
     end
 end
-otherSection:CreateToggle("Constant Grab", function(enabled)
+otherSection:CreateToggle("CS Grab", function(enabled)
     ToggleGrabUI()
     for _, btn in ipairs(otherSection.Buttons) do
-        if btn.Name == "ToggleBtn_Constant Grab" then
+        if btn.Name == "ToggleBtn_CS Grab" then
             local stateLabel = btn:FindFirstChildOfClass("TextLabel")
             if stateLabel then
-                stateLabel.Text = "Constant Grab"
+                stateLabel.Text = "CS Grab"
                 stateLabel.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
             end
             break
@@ -3917,7 +3917,7 @@ end)
 UserInputService.InputBegan:Connect(function(input, processed)
     if not processed and input.KeyCode == Enum.KeyCode.F then
         grabPlayerNonStop()
-        Message("Constant Grab", "Grab executed", 2)
+        Message("CS Grab", "Grab executed", 2)
     end
 end)
 LocalPlayer.CharacterAdded:Connect(function(newCharacter)
