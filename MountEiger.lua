@@ -541,7 +541,8 @@ end
 local autofarm = config.autofarm
 local autoCollectingCubes = config.autoCollectingCubes
 local autoClaimRewards = config.autoClaimRewards
-local keepUnanchor = config.keepUnanchor
+local antiAnchorEnabled = config.keepUnanchor
+local antiAnchorConnection = nil
 local antiFallEnabled = config.antiFallEnabled
 local antiFallConnection = nil
 local farmMoving = config.farmMoving
@@ -3508,18 +3509,39 @@ figureSection:CreateToggle("No Slip", function(enabled)
     config.slippageEliminationEnabled = enabled
     autoSaveConfig()
 end)
-figureSection:CreateToggle("Unanchor", function(enabled)
-    keepUnanchor = enabled
+-- ANTI ANCHOR (GELUT): unanchor every BasePart inside the local character.
+-- The RenderStepped connection is explicitly disconnected when switched OFF.
+local function setAntiAnchorEnabled(enabled)
+    antiAnchorEnabled = enabled
     config.keepUnanchor = enabled
     autoSaveConfig()
-    coroutine.wrap(function()
-        while keepUnanchor do
-            task.wait()
-            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-                LocalPlayer.Character.HumanoidRootPart.Anchored = false
+
+    if antiAnchorConnection then
+        antiAnchorConnection:Disconnect()
+        antiAnchorConnection = nil
+    end
+
+    if enabled then
+        antiAnchorConnection = RunService.RenderStepped:Connect(function()
+            if not mainUI or not mainUI.MainGui or not mainUI.MainGui.Parent
+                or not antiAnchorEnabled then
+                return
             end
-        end
-    end)()
+
+            local character = LocalPlayer.Character
+            if not character then return end
+
+            for _, part in ipairs(character:GetDescendants()) do
+                if part:IsA("BasePart") and part.Anchored then
+                    part.Anchored = false
+                end
+            end
+        end)
+    end
+end
+
+figureSection:CreateToggle("Anti Anchor", function(enabled)
+    setAntiAnchorEnabled(enabled)
 end)
 figureSection:CreateToggle("Anti Fall", function(enabled)
     antiFallEnabled = enabled
