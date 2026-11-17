@@ -1,10 +1,11 @@
 --[[
     dEnzCreator MountEiger
-    Base: V6 (Other/Rejoin and Other/CS Grab removed; Character/CS Grab retained)
-    Integrated GELUT: Anti Anchor, Big Platform, SkyWalk, Flight Mode, Wall Clip
-    Character controls: Anti Fall, Flight Mode, Wall Clip, Run Speed and existing character tools
-    Other: Platform, SkyWalk, Hide Map, View Data, TP Slam, TP Grab
-    GELUT feature mechanics retained; UI adapted to MountEiger sections.
+    Base: MountEiger_dEnzCreator_V7_GELUT_FLIGHT_WALLCLIP_CLEAN
+    Restored legacy Speed Mount (Humanoid.WalkSpeed presets) for side-by-side testing.
+    Speed Mount is placed under Other and opens its original compact Speed Settings panel.
+    Speed Mount presets: 100–1000 in 100 steps, then 1500, 2000, 2500, 3000, 3500.
+    Existing compact panel dimensions retained; no extra panel space added.
+    GELUT RUN SPEED remains unchanged under Character; all other features are preserved.
 ]]
 
 local Players = game:GetService("Players")
@@ -541,6 +542,9 @@ local antiAnchorEnabled = config.keepUnanchor
 local antiAnchorConnection = nil
 local antiFallEnabled = config.antiFallEnabled
 local antiFallConnection = nil
+local CurrentSpeed = 16
+local HumanoidTracker = nil
+local SpeedUI = nil
 local farmMoving = config.farmMoving
 local showMap = config.showMap
 local autoeat = config.autoeat
@@ -1918,6 +1922,153 @@ local function stopAntiFall()
         antiFallConnection = nil
     end
 end
+-- Speed Settings
+local function CreateSpeedUI()
+    if SpeedUI then
+        SpeedUI:Destroy()
+        SpeedUI = nil
+    end
+    local XenoUI = Instance.new("ScreenGui")
+    XenoUI.Name = "XenoSpeedHax_CR"
+    XenoUI.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    XenoUI.ResetOnSpawn = false
+    XenoUI.Enabled = false
+    XenoUI.Parent = syn and CoreGui or PlayerGui
+    local MainFrame = Instance.new("Frame")
+    MainFrame.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
+    MainFrame.Size = UDim2.new(0, 218, 0, 170)
+    MainFrame.Position = UDim2.new(0.5, -210, 0.5, -120)
+    MainFrame.Active = true
+    MainFrame.Draggable = true
+    MainFrame.Parent = XenoUI
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = MainFrame
+    local shadow = Instance.new("UIStroke")
+    shadow.Color = Color3.fromRGB(0, 0, 0)
+    shadow.Transparency = 0.5
+    shadow.Thickness = 4
+    shadow.Parent = MainFrame
+    local TitleBar = Instance.new("Frame")
+    TitleBar.Size = UDim2.new(1, 0, 0, 40)
+    TitleBar.BackgroundColor3 = Color3.fromRGB(36, 36, 42)
+    TitleBar.Parent = MainFrame
+    local TitleText = Instance.new("TextLabel")
+    TitleText.Size = UDim2.new(1, -40, 1, 0)
+    TitleText.Position = UDim2.new(0, 10, 0, 0)
+    TitleText.BackgroundTransparency = 1
+    TitleText.Text = "Speed Mount Settings"
+    TitleText.Font = Enum.Font.SourceSansBold
+    TitleText.TextSize = 18
+    TitleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+    TitleText.TextXAlignment = Enum.TextXAlignment.Left
+    TitleText.Parent = TitleBar
+    local CloseBtn = Instance.new("TextButton")
+    CloseBtn.Text = "Ãƒâ€”"
+    CloseBtn.TextSize = 20
+    CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    CloseBtn.BackgroundTransparency = 1
+    CloseBtn.Size = UDim2.new(0, 40, 1, 0)
+    CloseBtn.Position = UDim2.new(1, -40, 0, 0)
+    CloseBtn.Parent = TitleBar
+    CloseBtn.MouseButton1Click:Connect(function()
+        XenoUI.Enabled = not XenoUI.Enabled
+    end)
+    local ContentFrame = Instance.new("Frame")
+    ContentFrame.Size = UDim2.new(1, -20, 1, -50)
+    ContentFrame.Position = UDim2.new(0, 10, 0, 40)
+    ContentFrame.BackgroundTransparency = 1
+    ContentFrame.Parent = MainFrame
+    local speedValues = {100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1500, 2000, 2500, 3000, 3500}
+    local speedButtons = {}
+    local function ApplySpeed()
+        if not LocalPlayer.Character then return end
+        local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            pcall(function()
+                humanoid.WalkSpeed = CurrentSpeed
+            end)
+        end
+    end
+    local function createSpeedButton(value, row, col)
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0, 45, 0, 25)
+        btn.Position = UDim2.new(0, (col - 1) * 50, 0, (row - 1) * 30)
+        btn.BackgroundColor3 = Color3.fromRGB(44, 44, 50)
+        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        btn.Text = tostring(value)
+        btn.Font = Enum.Font.SourceSans
+        btn.TextSize = 16
+        btn.BorderSizePixel = 0
+        btn.Parent = ContentFrame
+        local btnCorner = Instance.new("UICorner")
+        btnCorner.CornerRadius = UDim.new(0, 4)
+        btnCorner.Parent = btn
+        btn.MouseButton1Click:Connect(function()
+            CurrentSpeed = value
+            ApplySpeed()
+            Message("Speed Settings", "Speed applied: " .. CurrentSpeed, 2)
+            for _, b in ipairs(speedButtons) do
+                b.BackgroundColor3 = Color3.fromRGB(44, 44, 50)
+            end
+            btn.BackgroundColor3 = Color3.fromRGB(60, 180, 60)
+        end)
+        btn.MouseEnter:Connect(function()
+            TweenService:Create(btn, TweenInfo.new(0.1), {
+                BackgroundColor3 = Color3.fromRGB(54, 54, 60)
+            }):Play()
+        end)
+        btn.MouseLeave:Connect(function()
+            if CurrentSpeed ~= value then
+                TweenService:Create(btn, TweenInfo.new(0.1), {
+                    BackgroundColor3 = Color3.fromRGB(44, 44, 50)
+                }):Play()
+            end
+        end)
+        table.insert(speedButtons, btn)
+    end
+    for i, value in ipairs(speedValues) do
+        local row = math.ceil(i / 4)
+        local col = (i - 1) % 4 + 1
+        createSpeedButton(value, row, col)
+    end
+    local function MonitorHumanoid(humanoid)
+        if HumanoidTracker == humanoid then return end
+        HumanoidTracker = humanoid
+    end
+    LocalPlayer.CharacterAdded:Connect(function(char)
+        local humanoid = char:WaitForChild("Humanoid")
+        MonitorHumanoid(humanoid)
+        ApplySpeed()
+    end)
+    if LocalPlayer.Character then
+        local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid then
+            MonitorHumanoid(humanoid)
+            ApplySpeed()
+        end
+    end
+    task.spawn(function()
+        while task.wait(1) do
+            pcall(ApplySpeed)
+            if LocalPlayer.Character then
+                local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                if humanoid and humanoid ~= HumanoidTracker then
+                    MonitorHumanoid(humanoid)
+                end
+            end
+        end
+    end)
+    SpeedUI = XenoUI
+    return XenoUI
+end
+local function ToggleSpeedUI()
+    if not SpeedUI then
+        CreateSpeedUI()
+    end
+    SpeedUI.Enabled = not SpeedUI.Enabled
+    local status = SpeedUI.Enabled and "Open" or "Close"
+end
 -- Unanchor
 local function cancelAnchored()
     local character = LocalPlayer.Character
@@ -1982,19 +2133,19 @@ local function loadAndRunPlayerDataScript()
         print("=======================================")
         for _, player in Players:GetPlayers() do
             print()
-            print("playerÃƒÂ¯Ã‚Â¼Ã…Â¡" .. player.Name)
+            print("playerÃ¯Â¼Å¡" .. player.Name)
             print("=======================================")
             local hasUpgrades = false
             if player.Upgrades then
                 for _, upg in player.Upgrades:GetChildren() do
                     hasUpgrades = true
-                    local content = "  " .. localization[upg.Name] .. "ÃƒÂ¯Ã‚Â¼Ã…Â¡"
+                    local content = "  " .. localization[upg.Name] .. "Ã¯Â¼Å¡"
                     local cost = 0
                     for l = 2, upg.Value do
                         cost += priceFunctions[upg.Name](l)
                     end
-                    content = content .. " " .. upg.Value .. "levelÃƒÂ¯Ã‚Â¼Ã¢â‚¬Âº"
-                    content = content .. " " .. growthFunctions[upg.Name](upg.Value) .. "valueÃƒÂ¯Ã‚Â¼Ã¢â‚¬Âº"
+                    content = content .. " " .. upg.Value .. "levelÃ¯Â¼â€º"
+                    content = content .. " " .. growthFunctions[upg.Name](upg.Value) .. "valueÃ¯Â¼â€º"
                     content = content .. " " .. cost .. "cost"
                     print(content)
                 end
@@ -2837,7 +2988,7 @@ local function CreateTeleportThrowUI()
     closeButton.Position = UDim2.new(1, -30, 0, 0)
     closeButton.Size = UDim2.new(0, 30, 1, 0)
     closeButton.Font = Enum.Font.GothamBold
-    closeButton.Text = "Ãƒâ€”"
+    closeButton.Text = "Ã—"
     closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     closeButton.TextSize = 16
     closeButton.MouseButton1Click:Connect(function()
@@ -4260,6 +4411,19 @@ LocalPlayer.CharacterAdded:Connect(function()
 end)
 
 local otherSection = mainUI:NewSection("Other")
+otherSection:CreateToggle("Speed Mount", function(enabled)
+    ToggleSpeedUI()
+    for _, btn in ipairs(otherSection.Buttons) do
+        if btn.Name == "ToggleBtn_Speed Mount" then
+            local stateLabel = btn:FindFirstChildOfClass("TextLabel")
+            if stateLabel then
+                stateLabel.Text = "Speed Mount"
+                stateLabel.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+            end
+            break
+        end
+    end
+end)
 otherSection:CreateToggle("Platform", function(enabled)
     setPlatformEnabled(enabled)
 end)
