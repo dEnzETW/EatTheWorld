@@ -546,6 +546,8 @@ local gravityLockEnabled = config.gravityLockEnabled
 local gravityLockConnection = nil
 local teleportThrowUI = nil
 local teleportGrabUI = nil
+local teleportGrabStop = nil
+local teleportGrabCleanup = nil
 local continuousGrabEnabled = false
 local continuousGrabUI = nil
 local continuousGrabConnection = nil
@@ -1955,7 +1957,7 @@ local function CreateSpeedUI()
     TitleText.TextXAlignment = Enum.TextXAlignment.Left
     TitleText.Parent = TitleBar
     local CloseBtn = Instance.new("TextButton")
-    CloseBtn.Text = "Ãƒâ€”"
+    CloseBtn.Text = "ÃƒÆ’Ã¢â‚¬â€"
     CloseBtn.TextSize = 20
     CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     CloseBtn.BackgroundTransparency = 1
@@ -2124,19 +2126,19 @@ local function loadAndRunPlayerDataScript()
         print("=======================================")
         for _, player in Players:GetPlayers() do
             print()
-            print("playerÃ¯Â¼Å¡" .. player.Name)
+            print("playerÃƒÂ¯Ã‚Â¼Ã…Â¡" .. player.Name)
             print("=======================================")
             local hasUpgrades = false
             if player.Upgrades then
                 for _, upg in player.Upgrades:GetChildren() do
                     hasUpgrades = true
-                    local content = "  " .. localization[upg.Name] .. "Ã¯Â¼Å¡"
+                    local content = "  " .. localization[upg.Name] .. "ÃƒÂ¯Ã‚Â¼Ã…Â¡"
                     local cost = 0
                     for l = 2, upg.Value do
                         cost += priceFunctions[upg.Name](l)
                     end
-                    content = content .. " " .. upg.Value .. "levelÃ¯Â¼â€º"
-                    content = content .. " " .. growthFunctions[upg.Name](upg.Value) .. "valueÃ¯Â¼â€º"
+                    content = content .. " " .. upg.Value .. "levelÃƒÂ¯Ã‚Â¼Ã¢â‚¬Âº"
+                    content = content .. " " .. growthFunctions[upg.Name](upg.Value) .. "valueÃƒÂ¯Ã‚Â¼Ã¢â‚¬Âº"
                     content = content .. " " .. cost .. "cost"
                     print(content)
                 end
@@ -2449,205 +2451,467 @@ local function getDistanceByCurrency(currency)
         return 210
     end
 end
--- Teleport Grab
-    local function getForwardGrabPosition(character)
-        local rootPart = character.HumanoidRootPart
-        local direction = rootPart.CFrame.LookVector
-        local distance = 30
-        local grabPosition = rootPart.Position + direction * distance
-        return grabPosition
-    end
+-- TP Grab V19 | menggantikan TP Grab lama
+local ToggleTeleportGrabUI
 local function CreateTeleportGrabUI()
     if teleportGrabUI then
         teleportGrabUI:Destroy()
         teleportGrabUI = nil
     end
-    local gui = Instance.new("ScreenGui")
-    gui.Name = "PlayerTeleportTool"
-    gui.ResetOnSpawn = false
-    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    gui.Enabled = true
-    gui.IgnoreGuiInset = true
+    local FOLLOW_CLEARANCE = 1.0 -- jarak kosong adaptif antar badan
+    local GRAB_RETRY_INTERVAL = 0.12 -- uji respons cepat; satu request per interval
+    local SAFETY_TIMEOUT = 45
+    local RETURN_TO_ORIGIN = true
+    local GUI_NAME = "DENZ_TP_GRAB_AUTO_V19"
+
     pcall(function()
-        gui.Parent = CoreGui
+        local old = (gethui and gethui():FindFirstChild(GUI_NAME))
+            or CoreGui:FindFirstChild(GUI_NAME)
+            or LocalPlayer:WaitForChild("PlayerGui"):FindFirstChild(GUI_NAME)
+        if old then old:Destroy() end
     end)
-    if gui.Parent ~= CoreGui then
-        gui.Parent = PlayerGui
-    end
-    local mainFrame = Instance.new("Frame")
-    mainFrame.Name = "mainFrame"
-    mainFrame.Parent = gui
-    mainFrame.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
-    mainFrame.BorderSizePixel = 0
-    mainFrame.Position = UDim2.new(0, 20, 0, 20)
-    mainFrame.Size = UDim2.new(0, 150, 0, 250)
-    mainFrame.Active = true
-    mainFrame.Draggable = false
-    mainFrame.ClipsDescendants = true
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 7)
-    corner.Parent = mainFrame
-    local shadow = Instance.new("UIStroke")
-    shadow.Color = Color3.fromRGB(0, 0, 0)
-    shadow.Transparency = 0.5
-    shadow.Thickness = 2
-    shadow.Parent = mainFrame
-    local titleBar = Instance.new("Frame")
-    titleBar.Name = "titleBar"
-    titleBar.Parent = mainFrame
-    titleBar.BackgroundColor3 = Color3.fromRGB(36, 36, 42)
-    titleBar.BorderSizePixel = 0
-    titleBar.Size = UDim2.new(1, 0, 0, 32)
-    titleBar.Position = UDim2.new(0, 0, 0, 0)
-    titleBar.Active = true
-    titleBar.Draggable = false
-    local titleLabel = Instance.new("TextLabel")
-    titleLabel.Name = "titleLabel"
-    titleLabel.Parent = titleBar
-    titleLabel.BackgroundTransparency = 1
-    titleLabel.Size = UDim2.new(1, -30, 1, 0)
-    titleLabel.Position = UDim2.new(0, 8, 0, 0)
-    titleLabel.Font = Enum.Font.GothamBold
-    titleLabel.Text = "TP Grab"
-    titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    titleLabel.TextSize = 13
-    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    titleBar.Active = true
-    titleBar.Draggable = false
-    local closeButton = Instance.new("TextButton")
-    closeButton.Name = "closeButton"
-    closeButton.Parent = titleBar
-    closeButton.BackgroundTransparency = 1
-    closeButton.Position = UDim2.new(1, -30, 0, 0)
-    closeButton.Size = UDim2.new(0, 30, 1, 0)
-    closeButton.Font = Enum.Font.GothamBold
-    closeButton.Text = "Ã—"
-    closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    closeButton.TextSize = 16
-    closeButton.MouseButton1Click:Connect(function()
-        gui.Enabled = not gui.Enabled
-    end)
-    local playersScroll = Instance.new("ScrollingFrame")
-    playersScroll.Name = "playersScroll"
-    playersScroll.Parent = mainFrame
-    playersScroll.Active = true
-    playersScroll.BackgroundTransparency = 1
-    playersScroll.BorderSizePixel = 0
-    playersScroll.Position = UDim2.new(0, 6, 0, 37)
-    playersScroll.Size = UDim2.new(1, -12, 1, -43)
-    playersScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-    playersScroll.ScrollBarThickness = 3
-    playersScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    local UIListLayout = Instance.new("UIListLayout")
-    UIListLayout.Parent = playersScroll
-    UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    UIListLayout.Padding = UDim.new(0, 4)
-    local function addbtn(parent, plr)
-        local playerbutton = Instance.new("TextButton")
-        playerbutton.Name = plr.Name
-        playerbutton.Parent = parent
-        playerbutton.BackgroundColor3 = Color3.fromRGB(44, 44, 50)
-        playerbutton.BorderSizePixel = 0
-        playerbutton.Size = UDim2.new(1, 0, 0, 29)
-        playerbutton.Font = Enum.Font.GothamMedium
-        playerbutton.Text = plr.Name
-        if plr.Name ~= plr.DisplayName then
-            playerbutton.Text = playerbutton.Text .. " (" .. plr.DisplayName .. ")"
-        end
-        playerbutton.TextColor3 = Color3.fromRGB(255, 255, 255)
-        playerbutton.TextSize = 11
-        playerbutton.TextXAlignment = Enum.TextXAlignment.Left
-        playerbutton.TextYAlignment = Enum.TextYAlignment.Center
-        local buttonCorner = Instance.new("UICorner")
-        buttonCorner.CornerRadius = UDim.new(0, 5)
-        buttonCorner.Parent = playerbutton
-        playerbutton.MouseButton1Click:Connect(function()
-            local localPlayer = LocalPlayer
-            if not localPlayer or not localPlayer.Character then return end
-            local localHumanoidRootPart = localPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if not localHumanoidRootPart then return end
-            if character and character:FindFirstChild("Humanoid") and character.Humanoid.Health > 0 then
-                grabForwardObject()
-                task.wait(0.2) -- Short delay to ensure the grab command executes
+
+    local gui = Instance.new("ScreenGui")
+    gui.Name = GUI_NAME
+    gui.ResetOnSpawn = false
+    gui.IgnoreGuiInset = true
+    local parented = false
+    pcall(function()
+        if type(gethui) == "function" then
+            local h = gethui()
+            if typeof(h) == "Instance" then
+                gui.Parent = h
+                parented = gui.Parent == h
             end
-            if plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
-                local playerRootPart = plr.Character.HumanoidRootPart
-                local currency = getCurrency()
-                local distance = getDistanceByCurrency(currency)
-                local behindPosition = playerRootPart.Position - playerRootPart.CFrame.LookVector * distance
-                behindPosition = Vector3.new(behindPosition.X, playerRootPart.Position.Y, behindPosition.Z)
-                local direction = (playerRootPart.Position - behindPosition).Unit
-                localHumanoidRootPart.CFrame = CFrame.new(behindPosition, behindPosition + Vector3.new(direction.X, 0, direction.Z))
-            end
-        end)
-        playerbutton.MouseEnter:Connect(function()
-            TweenService:Create(playerbutton, TweenInfo.new(0.1), {
-                BackgroundColor3 = Color3.fromRGB(54, 54, 60)
-            }):Play()
-        end)
-        playerbutton.MouseLeave:Connect(function()
-            TweenService:Create(playerbutton, TweenInfo.new(0.1), {
-                BackgroundColor3 = Color3.fromRGB(44, 44, 50)
-            }):Play()
-        end)
-    end
-    for i, v in pairs(Players:GetPlayers()) do
-        addbtn(playersScroll, v)
-    end
-    local con = nil
-    con = Players.PlayerAdded:Connect(function(plr)
-        if gui then
-            addbtn(playersScroll, plr)
-        else
-            con:Disconnect()
         end
     end)
-    local con = nil
-    con = Players.PlayerRemoving:Connect(function(plr)
-        if gui then
-            local playerbutton = playersScroll:FindFirstChild(plr.Name)
-            if playerbutton then
-                playerbutton:Destroy()
-            end
-        else
-            con:Disconnect()
-        end
-    end)
+    if not parented then
+        pcall(function()
+            gui.Parent = CoreGui
+            parented = gui.Parent == CoreGui
+        end)
+    end
+    if not parented then gui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
+
+    local panel = Instance.new("Frame")
+    panel.Size = UDim2.fromOffset(190, 245)
+    panel.Position = UDim2.new(0, 18, 0.3, 0)
+    panel.BackgroundColor3 = Color3.fromRGB(20, 19, 25)
+    panel.BorderSizePixel = 0
+    panel.Parent = gui
+    Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 10)
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(190, 32, 54)
+    stroke.Thickness = 1.5
+    stroke.Parent = panel
+
+    local function makeLabel(text, y, height, size)
+        local obj = Instance.new("TextLabel")
+        obj.Size = UDim2.new(1, -16, 0, height)
+        obj.Position = UDim2.fromOffset(8, y)
+        obj.BackgroundTransparency = 1
+        obj.Text = text
+        obj.TextColor3 = Color3.fromRGB(240, 238, 244)
+        obj.TextSize = size or 11
+        obj.Font = Enum.Font.Gotham
+        obj.TextXAlignment = Enum.TextXAlignment.Left
+        obj.TextWrapped = true
+        obj.Parent = panel
+        return obj
+    end
+
+    local title = makeLabel("dEnzCreator | JUMP FOLLOW V19", 8, 20, 12)
+    title.Font = Enum.Font.GothamBold
+
+    title.Active = true
     local dragging = false
-    local dragStart = Vector2.new()
-    local startPos = UDim2.new()
-    titleBar.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+    local dragInput = nil
+    local dragStart = nil
+    local startPosition = nil
+    local inputChangedConnection = nil
+    local inputEndedConnection = nil
+
+    title.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
-            startPos = mainFrame.Position
-            UserInputService.MouseIconEnabled = false
+            startPosition = panel.Position
+            dragInput = input
+
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                    dragInput = nil
+                end
+            end)
         end
     end)
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+
+    title.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+
+    inputChangedConnection = UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input == dragInput
+            or input.UserInputType == Enum.UserInputType.MouseMovement) then
             local delta = input.Position - dragStart
-            mainFrame.Position = UDim2.new(
-                startPos.X.Scale,
-                startPos.X.Offset + delta.X,
-                startPos.Y.Scale,
-                startPos.Y.Offset + delta.Y
+            panel.Position = UDim2.new(
+                startPosition.X.Scale,
+                startPosition.X.Offset + delta.X,
+                startPosition.Y.Scale,
+                startPosition.Y.Offset + delta.Y
             )
         end
     end)
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-            UserInputService.MouseIconEnabled = true
+    local status = makeLabel("OFF | Pilih target", 32, 30, 10)
+    status.TextColor3 = Color3.fromRGB(180, 180, 190)
+    local targetInfo = makeLabel("Target: -", 62, 20, 10)
+
+    local playerList = Instance.new("ScrollingFrame")
+    playerList.Size = UDim2.new(1, -16, 0, 112)
+    playerList.Position = UDim2.fromOffset(8, 86)
+    playerList.BackgroundColor3 = Color3.fromRGB(31, 30, 37)
+    playerList.BorderSizePixel = 0
+    playerList.ScrollBarThickness = 3
+    playerList.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    playerList.CanvasSize = UDim2.new()
+    playerList.Parent = panel
+    Instance.new("UICorner", playerList).CornerRadius = UDim.new(0, 6)
+    local layout = Instance.new("UIListLayout")
+    layout.Padding = UDim.new(0, 3)
+    layout.Parent = playerList
+
+    local selectedTarget, running, runToken = nil, false, 0
+    local followConnection = nil
+    local targetButtons = {}
+    local NORMAL_ROW_COLOR = Color3.fromRGB(54, 52, 61)
+    local ACTIVE_ROW_COLOR = Color3.fromRGB(35, 145, 75)
+
+    local function updateTargetRowColors()
+        for player, button in pairs(targetButtons) do
+            if button and button.Parent then
+                button.BackgroundColor3 =
+                    (running and player == selectedTarget)
+                    and ACTIVE_ROW_COLOR or NORMAL_ROW_COLOR
+            end
         end
+    end
+    local cycleState = "OFF"
+    local grabSentAt = 0
+    local targetYBeforeGrab = nil
+    local successPauseUntil = 0
+    local GRAB_SUCCESS_RISE = 1.25
+    local GRAB_SUCCESS_WINDOW = 0.55
+    local SUCCESS_PAUSE = 0.20
+    local CYCLE_RETRY_DELAY = GRAB_RETRY_INTERVAL
+
+    local function setStatus(message, color)
+        status.Text = message
+        status.TextColor3 = color or Color3.fromRGB(180, 180, 190)
+    end
+
+    local function getAliveCharacter(who)
+        local character = who and who.Character
+        if not character then return nil, nil, nil end
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        local root = character:FindFirstChild("HumanoidRootPart")
+        if not humanoid or not root or humanoid.Health <= 0 then return nil, nil, nil end
+        return character, humanoid, root
+    end
+
+    local function stopFollow()
+        if followConnection then
+            followConnection:Disconnect()
+            followConnection = nil
+        end
+    end
+
+    local originPivot = nil
+    local huntStartedAt = 0
+
+    local function stopRun(reason)
+        running = false
+        runToken += 1
+        stopFollow()
+        cycleState = "OFF"
+        if RETURN_TO_ORIGIN and originPivot then
+            local currentCharacter = LocalPlayer.Character
+            if currentCharacter then
+                pcall(function()
+                    currentCharacter:PivotTo(originPivot)
+                end)
+            end
+        end
+        originPivot = nil
+        updateTargetRowColors()
+        setStatus(reason or "OFF", Color3.fromRGB(255, 180, 90))
+    end
+
+    teleportGrabStop = stopRun
+
+    local function sendGrabRequest()
+        local replicatedStorage = game:GetService("ReplicatedStorage")
+        local localEvents = replicatedStorage:FindFirstChild("LocalEvents")
+        local grabEvent = localEvents and localEvents:FindFirstChild("Grab")
+
+        if not grabEvent or not grabEvent:IsA("BindableEvent") then
+            return false, "ReplicatedStorage.LocalEvents.Grab (BindableEvent) tidak ditemukan"
+        end
+
+        local ok, err = pcall(function()
+            grabEvent:Fire()
+        end)
+        if not ok then return false, tostring(err) end
+        return true
+    end
+
+    local function beginTarget(target)
+        selectedTarget = target
+        targetInfo.Text = "Target: @" .. target.Name
+        setStatus("Target dipilih | follow aktif", Color3.fromRGB(100, 220, 150))
+    end
+
+    local function startHunt()
+        local target = selectedTarget
+        if not target then
+            setStatus("Pilih target dahulu", Color3.fromRGB(255, 180, 90))
+            return
+        end
+
+        local _, _, myRoot = getAliveCharacter(LocalPlayer)
+        local _, _, targetRoot = getAliveCharacter(target)
+        if not myRoot or not targetRoot then
+            setStatus("Character / target belum siap", Color3.fromRGB(255, 180, 90))
+            return
+        end
+
+        running = true
+        runToken += 1
+        local token = runToken
+        originPivot = LocalPlayer.Character:GetPivot()
+        huntStartedAt = os.clock()
+        cycleState = "FOLLOW"
+        grabSentAt = 0
+        targetYBeforeGrab = nil
+        successPauseUntil = 0
+        updateTargetRowColors()
+        setStatus("ON | memburu @" .. target.Name, Color3.fromRGB(100, 220, 150))
+
+        followConnection = RunService.Heartbeat:Connect(function()
+            if not running or token ~= runToken then return end
+            if not target or target.Parent ~= Players then
+                stopRun("Target keluar | OFF")
+                return
+            end
+
+            local targetCharacter, targetHumanoid, currentTargetRoot = getAliveCharacter(target)
+            local myCharacter, myHumanoid, currentMyRoot = getAliveCharacter(LocalPlayer)
+            if not targetCharacter or not targetHumanoid or not currentTargetRoot
+                or not myCharacter or not myHumanoid or not currentMyRoot then
+                stopRun("Character hilang / mati | OFF")
+                return
+            end
+
+            local now = os.clock()
+            if SAFETY_TIMEOUT > 0 and now - huntStartedAt >= SAFETY_TIMEOUT then
+                stopRun("Safety timeout | OFF")
+                return
+            end
+
+            -- Setelah target terangkat, hentikan follow dan Grab sejenak,
+            -- lalu mulai siklus berburu target yang sama selama ON.
+            if cycleState == "SUCCESS_PAUSE" then
+                if now < successPauseUntil then
+                    return
+                end
+                cycleState = "FOLLOW"
+                grabSentAt = 0
+                targetYBeforeGrab = nil
+                setStatus("ON | berburu ulang @" .. target.Name,
+                    Color3.fromRGB(100, 220, 150))
+            end
+
+            -- Konfirmasi praktis: target naik setidaknya 1.25 stud
+            -- dalam 1.4 detik setelah request Grab. Ini indikator visual,
+            -- bukan konfirmasi server resmi.
+            if cycleState == "WAIT_RESULT" then
+                local rise = currentTargetRoot.Position.Y - targetYBeforeGrab
+                if rise >= GRAB_SUCCESS_RISE then
+                    cycleState = "SUCCESS_PAUSE"
+                    successPauseUntil = now + SUCCESS_PAUSE
+                    setStatus("GRAB terdeteksi | lanjut berburu",
+                        Color3.fromRGB(100, 220, 150))
+                    return
+                elseif now - grabSentAt >= GRAB_SUCCESS_WINDOW then
+                    cycleState = "FOLLOW"
+                    targetYBeforeGrab = nil
+                    setStatus("Belum terdeteksi | follow + retry",
+                        Color3.fromRGB(255, 180, 90))
+                end
+                -- Sengaja tidak return: karakter tetap mengikuti target
+                -- selama menunggu hasil Grab.
+            end
+
+            if cycleState == "FOLLOW" or cycleState == "WAIT_RESULT" then
+                -- Jarak adaptif: setengah kedalaman kedua HumanoidRootPart
+                -- ditambah clearance 1 stud antar badan.
+                local adaptiveDistance =
+                    (currentMyRoot.Size.Z * 0.5)
+                    + (currentTargetRoot.Size.Z * 0.5)
+                    + FOLLOW_CLEARANCE
+
+                -- Prediksi pendek agar posisi follow tidak tertinggal
+                -- ketika target sedang bergerak.
+                local targetVelocity = currentTargetRoot.AssemblyLinearVelocity
+                local predictionTime = 0.10
+                local predictedTargetPosition =
+                    currentTargetRoot.Position + targetVelocity * predictionTime
+
+                local behindPosition = predictedTargetPosition
+                    - currentTargetRoot.CFrame.LookVector * adaptiveDistance
+
+                -- Tanpa Raycast: ikuti ketinggian target secara langsung.
+                -- Ini menghindari status tertahan karena ground tidak terdeteksi.
+                local targetFootY = currentTargetRoot.Position.Y
+                    - targetHumanoid.HipHeight
+                    - (currentTargetRoot.Size.Y * 0.5)
+
+                local myStandingHeight = myHumanoid.HipHeight
+                    + (currentMyRoot.Size.Y * 0.5)
+
+                local followRootY = targetFootY + myStandingHeight
+
+                local desiredRootPosition = Vector3.new(
+                    behindPosition.X,
+                    followRootY,
+                    behindPosition.Z
+                )
+                local desiredRootCFrame = CFrame.lookAt(
+                    desiredRootPosition,
+                    desiredRootPosition + currentTargetRoot.CFrame.LookVector,
+                    Vector3.yAxis
+                )
+                local pivotRelativeToRoot = currentMyRoot.CFrame:ToObjectSpace(myCharacter:GetPivot())
+                local desiredPivot = desiredRootCFrame * pivotRelativeToRoot
+
+                local moved = pcall(function()
+                    myCharacter:PivotTo(desiredPivot)
+                end)
+                if not moved then
+                    setStatus("PivotTo gagal | Follow tertahan",
+                        Color3.fromRGB(255, 180, 90))
+                    return
+                end
+
+                -- Grab segera setelah posisi follow diperbarui, lalu retry
+                -- tiap 0.12 detik. Follow tetap berjalan selama menunggu.
+                if grabSentAt == 0 or now - grabSentAt >= GRAB_RETRY_INTERVAL then
+                    grabSentAt = now
+                    targetYBeforeGrab = currentTargetRoot.Position.Y
+                    local sent, reason = sendGrabRequest()
+                    if sent then
+                        cycleState = "WAIT_RESULT"
+                        setStatus("INSTANT GRAB | follow aktif",
+                            Color3.fromRGB(100, 220, 150))
+                    else
+                        setStatus("Remote error: " .. tostring(reason),
+                            Color3.fromRGB(255, 120, 100))
+                    end
+                end
+            end
+        end)
+    end
+
+    local function toggleTarget(target)
+        if running and selectedTarget == target then
+            stopRun("OFF | @" .. target.Name)
+            return
+        end
+
+        if running then
+            stopRun("Target diganti")
+        end
+
+        beginTarget(target)
+        startHunt()
+    end
+
+    local function refreshPlayers()
+        for _, child in ipairs(playerList:GetChildren()) do
+            if child:IsA("TextButton") then child:Destroy() end
+        end
+        table.clear(targetButtons)
+        local targets = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then table.insert(targets, p) end
+        end
+        table.sort(targets, function(a, b)
+            return string.lower(a.Name) < string.lower(b.Name)
+        end)
+        for _, target in ipairs(targets) do
+            local button = Instance.new("TextButton")
+            button.Size = UDim2.new(1, -4, 0, 24)
+            button.BackgroundColor3 = NORMAL_ROW_COLOR
+            button.BorderSizePixel = 0
+            button.Text = target.DisplayName .. "  (@" .. target.Name .. ")"
+            button.TextColor3 = Color3.fromRGB(245, 243, 247)
+            button.TextSize = 9
+            button.Font = Enum.Font.Gotham
+            button.Parent = playerList
+            targetButtons[target] = button
+            Instance.new("UICorner", button).CornerRadius = UDim.new(0, 5)
+            button.Activated:Connect(function() toggleTarget(target) end)
+        end
+    end
+
+    local playerAddedConnection = Players.PlayerAdded:Connect(function()
+        task.defer(refreshPlayers)
     end)
+    local playerRemovingConnection = Players.PlayerRemoving:Connect(function(leaving)
+        if leaving == selectedTarget and running then
+            stopRun("Target keluar | posisi dikembalikan")
+        end
+        task.defer(refreshPlayers)
+    end)
+
+    teleportGrabCleanup = function()
+        dragging = false
+        UserInputService.MouseIconEnabled = true
+        if inputChangedConnection then
+            inputChangedConnection:Disconnect()
+            inputChangedConnection = nil
+        end
+        if playerAddedConnection then
+            playerAddedConnection:Disconnect()
+            playerAddedConnection = nil
+        end
+        if playerRemovingConnection then
+            playerRemovingConnection:Disconnect()
+            playerRemovingConnection = nil
+        end
+    end
+
+    refreshPlayers()
     teleportGrabUI = gui
     return gui
 end
-local function ToggleTeleportGrabUI()
+
+ToggleTeleportGrabUI = function()
     if not teleportGrabUI then
         CreateTeleportGrabUI()
     else
+        if teleportGrabStop then
+            teleportGrabStop("OFF | TP Grab ditutup")
+        end
+        if teleportGrabCleanup then
+            teleportGrabCleanup()
+        end
+        teleportGrabStop = nil
+        teleportGrabCleanup = nil
         teleportGrabUI:Destroy()
         teleportGrabUI = nil
     end
@@ -2717,7 +2981,7 @@ local function CreateTeleportThrowUI()
     closeButton.Position = UDim2.new(1, -30, 0, 0)
     closeButton.Size = UDim2.new(0, 30, 1, 0)
     closeButton.Font = Enum.Font.GothamBold
-    closeButton.Text = "Ã—"
+    closeButton.Text = "Ãƒâ€”"
     closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     closeButton.TextSize = 16
     closeButton.MouseButton1Click:Connect(function()
@@ -3826,7 +4090,7 @@ local function CreateGrabUI()
     closeButton.Position = UDim2.new(1, -40, 0, 0)
     closeButton.Size = UDim2.new(0, 40, 1, 0)
     closeButton.Font = Enum.Font.SourceSansBold
-    closeButton.Text = "Ãƒâ€”"
+    closeButton.Text = "ÃƒÆ’Ã¢â‚¬â€"
     closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     closeButton.TextSize = 20
     closeButton.MouseButton1Click:Connect(function()
