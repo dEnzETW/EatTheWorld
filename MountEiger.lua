@@ -1,14 +1,10 @@
 --[[
-    UPDATE: GELUT ESP PLAYER integrated into MountEiger
-    Base: MountEiger_TP_GRAB_V19_THEME_MATCH.txt
-    ESP source: GELUT.lua (1).txt
-    Replaced: MountEiger legacy ESP (SurfaceGui red body overlay + name/display-name tag)
-    Added: GELUT player-stat Highlight + BillboardGui (Size, MaxSize, Multi, Eat, WalkSpeed)
-    UI: MountEiger Character section toggle; MountEiger theme, sizing and layout retained.
-    Removed: MountEiger legacy Speed Settings UI, WalkSpeed setter, and Speed toggle.
-    Added: GELUT RUN SPEED movement loop + editable numeric speed (default 100, min 0, no fixed max).
-    UI: RUN SPEED toggle and value field use MountEiger Character panel theme.
-    Other MountEiger features: preserved.
+    dEnzCreator MountEiger
+    Base: V6 (Other/Rejoin and Other/CS Grab removed; Character/CS Grab retained)
+    Integrated GELUT: Anti Anchor, Big Platform, SkyWalk, Flight Mode, Wall Clip
+    Character controls: Anti Fall, Flight Mode, Wall Clip, Run Speed and existing character tools
+    Other: Platform, SkyWalk, Hide Map, View Data, TP Slam, TP Grab
+    GELUT feature mechanics retained; UI adapted to MountEiger sections.
 ]]
 
 local Players = game:GetService("Players")
@@ -3554,6 +3550,195 @@ figureSection:CreateToggle("Anti Fall", function(enabled)
         end
     else
         stopAntiFall()
+    end
+end)
+
+-- GELUT FLIGHT MODE: original movement/force behavior, adapted to MountEiger.
+local flightEnabled = false
+local flightSpeed = 100
+local flyBodyVelocity = nil
+local flyBodyGyro = nil
+
+local function clearFlightForces()
+    if flyBodyVelocity then
+        pcall(function() flyBodyVelocity:Destroy() end)
+        flyBodyVelocity = nil
+    end
+    if flyBodyGyro then
+        pcall(function() flyBodyGyro:Destroy() end)
+        flyBodyGyro = nil
+    end
+end
+
+local function setFlightEnabled(enabled)
+    flightEnabled = enabled
+    if not enabled then
+        clearFlightForces()
+        local character = LocalPlayer.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        if humanoid and humanoid.PlatformStand then
+            humanoid.PlatformStand = false
+            humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end
+    end
+end
+
+-- Place Wall Clip beside Anti Fall, then Flight Mode with its speed field.
+figureSection:CreateToggle("Wall Clip", function(enabled)
+    setWallClipEnabled(enabled)
+end)
+
+local flightRowY = figureSection.ContentY
+figureSection:CreateToggle("Flight Mode", function(enabled)
+    setFlightEnabled(enabled)
+end)
+
+local flightSpeedBox = Instance.new("TextBox")
+flightSpeedBox.Name = "FlightSpeedValue"
+flightSpeedBox.Size = UDim2.new(0.50, -4, 0, 25)
+flightSpeedBox.Position = UDim2.new(0, 2, 0, flightRowY + 3)
+flightSpeedBox.BackgroundColor3 = UI.Theme.Row
+flightSpeedBox.BorderSizePixel = 0
+flightSpeedBox.Text = tostring(flightSpeed)
+flightSpeedBox.PlaceholderText = "Flight Speed"
+flightSpeedBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+flightSpeedBox.PlaceholderColor3 = Color3.fromRGB(170, 170, 170)
+flightSpeedBox.TextSize = 12
+flightSpeedBox.Font = Enum.Font.GothamMedium
+flightSpeedBox.ClearTextOnFocus = false
+flightSpeedBox.TextXAlignment = Enum.TextXAlignment.Center
+flightSpeedBox.Parent = figureSection.Content
+local flightSpeedCorner = Instance.new("UICorner")
+flightSpeedCorner.CornerRadius = UDim.new(0, 7)
+flightSpeedCorner.Parent = flightSpeedBox
+flightSpeedBox.FocusLost:Connect(function()
+    local entered = tonumber(flightSpeedBox.Text)
+    if entered then
+        flightSpeed = math.clamp(math.floor(entered), 1, 1000)
+    end
+    flightSpeedBox.Text = tostring(flightSpeed)
+end)
+
+task.spawn(function()
+    while mainUI and mainUI.MainGui and mainUI.MainGui.Parent do
+        local character = LocalPlayer.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+        if flightEnabled and root and humanoid and humanoid.Health > 0 then
+            humanoid.PlatformStand = true
+
+            if not flyBodyVelocity or flyBodyVelocity.Parent ~= root then
+                clearFlightForces()
+
+                flyBodyVelocity = Instance.new("BodyVelocity")
+                flyBodyVelocity.Name = "GELUT_FlightVelocity"
+                flyBodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+                flyBodyVelocity.Velocity = Vector3.zero
+                flyBodyVelocity.Parent = root
+
+                flyBodyGyro = Instance.new("BodyGyro")
+                flyBodyGyro.Name = "GELUT_FlightGyro"
+                flyBodyGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+                flyBodyGyro.P = 50000
+                flyBodyGyro.D = 500
+                flyBodyGyro.CFrame = root.CFrame
+                flyBodyGyro.Parent = root
+            end
+
+            local camera = Workspace.CurrentCamera
+            local cameraCFrame = camera and camera.CFrame or root.CFrame
+            local worldMove = humanoid.MoveDirection
+            local targetVelocity = Vector3.zero
+
+            if worldMove.Magnitude > 0.05 then
+                targetVelocity = worldMove.Unit * flightSpeed
+            end
+
+            if not UserInputService.TouchEnabled then
+                if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+                    targetVelocity += Vector3.new(0, flightSpeed, 0)
+                end
+                if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+                    or UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+                    targetVelocity -= Vector3.new(0, flightSpeed, 0)
+                end
+            elseif humanoid.Jump then
+                targetVelocity += Vector3.new(0, flightSpeed * 0.8, 0)
+            end
+
+            flyBodyVelocity.Velocity = targetVelocity
+            flyBodyGyro.CFrame = cameraCFrame
+        else
+            clearFlightForces()
+            if humanoid and humanoid.PlatformStand then
+                humanoid.PlatformStand = false
+                humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+            end
+        end
+        task.wait()
+    end
+
+    clearFlightForces()
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if humanoid then humanoid.PlatformStand = false end
+end)
+
+-- GELUT WALL CLIP: preserve each part's original CanCollide value and restore it on OFF.
+local wallClipEnabled = false
+local wallClipConnection = nil
+local wallClipOriginal = setmetatable({}, {__mode = "k"})
+
+local function restoreWallClipParts()
+    for part, originalValue in pairs(wallClipOriginal) do
+        if part and part.Parent then
+            pcall(function()
+                part.CanCollide = originalValue
+            end)
+        end
+        wallClipOriginal[part] = nil
+    end
+end
+
+local function setWallClipEnabled(enabled)
+    wallClipEnabled = enabled
+
+    if wallClipConnection then
+        wallClipConnection:Disconnect()
+        wallClipConnection = nil
+    end
+
+    if not enabled then
+        restoreWallClipParts()
+        return
+    end
+
+    wallClipConnection = RunService.Stepped:Connect(function()
+        if not mainUI or not mainUI.MainGui or not mainUI.MainGui.Parent
+            or not wallClipEnabled then
+            return
+        end
+
+        local character = LocalPlayer.Character
+        if not character then return end
+
+        for _, part in ipairs(character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                if wallClipOriginal[part] == nil then
+                    wallClipOriginal[part] = part.CanCollide
+                end
+                if part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
+        end
+    end)
+end
+
+LocalPlayer.CharacterAdded:Connect(function()
+    if wallClipEnabled then
+        restoreWallClipParts()
     end
 end)
 local invisibilityGui = nil
