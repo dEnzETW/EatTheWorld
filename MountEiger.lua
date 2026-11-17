@@ -1982,19 +1982,19 @@ local function loadAndRunPlayerDataScript()
         print("=======================================")
         for _, player in Players:GetPlayers() do
             print()
-            print("playerÃƒÂ¯Ã‚Â¼Ã…Â¡" .. player.Name)
+            print("playerÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¼Ãƒâ€¦Ã‚Â¡" .. player.Name)
             print("=======================================")
             local hasUpgrades = false
             if player.Upgrades then
                 for _, upg in player.Upgrades:GetChildren() do
                     hasUpgrades = true
-                    local content = "  " .. localization[upg.Name] .. "ÃƒÂ¯Ã‚Â¼Ã…Â¡"
+                    local content = "  " .. localization[upg.Name] .. "ÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¼Ãƒâ€¦Ã‚Â¡"
                     local cost = 0
                     for l = 2, upg.Value do
                         cost += priceFunctions[upg.Name](l)
                     end
-                    content = content .. " " .. upg.Value .. "levelÃƒÂ¯Ã‚Â¼Ã¢â‚¬Âº"
-                    content = content .. " " .. growthFunctions[upg.Name](upg.Value) .. "valueÃƒÂ¯Ã‚Â¼Ã¢â‚¬Âº"
+                    content = content .. " " .. upg.Value .. "levelÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¼ÃƒÂ¢Ã¢â€šÂ¬Ã‚Âº"
+                    content = content .. " " .. growthFunctions[upg.Name](upg.Value) .. "valueÃƒÆ’Ã‚Â¯Ãƒâ€šÃ‚Â¼ÃƒÂ¢Ã¢â€šÂ¬Ã‚Âº"
                     content = content .. " " .. cost .. "cost"
                     print(content)
                 end
@@ -2837,7 +2837,7 @@ local function CreateTeleportThrowUI()
     closeButton.Position = UDim2.new(1, -30, 0, 0)
     closeButton.Size = UDim2.new(0, 30, 1, 0)
     closeButton.Font = Enum.Font.GothamBold
-    closeButton.Text = "Ãƒâ€”"
+    closeButton.Text = "ÃƒÆ’Ã¢â‚¬â€"
     closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     closeButton.TextSize = 16
     closeButton.MouseButton1Click:Connect(function()
@@ -3229,6 +3229,7 @@ end)
 
 mainUI = UI:NewWindow("dEnzCreator")
 local autoSection = mainUI:NewSection("Auto")
+local candyEarnedTotal = 0
 autoSection:CreateToggle("Auto Farm", function(enabled)
     autofarm = enabled
     config.autofarm = enabled
@@ -3243,6 +3244,35 @@ autoSection:CreateToggle("Auto Farm", function(enabled)
         text.Text = ""
         text.Size = 14
         text.Visible = true
+
+        -- Drag seluruh HUD Drawing Text (mouse + touch).
+        local hudDragging, hudDragInput = false, nil
+        local hudDragStart, hudStartPosition
+        local hudInputBeganConnection = UserInputService.InputBegan:Connect(function(input)
+            local kind = input.UserInputType
+            if kind ~= Enum.UserInputType.MouseButton1 and kind ~= Enum.UserInputType.Touch then return end
+            local pos, bounds = input.Position, text.TextBounds
+            local left, top = text.Position.X, text.Position.Y
+            if pos.X >= left and pos.X <= left + math.max(bounds.X, 100)
+                and pos.Y >= top and pos.Y <= top + math.max(bounds.Y, 24) then
+                hudDragging, hudDragInput = true, input
+                hudDragStart, hudStartPosition = Vector2.new(pos.X, pos.Y), text.Position
+            end
+        end)
+        local hudInputChangedConnection = UserInputService.InputChanged:Connect(function(input)
+            if not hudDragging then return end
+            local kind = input.UserInputType
+            if kind == Enum.UserInputType.MouseMovement or kind == Enum.UserInputType.Touch then
+                local delta = Vector2.new(input.Position.X, input.Position.Y) - hudDragStart
+                text.Position = hudStartPosition + delta
+            end
+        end)
+        local hudInputEndedConnection = UserInputService.InputEnded:Connect(function(input)
+            if input == hudDragInput or input.UserInputType == Enum.UserInputType.MouseButton1 then
+                hudDragging, hudDragInput = false, nil
+            end
+        end)
+
         local startTime = tick()
         local eatTime = 0
         local lastEatTime = tick()
@@ -3312,6 +3342,7 @@ autoSection:CreateToggle("Auto Farm", function(enabled)
                     .. "\nEstimated Time: " .. string.format("%im%is", sellMinutes % 60, sellSeconds % 60)
                     .. "\nDaily Income: " .. dayEarn
                     .. "\nBlock Count: " .. numChunks
+                    .. "\nCandy Count: " .. candyEarnedTotal
                 hum:ChangeState(Enum.HumanoidStateType.Physics)
                 grab:FireServer()
                 root.Anchored = false
@@ -3435,29 +3466,117 @@ autoSection:CreateToggle("Auto Farm", function(enabled)
         bedrock:Destroy()
         LocalPlayer.Character.LocalChunkManager.Enabled = true
         LocalPlayer.Character.Animate.Enabled = true
+        hudInputBeganConnection:Disconnect()
+        hudInputChangedConnection:Disconnect()
+        hudInputEndedConnection:Disconnect()
         text:Destroy()
     end)()
 end)
+-- Candy-only collector adapted from CANGCUD. Cube collection remains unchanged.
+local candyLootTargets = {}
+local candyLootLastTouch = setmetatable({}, {__mode = "k"})
+local pendingCandyPickup = setmetatable({}, {__mode = "k"})
+local candyLootScanDelay = 0.35
+local candyLootTouchCooldown = 0.8
+local lastCandyLootScanAt = 0
+local candyLootTouchWarned = false
+
+local function registerCandyLoot(obj)
+    if obj and obj:IsA("BasePart") and obj.Name == "Candy" then
+        candyLootTargets[obj] = true
+    end
+end
+
+local function unregisterCandyLoot(obj)
+    if not candyLootTargets[obj] then return end
+    candyLootTargets[obj] = nil
+    candyLootLastTouch[obj] = nil
+    if obj.Name == "Candy" and pendingCandyPickup[obj] then
+        pendingCandyPickup[obj] = nil
+        candyEarnedTotal = candyEarnedTotal + 1
+    end
+end
+
+for _, obj in ipairs(Workspace:GetDescendants()) do registerCandyLoot(obj) end
+local candyLootAddedConnection = Workspace.DescendantAdded:Connect(registerCandyLoot)
+local candyLootRemovingConnection = Workspace.DescendantRemoving:Connect(unregisterCandyLoot)
+
+local function canCollectCandy(item)
+    if not item or not item:IsA("BasePart") or not item.Parent or item.Name ~= "Candy" then
+        return false
+    end
+    local owner = item:FindFirstChild("Owner")
+    local timeLeft = item:FindFirstChild("TimeLeft")
+    if owner and owner.Value ~= "" and owner.Value ~= LocalPlayer.Name then
+        local remaining = timeLeft and tonumber(timeLeft.Value)
+        if remaining and remaining > 0 then return false end
+    end
+    return true
+end
+
 autoSection:CreateToggle("Auto Collect", function(enabled)
     autoCollectingCubes = enabled
     config.autoCollectingCubes = enabled
     autoSaveConfig()
+
+    -- Original Mount Cube collector retained.
     coroutine.wrap(function()
-        LocalPlayer.PlayerScripts.CubeVis.Enabled = false
+        local cubeVis = LocalPlayer:WaitForChild("PlayerScripts"):FindFirstChild("CubeVis")
+        if cubeVis then cubeVis.Enabled = false end
         while autoCollectingCubes do
             task.wait()
             local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
             if root then
                 for _, v in workspace:GetChildren() do
-                    if v.Name == "Cube" and v:FindFirstChild("Owner") and (v.Owner.Value == LocalPlayer.Name or v.Owner.Value == "") then
+                    if v.Name == "Cube" and v:FindFirstChild("Owner")
+                        and (v.Owner.Value == LocalPlayer.Name or v.Owner.Value == "") then
                         v.CFrame = root.CFrame
                     end
                 end
             end
         end
-        LocalPlayer.PlayerScripts.CubeVis.Enabled = true
+        if cubeVis then cubeVis.Enabled = true end
     end)()
+
+    if enabled then
+        coroutine.wrap(function()
+            while autoCollectingCubes do
+                task.wait(candyLootScanDelay)
+                local now = os.clock()
+                if now - lastCandyLootScanAt < candyLootScanDelay then continue end
+                lastCandyLootScanAt = now
+
+                local character = LocalPlayer.Character
+                local root = character and character:FindFirstChild("HumanoidRootPart")
+                if not root then continue end
+                if type(firetouchinterest) ~= "function" then
+                    if not candyLootTouchWarned then
+                        candyLootTouchWarned = true
+                        warn("[dEnzCreator] Candy collector requires firetouchinterest support in the executor.")
+                    end
+                    break
+                end
+
+                for item in pairs(candyLootTargets) do
+                    if item.Parent and canCollectCandy(item) then
+                        local previous = candyLootLastTouch[item] or 0
+                        if now - previous >= candyLootTouchCooldown then
+                            candyLootLastTouch[item] = now
+                            local touched = pcall(function()
+                                firetouchinterest(root, item, 0)
+                                firetouchinterest(root, item, 1)
+                            end)
+                            if touched then pendingCandyPickup[item] = true end
+                        end
+                    elseif not item.Parent then
+                        unregisterCandyLoot(item)
+                    end
+                end
+            end
+        end)()
+    end
 end)
+
 autoSection:CreateToggle("Auto Claim", function(enabled)
     autoClaimRewards = enabled
     config.autoClaimRewards = enabled
