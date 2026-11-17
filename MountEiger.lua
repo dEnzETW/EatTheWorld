@@ -2494,15 +2494,15 @@ local function CreateTeleportGrabUI()
     if not parented then gui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 
     local panel = Instance.new("Frame")
-    panel.Size = UDim2.fromOffset(190, 245)
+    panel.Size = UDim2.fromOffset(150, 245)
     panel.Position = UDim2.new(0, 18, 0.3, 0)
-    panel.BackgroundColor3 = Color3.fromRGB(20, 19, 25)
+    panel.BackgroundColor3 = UI.Theme.Background
     panel.BorderSizePixel = 0
     panel.Parent = gui
     Instance.new("UICorner", panel).CornerRadius = UDim.new(0, 10)
     local stroke = Instance.new("UIStroke")
-    stroke.Color = Color3.fromRGB(190, 32, 54)
-    stroke.Thickness = 1.5
+    stroke.Color = UI.Theme.Border
+    stroke.Thickness = 2
     stroke.Parent = panel
 
     local function makeLabel(text, y, height, size)
@@ -2511,7 +2511,7 @@ local function CreateTeleportGrabUI()
         obj.Position = UDim2.fromOffset(8, y)
         obj.BackgroundTransparency = 1
         obj.Text = text
-        obj.TextColor3 = Color3.fromRGB(240, 238, 244)
+        obj.TextColor3 = UI.Theme.Text
         obj.TextSize = size or 11
         obj.Font = Enum.Font.Gotham
         obj.TextXAlignment = Enum.TextXAlignment.Left
@@ -2520,7 +2520,7 @@ local function CreateTeleportGrabUI()
         return obj
     end
 
-    local title = makeLabel("dEnzCreator | JUMP FOLLOW V19", 8, 20, 12)
+    local title = makeLabel("dEnzCreator | JUMP FOLLOW V19", 8, 20, 9)
     title.Font = Enum.Font.GothamBold
 
     title.Active = true
@@ -2568,13 +2568,13 @@ local function CreateTeleportGrabUI()
         end
     end)
     local status = makeLabel("OFF | Pilih target", 32, 30, 10)
-    status.TextColor3 = Color3.fromRGB(180, 180, 190)
+    status.TextColor3 = UI.Theme.Muted
     local targetInfo = makeLabel("Target: -", 62, 20, 10)
 
     local playerList = Instance.new("ScrollingFrame")
     playerList.Size = UDim2.new(1, -16, 0, 112)
     playerList.Position = UDim2.fromOffset(8, 86)
-    playerList.BackgroundColor3 = Color3.fromRGB(31, 30, 37)
+    playerList.BackgroundColor3 = UI.Theme.Row
     playerList.BorderSizePixel = 0
     playerList.ScrollBarThickness = 3
     playerList.AutomaticCanvasSize = Enum.AutomaticSize.Y
@@ -2588,8 +2588,8 @@ local function CreateTeleportGrabUI()
     local selectedTarget, running, runToken = nil, false, 0
     local followConnection = nil
     local targetButtons = {}
-    local NORMAL_ROW_COLOR = Color3.fromRGB(54, 52, 61)
-    local ACTIVE_ROW_COLOR = Color3.fromRGB(35, 145, 75)
+    local NORMAL_ROW_COLOR = UI.Theme.Off
+    local ACTIVE_ROW_COLOR = UI.Theme.Auto
 
     local function updateTargetRowColors()
         for player, button in pairs(targetButtons) do
@@ -2611,7 +2611,7 @@ local function CreateTeleportGrabUI()
 
     local function setStatus(message, color)
         status.Text = message
-        status.TextColor3 = color or Color3.fromRGB(180, 180, 190)
+        status.TextColor3 = color or UI.Theme.Muted
     end
 
     local function getAliveCharacter(who)
@@ -2858,8 +2858,8 @@ local function CreateTeleportGrabUI()
             button.BackgroundColor3 = NORMAL_ROW_COLOR
             button.BorderSizePixel = 0
             button.Text = target.DisplayName .. "  (@" .. target.Name .. ")"
-            button.TextColor3 = Color3.fromRGB(245, 243, 247)
-            button.TextSize = 9
+            button.TextColor3 = UI.Theme.Text
+            button.TextSize = 8
             button.Font = Enum.Font.Gotham
             button.Parent = playerList
             targetButtons[target] = button
