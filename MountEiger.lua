@@ -5,6 +5,9 @@
     Replaced: MountEiger legacy ESP (SurfaceGui red body overlay + name/display-name tag)
     Added: GELUT player-stat Highlight + BillboardGui (Size, MaxSize, Multi, Eat, WalkSpeed)
     UI: MountEiger Character section toggle; MountEiger theme, sizing and layout retained.
+    Removed: MountEiger legacy Speed Settings UI, WalkSpeed setter, and Speed toggle.
+    Added: GELUT RUN SPEED movement loop + editable numeric speed (default 100, min 0, no fixed max).
+    UI: RUN SPEED toggle and value field use MountEiger Character panel theme.
     Other MountEiger features: preserved.
 ]]
 
@@ -541,9 +544,6 @@ local autoClaimRewards = config.autoClaimRewards
 local keepUnanchor = config.keepUnanchor
 local antiFallEnabled = config.antiFallEnabled
 local antiFallConnection = nil
-local CurrentSpeed = 16
-local HumanoidTracker = nil
-local SpeedUI = nil
 local farmMoving = config.farmMoving
 local showMap = config.showMap
 local autoeat = config.autoeat
@@ -1920,153 +1920,6 @@ local function stopAntiFall()
         antiFallConnection:Disconnect()
         antiFallConnection = nil
     end
-end
--- Speed Settings
-local function CreateSpeedUI()
-    if SpeedUI then
-        SpeedUI:Destroy()
-        SpeedUI = nil
-    end
-    local XenoUI = Instance.new("ScreenGui")
-    XenoUI.Name = "XenoSpeedHax_CR"
-    XenoUI.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    XenoUI.ResetOnSpawn = false
-    XenoUI.Enabled = false
-    XenoUI.Parent = syn and CoreGui or PlayerGui
-    local MainFrame = Instance.new("Frame")
-    MainFrame.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
-    MainFrame.Size = UDim2.new(0, 218, 0, 140)
-    MainFrame.Position = UDim2.new(0.5, -210, 0.5, -120)
-    MainFrame.Active = true
-    MainFrame.Draggable = true
-    MainFrame.Parent = XenoUI
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 8)
-    corner.Parent = MainFrame
-    local shadow = Instance.new("UIStroke")
-    shadow.Color = Color3.fromRGB(0, 0, 0)
-    shadow.Transparency = 0.5
-    shadow.Thickness = 4
-    shadow.Parent = MainFrame
-    local TitleBar = Instance.new("Frame")
-    TitleBar.Size = UDim2.new(1, 0, 0, 40)
-    TitleBar.BackgroundColor3 = Color3.fromRGB(36, 36, 42)
-    TitleBar.Parent = MainFrame
-    local TitleText = Instance.new("TextLabel")
-    TitleText.Size = UDim2.new(1, -40, 1, 0)
-    TitleText.Position = UDim2.new(0, 10, 0, 0)
-    TitleText.BackgroundTransparency = 1
-    TitleText.Text = "Speed Settings"
-    TitleText.Font = Enum.Font.SourceSansBold
-    TitleText.TextSize = 18
-    TitleText.TextColor3 = Color3.fromRGB(255, 255, 255)
-    TitleText.TextXAlignment = Enum.TextXAlignment.Left
-    TitleText.Parent = TitleBar
-    local CloseBtn = Instance.new("TextButton")
-    CloseBtn.Text = "ÃƒÆ’Ã¢â‚¬â€"
-    CloseBtn.TextSize = 20
-    CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    CloseBtn.BackgroundTransparency = 1
-    CloseBtn.Size = UDim2.new(0, 40, 1, 0)
-    CloseBtn.Position = UDim2.new(1, -40, 0, 0)
-    CloseBtn.Parent = TitleBar
-    CloseBtn.MouseButton1Click:Connect(function()
-        XenoUI.Enabled = not XenoUI.Enabled
-    end)
-    local ContentFrame = Instance.new("Frame")
-    ContentFrame.Size = UDim2.new(1, -20, 1, -50)
-    ContentFrame.Position = UDim2.new(0, 10, 0, 40)
-    ContentFrame.BackgroundTransparency = 1
-    ContentFrame.Parent = MainFrame
-    local speedValues = {50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1500}
-    local speedButtons = {}
-    local function ApplySpeed()
-        if not LocalPlayer.Character then return end
-        local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if humanoid then
-            pcall(function()
-                humanoid.WalkSpeed = CurrentSpeed
-            end)
-        end
-    end
-    local function createSpeedButton(value, row, col)
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(0, 45, 0, 25)
-        btn.Position = UDim2.new(0, (col - 1) * 50, 0, (row - 1) * 30)
-        btn.BackgroundColor3 = Color3.fromRGB(44, 44, 50)
-        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-        btn.Text = tostring(value)
-        btn.Font = Enum.Font.SourceSans
-        btn.TextSize = 16
-        btn.BorderSizePixel = 0
-        btn.Parent = ContentFrame
-        local btnCorner = Instance.new("UICorner")
-        btnCorner.CornerRadius = UDim.new(0, 4)
-        btnCorner.Parent = btn
-        btn.MouseButton1Click:Connect(function()
-            CurrentSpeed = value
-            ApplySpeed()
-            Message("Speed Settings", "Speed applied: " .. CurrentSpeed, 2)
-            for _, b in ipairs(speedButtons) do
-                b.BackgroundColor3 = Color3.fromRGB(44, 44, 50)
-            end
-            btn.BackgroundColor3 = Color3.fromRGB(60, 180, 60)
-        end)
-        btn.MouseEnter:Connect(function()
-            TweenService:Create(btn, TweenInfo.new(0.1), {
-                BackgroundColor3 = Color3.fromRGB(54, 54, 60)
-            }):Play()
-        end)
-        btn.MouseLeave:Connect(function()
-            if CurrentSpeed ~= value then
-                TweenService:Create(btn, TweenInfo.new(0.1), {
-                    BackgroundColor3 = Color3.fromRGB(44, 44, 50)
-                }):Play()
-            end
-        end)
-        table.insert(speedButtons, btn)
-    end
-    for i, value in ipairs(speedValues) do
-        local row = math.ceil(i / 4)
-        local col = (i - 1) % 4 + 1
-        createSpeedButton(value, row, col)
-    end
-    local function MonitorHumanoid(humanoid)
-        if HumanoidTracker == humanoid then return end
-        HumanoidTracker = humanoid
-    end
-    LocalPlayer.CharacterAdded:Connect(function(char)
-        local humanoid = char:WaitForChild("Humanoid")
-        MonitorHumanoid(humanoid)
-        ApplySpeed()
-    end)
-    if LocalPlayer.Character then
-        local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if humanoid then
-            MonitorHumanoid(humanoid)
-            ApplySpeed()
-        end
-    end
-    task.spawn(function()
-        while task.wait(1) do
-            pcall(ApplySpeed)
-            if LocalPlayer.Character then
-                local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
-                if humanoid and humanoid ~= HumanoidTracker then
-                    MonitorHumanoid(humanoid)
-                end
-            end
-        end
-    end)
-    SpeedUI = XenoUI
-    return XenoUI
-end
-local function ToggleSpeedUI()
-    if not SpeedUI then
-        CreateSpeedUI()
-    end
-    SpeedUI.Enabled = not SpeedUI.Enabled
-    local status = SpeedUI.Enabled and "Open" or "Close"
 end
 -- Unanchor
 local function cancelAnchored()
@@ -3681,19 +3534,6 @@ figureSection:CreateToggle("Anti Fall", function(enabled)
         stopAntiFall()
     end
 end)
-figureSection:CreateToggle("Speed", function(enabled)
-    ToggleSpeedUI()
-    for _, btn in ipairs(figureSection.Buttons) do
-        if btn.Name == "ToggleBtn_Speed" then
-            local stateLabel = btn:FindFirstChildOfClass("TextLabel")
-            if stateLabel then
-                stateLabel.Text = "Speed"
-                stateLabel.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
-            end
-            break
-        end
-    end
-end)
 local invisibilityGui = nil
 local invisibilityConnections = {}
 figureSection:CreateToggle("Invisible", function(enabled)
@@ -3970,6 +3810,107 @@ local function togglePlatform()
         autoSaveConfig()
     end
 end
+-- RUN SPEED (GELUT): original movement logic, integrated into MountEiger Character panel.
+-- Default 100; accepts any finite non-negative number; no fixed upper cap.
+local runSpeedEnabled = false
+local runSpeedValue = 100
+local runSpeedConnection = nil
+
+local function setRunSpeedEnabled(enabled)
+    runSpeedEnabled = enabled
+
+    if runSpeedConnection then
+        runSpeedConnection:Disconnect()
+        runSpeedConnection = nil
+    end
+
+    if enabled then
+        runSpeedConnection = RunService.Heartbeat:Connect(function(delta)
+            if not mainUI or not mainUI.MainGui or not mainUI.MainGui.Parent or not runSpeedEnabled then
+                return
+            end
+
+            local character = LocalPlayer.Character
+            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+            local root = character and character:FindFirstChild("HumanoidRootPart")
+
+            if humanoid and root and humanoid.Health > 0 then
+                root.Anchored = false
+                local moveDirection = humanoid.MoveDirection
+                if moveDirection.Magnitude > 0 then
+                    local nextPosition = root.Position + moveDirection * runSpeedValue * delta
+                    root.CFrame = CFrame.new(nextPosition, nextPosition + root.CFrame.LookVector)
+                end
+            end
+        end)
+    end
+end
+
+local runSpeedToggle = figureSection:CreateToggle("RUN SPEED", function(enabled)
+    setRunSpeedEnabled(enabled)
+end)
+
+-- Compact numeric field embedded in the MountEiger toggle, styled from UI.Theme.
+local runSpeedBox = Instance.new("TextBox")
+runSpeedBox.Name = "RunSpeedValue"
+runSpeedBox.Size = UDim2.new(0, 29, 0, 23)
+runSpeedBox.Position = UDim2.new(1, -32, 0.5, -11)
+runSpeedBox.BackgroundColor3 = UI.Theme.Row
+runSpeedBox.BorderSizePixel = 0
+runSpeedBox.Text = tostring(runSpeedValue)
+runSpeedBox.PlaceholderText = "Speed"
+runSpeedBox.TextColor3 = UI.Theme.Text
+runSpeedBox.PlaceholderColor3 = UI.Theme.Muted or UI.Theme.Text
+runSpeedBox.TextSize = 10
+runSpeedBox.Font = Enum.Font.GothamBold
+runSpeedBox.ClearTextOnFocus = false
+runSpeedBox.MultiLine = false
+runSpeedBox.TextXAlignment = Enum.TextXAlignment.Center
+runSpeedBox.ZIndex = runSpeedToggle.ZIndex + 1
+runSpeedBox.Parent = runSpeedToggle
+
+local runSpeedBoxCorner = Instance.new("UICorner")
+runSpeedBoxCorner.CornerRadius = UDim.new(0, 5)
+runSpeedBoxCorner.Parent = runSpeedBox
+
+local runSpeedBoxStroke = Instance.new("UIStroke")
+runSpeedBoxStroke.Color = UI.Theme.Border
+runSpeedBoxStroke.Thickness = 1
+runSpeedBoxStroke.Transparency = 0.25
+runSpeedBoxStroke.Parent = runSpeedBox
+
+local runSpeedToggleLabel = runSpeedToggle:FindFirstChildOfClass("TextLabel")
+if runSpeedToggleLabel then
+    runSpeedToggleLabel.Size = UDim2.new(1, -36, 1, 0)
+    runSpeedToggleLabel.Position = UDim2.new(0, 5, 0, 0)
+    runSpeedToggleLabel.Text = "RUN SPEED"
+    runSpeedToggleLabel.TextSize = 11
+    runSpeedToggleLabel.TextXAlignment = Enum.TextXAlignment.Left
+end
+
+runSpeedBox.FocusLost:Connect(function()
+    local entered = tonumber(runSpeedBox.Text)
+    if entered and entered >= 0 and entered < math.huge then
+        runSpeedValue = entered
+    end
+    runSpeedBox.Text = tostring(runSpeedValue)
+end)
+
+LocalPlayer.CharacterRemoving:Connect(function()
+    if runSpeedConnection then
+        runSpeedConnection:Disconnect()
+        runSpeedConnection = nil
+    end
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+    if runSpeedEnabled then
+        task.wait(0.2)
+        setRunSpeedEnabled(true)
+    end
+end)
+
+
 local otherSection = mainUI:NewSection("Other")
 otherSection:CreateToggle("Platform", function(enabled)
     togglePlatform()
