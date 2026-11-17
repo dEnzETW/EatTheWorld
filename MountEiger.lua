@@ -1,4 +1,4 @@
-local Players = game:GetService("Players")
+local Play")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualUser = game:GetService("VirtualUser")
 local CoreGui = game:GetService("CoreGui")
