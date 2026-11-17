@@ -3690,7 +3690,7 @@ figureSection:CreateToggle("Ragdoll", function(enabled)
         end
     end
 end)
-figureSection:CreateToggle("ESP PLAYER", function(enabled)
+figureSection:CreateToggle("ESP", function(enabled)
     setPlayerESPEnabled(enabled)
 end)
 local function rejoinCurrentServer()
@@ -3784,32 +3784,65 @@ local function toggleMap()
         mapHidden = true
     end
 end
-local platformBedrock = nil
-local platformEnabled = config.platformEnabled
-local function togglePlatform()
+-- GELUT BIG PLATFORM mechanism, retained under MountEiger's existing Platform toggle.
+local bigPlatformPart = nil
+local platformEnabled = config.platformEnabled == true
+
+local function createBigPlatform()
+    if bigPlatformPart and bigPlatformPart.Parent then return end
+
+    -- Clean up an older copy before creating the platform.
+    local oldPlatform = workspace:FindFirstChild("ETW_DRAMA_BigPlatform")
+    if oldPlatform then
+        pcall(function() oldPlatform:Destroy() end)
+    end
+
+    local part = Instance.new("Part")
+    part.Name = "ETW_DRAMA_BigPlatform"
+    part.Size = Vector3.new(180000, 10, 180000)
+    part.Anchored = true
+    part.CanCollide = true
+    part.Transparency = 1
+    part.Material = Enum.Material.Fabric
+    part.Position = Vector3.new(0, -6, 0)
+    part.Parent = workspace
+    bigPlatformPart = part
+end
+
+local function removeBigPlatform()
+    if bigPlatformPart then
+        pcall(function() bigPlatformPart:Destroy() end)
+        bigPlatformPart = nil
+    end
+end
+
+local function setPlatformEnabled(enabled, saveState)
+    platformEnabled = enabled == true
+
     if platformEnabled then
-        if platformBedrock and platformBedrock.Parent then
-            platformBedrock:Destroy()
-            platformBedrock = nil
-            Message("Platform", "Platform removed", 2)
-        end
-        platformEnabled = false
-        config.platformEnabled = false
-        autoSaveConfig()
-    else
-        platformBedrock = Instance.new("Part")
-        platformBedrock.Name = "PlatformBedrock"
-        platformBedrock.Anchored = true
-        platformBedrock.Size = Vector3.new(8192, 2, 8192)
-        platformBedrock.Position = Vector3.new(0, 0, 0)
-        platformBedrock.BrickColor = BrickColor.new("grey")
-        platformBedrock.Parent = workspace
+        createBigPlatform()
         Message("Platform", "Platform created", 2)
-        platformEnabled = true
-        config.platformEnabled = true
+    else
+        removeBigPlatform()
+        Message("Platform", "Platform removed", 2)
+    end
+
+    config.platformEnabled = platformEnabled
+    if saveState ~= false then
         autoSaveConfig()
     end
 end
+
+-- Restore the saved state and keep the platform available after respawn.
+if platformEnabled then
+    task.defer(createBigPlatform)
+end
+
+LocalPlayer.CharacterAdded:Connect(function()
+    if platformEnabled then
+        task.defer(createBigPlatform)
+    end
+end)
 -- RUN SPEED (GELUT): original movement logic, integrated into MountEiger Character panel.
 -- Default 100; accepts any finite non-negative number; no fixed upper cap.
 local runSpeedEnabled = false
@@ -3913,7 +3946,7 @@ end)
 
 local otherSection = mainUI:NewSection("Other")
 otherSection:CreateToggle("Platform", function(enabled)
-    togglePlatform()
+    setPlatformEnabled(enabled)
 end)
 otherSection:CreateToggle("Hide Map", function(enabled)
     toggleMap()
