@@ -3944,9 +3944,162 @@ LocalPlayer.CharacterAdded:Connect(function()
 end)
 
 
+-- SKYWALK (GELUT V13): integrated into MountEiger's existing Other section.
+-- Keeps the tested GELUT behavior: save origin, teleport +4000 studs,
+-- create a transparent 250000 x 10 x 250000 local platform, normal Humanoid movement,
+-- and restore the saved pivot when switched OFF.
+local SKY_TELEPORT_HEIGHT = 4000
+local skyWalkEnabled = false
+local skyWalkSavedPivot = nil
+local skyWalkSavedPosition = nil
+local skyWalkPlatform = nil
+local skyWalkHeartbeat = nil
+
+local function skyWalkClearObjects()
+    if skyWalkHeartbeat then
+        skyWalkHeartbeat:Disconnect()
+        skyWalkHeartbeat = nil
+    end
+    if skyWalkPlatform then
+        pcall(function()
+            skyWalkPlatform:Destroy()
+        end)
+        skyWalkPlatform = nil
+    end
+end
+
+local function skyWalkStop()
+    skyWalkEnabled = false
+    skyWalkClearObjects()
+
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+    -- Return to the exact activation transform, matching GELUT V13.
+    if character and skyWalkSavedPivot then
+        pcall(function()
+            character:PivotTo(skyWalkSavedPivot)
+            local root = character:FindFirstChild("HumanoidRootPart")
+            if root then
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            end
+        end)
+    end
+
+    if humanoid then
+        humanoid.PlatformStand = false
+        humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+    end
+
+    skyWalkSavedPivot = nil
+    skyWalkSavedPosition = nil
+end
+
+local function skyWalkStart()
+    local character = LocalPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+    if not character or not root or not humanoid or humanoid.Health <= 0 then
+        warn("SKYWALK: character is not ready.")
+        return false
+    end
+
+    skyWalkClearObjects()
+    skyWalkSavedPivot = character:GetPivot()
+    skyWalkSavedPosition = root.Position
+
+    local targetPivot = skyWalkSavedPivot + Vector3.new(0, SKY_TELEPORT_HEIGHT, 0)
+    local ok = pcall(function()
+        character:PivotTo(targetPivot)
+    end)
+
+    if not ok then
+        skyWalkSavedPivot = nil
+        skyWalkSavedPosition = nil
+        return false
+    end
+
+    root = character:FindFirstChild("HumanoidRootPart")
+    humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not root or not humanoid then
+        skyWalkStop()
+        return false
+    end
+
+    local platformThickness = 10
+    local footOffset = humanoid.HipHeight + (root.Size.Y * 0.5)
+    local platformTopY = root.Position.Y - footOffset
+
+    skyWalkPlatform = Instance.new("Part")
+    skyWalkPlatform.Name = "GELUT_SkyWalkPlatform_V13"
+    skyWalkPlatform.Anchored = true
+    skyWalkPlatform.Size = Vector3.new(250000, 10, 250000)
+    skyWalkPlatform.CFrame = CFrame.new(
+        root.Position.X,
+        platformTopY - (platformThickness * 0.5),
+        root.Position.Z
+    )
+    skyWalkPlatform.Transparency = 1
+    skyWalkPlatform.CanCollide = true
+    skyWalkPlatform.CanTouch = false
+    skyWalkPlatform.CanQuery = false
+    skyWalkPlatform.CastShadow = false
+    skyWalkPlatform.Parent = workspace
+
+    -- Keep ordinary Humanoid movement and joystick control; no flight forces.
+    humanoid.PlatformStand = false
+    humanoid.AutoRotate = true
+    humanoid.Sit = false
+    humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
+
+    skyWalkEnabled = true
+    skyWalkHeartbeat = RunService.Heartbeat:Connect(function()
+        if not skyWalkEnabled then return end
+
+        local currentCharacter = LocalPlayer.Character
+        local currentRoot = currentCharacter and currentCharacter:FindFirstChild("HumanoidRootPart")
+        local currentHumanoid = currentCharacter and currentCharacter:FindFirstChildOfClass("Humanoid")
+
+        if not currentRoot or not currentHumanoid or currentHumanoid.Health <= 0 or not skyWalkPlatform then
+            skyWalkStop()
+            return
+        end
+    end)
+
+    return true
+end
+
+local function setSkyWalkEnabled(enabled)
+    if enabled then
+        if not skyWalkStart() then
+            skyWalkEnabled = false
+        end
+    else
+        skyWalkStop()
+    end
+end
+
+-- If the character respawns while SkyWalk is active, clear the old local platform
+-- and reset the state, matching the standalone GELUT V13 lifecycle behavior.
+LocalPlayer.CharacterAdded:Connect(function()
+    if skyWalkEnabled or skyWalkPlatform or skyWalkHeartbeat then
+        skyWalkEnabled = false
+        skyWalkClearObjects()
+        skyWalkSavedPivot = nil
+        skyWalkSavedPosition = nil
+    end
+end)
+
 local otherSection = mainUI:NewSection("Other")
 otherSection:CreateToggle("Platform", function(enabled)
     setPlatformEnabled(enabled)
+end)
+otherSection:CreateToggle("SkyWalk", function(enabled)
+    setSkyWalkEnabled(enabled)
 end)
 otherSection:CreateToggle("Hide Map", function(enabled)
     toggleMap()
