@@ -1,3 +1,13 @@
+--[[
+    UPDATE: GELUT ESP PLAYER integrated into MountEiger
+    Base: MountEiger_TP_GRAB_V19_THEME_MATCH.txt
+    ESP source: GELUT.lua (1).txt
+    Replaced: MountEiger legacy ESP (SurfaceGui red body overlay + name/display-name tag)
+    Added: GELUT player-stat Highlight + BillboardGui (Size, MaxSize, Multi, Eat, WalkSpeed)
+    UI: MountEiger Character section toggle; MountEiger theme, sizing and layout retained.
+    Other MountEiger features: preserved.
+]]
+
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualUser = game:GetService("VirtualUser")
@@ -556,10 +566,6 @@ local createdAttachments = {}
 local createdConstraints = {}
 local disabledMotors = {}
 local ragdollGUI = nil
-local espEnabled = false
-local espConnections = {}
-local playerInfos = {}
-local espUI = nil
 local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 character:WaitForChild("HumanoidRootPart")
 LocalPlayer.CharacterAdded:Connect(function(newCharacter)
@@ -3182,151 +3188,196 @@ local function ToggleRagdoll()
         Message("Ragdoll", "Ragdoll disabled", 2)
     end
 end
-local function createESPForPlayer(player)
-    if not player or not player.Character then return end
-    local character = player.Character
-    for _, part in pairs(character:GetChildren()) do
-        if (part:IsA("MeshPart") or part:IsA("Part")) and part.Name ~= "HumanoidRootPart" then
-            local faces = {
-                Enum.NormalId.Front,
-                Enum.NormalId.Back,
-                Enum.NormalId.Left,
-                Enum.NormalId.Right,
-                Enum.NormalId.Top,
-                Enum.NormalId.Bottom
-            }
-            for _, face in pairs(faces) do
-                local surfaceGui = Instance.new("SurfaceGui")
-                surfaceGui.Name = "ESPSurface"
-                surfaceGui.Face = face
-                surfaceGui.Parent = part
-                surfaceGui.AlwaysOnTop = true
-                local frame = Instance.new("Frame")
-                frame.Parent = surfaceGui
-                frame.BackgroundColor3 = Color3.new(1, 0, 0) -- Solid red
-                frame.Size = UDim2.new(1, 0, 1, 0)
-                frame.BackgroundTransparency = 0.5
+local mainUI
+
+-- GELUT PLAYER STATS ESP | integrated into MountEiger UI
+local playerESPEnabled = false
+local espObjects = {}
+
+local function findPlayerStat(targetPlayer, statName)
+    local variants = {
+        statName,
+        string.gsub(statName, " ", ""),
+        string.gsub(statName, " ", "_")
+    }
+
+    local function checkObject(obj)
+        for _, variant in ipairs(variants) do
+            if string.lower(obj.Name) == string.lower(variant)
+                and (obj:IsA("IntValue") or obj:IsA("NumberValue")) then
+                return obj.Value
+            end
+        end
+        return nil
+    end
+
+    for _, obj in ipairs(targetPlayer:GetDescendants()) do
+        local value = checkObject(obj)
+        if value ~= nil then return value end
+    end
+
+    for _, variant in ipairs(variants) do
+        local value = targetPlayer:GetAttribute(variant)
+        if value ~= nil then return value end
+        if targetPlayer.Character then
+            value = targetPlayer.Character:GetAttribute(variant)
+            if value ~= nil then return value end
+        end
+    end
+
+    local pGui = targetPlayer:FindFirstChild("PlayerGui")
+    if pGui then
+        for _, obj in ipairs(pGui:GetDescendants()) do
+            local value = checkObject(obj)
+            if value ~= nil then return value end
+        end
+    end
+
+    local replicatedStorage = game:GetService("ReplicatedStorage")
+    for _, obj in ipairs(replicatedStorage:GetDescendants()) do
+        if string.find(string.lower(obj.Name), string.lower(targetPlayer.Name), 1, true) then
+            for _, child in ipairs(obj:GetDescendants()) do
+                local value = checkObject(child)
+                if value ~= nil then return value end
             end
         end
     end
-    local billboardGui = Instance.new("BillboardGui")
-    billboardGui.Name = "ESPNameTag"
-    billboardGui.Parent = character.Head
-    billboardGui.Adornee = character.Head
-    billboardGui.Size = UDim2.new(0, 200, 0, 40)
-    billboardGui.StudsOffset = Vector3.new(0, 3, 0)
-    billboardGui.AlwaysOnTop = true
-    local nameLabel = Instance.new("TextLabel")
-    nameLabel.Parent = billboardGui
-    nameLabel.BackgroundTransparency = 1
-    nameLabel.Size = UDim2.new(1, 0, 0, 20)
-    nameLabel.Font = Enum.Font.SourceSansBold
-    nameLabel.Text = player.Name
-    nameLabel.TextColor3 = Color3.new(1, 0, 0)
-    nameLabel.TextSize = 14
-    nameLabel.TextXAlignment = Enum.TextXAlignment.Center
-    local displayNameLabel = Instance.new("TextLabel")
-    displayNameLabel.Parent = billboardGui
-    displayNameLabel.BackgroundTransparency = 1
-    displayNameLabel.Position = UDim2.new(0, 0, 0, 20)
-    displayNameLabel.Size = UDim2.new(1, 0, 0, 20)
-    displayNameLabel.Font = Enum.Font.SourceSans
-    displayNameLabel.Text = player.DisplayName
-    displayNameLabel.TextColor3 = Color3.new(1, 1, 1)
-    displayNameLabel.TextSize = 12
-    displayNameLabel.TextXAlignment = Enum.TextXAlignment.Center
-    playerInfos[player.UserId] = {
-        character = character,
-        billboardGui = billboardGui
+    return "?"
+end
+
+local function findStatAny(targetPlayer, names)
+    for _, name in ipairs(names) do
+        local value = findPlayerStat(targetPlayer, name)
+        if value ~= "?" then return value end
+    end
+    return "?"
+end
+
+local function createPlayerStatsESP(targetPlayer)
+    if targetPlayer == LocalPlayer or espObjects[targetPlayer] then return end
+
+    local highlight = Instance.new("Highlight")
+    highlight.Name = "rEmPlayerStatsHighlight"
+    highlight.FillColor = Color3.fromRGB(0, 225, 245)
+    highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+    highlight.FillTransparency = 0.65
+    highlight.OutlineTransparency = 0
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "rEmPlayerStatsText"
+    billboard.AlwaysOnTop = true
+    billboard.Size = UDim2.new(0, 190, 0, 76)
+    billboard.StudsOffset = Vector3.new(0, 3.2, 0)
+
+    local statsLabel = Instance.new("TextLabel")
+    statsLabel.Name = "Stats"
+    statsLabel.Parent = billboard
+    statsLabel.Size = UDim2.fromScale(1, 1)
+    statsLabel.BackgroundTransparency = 1
+    statsLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    statsLabel.TextStrokeTransparency = 0
+    statsLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+    statsLabel.Font = Enum.Font.GothamBold
+    statsLabel.TextSize = 10
+    statsLabel.TextWrapped = true
+    statsLabel.TextYAlignment = Enum.TextYAlignment.Bottom
+
+    local playerIndex = 0
+    for _, otherPlayer in ipairs(Players:GetPlayers()) do
+        if otherPlayer ~= LocalPlayer and otherPlayer.UserId <= targetPlayer.UserId then
+            playerIndex += 1
+        end
+    end
+    billboard.StudsOffset = Vector3.new(0, 3.2 + ((playerIndex % 4) * 0.8), 0)
+
+    espObjects[targetPlayer] = {
+        highlight = highlight,
+        billboard = billboard,
+        label = statsLabel
     }
 end
-local function cleanupESPForPlayer(player)
-    if not playerInfos[player.UserId] then return end
-    local info = playerInfos[player.UserId]
-    if info.billboardGui and info.billboardGui.Parent then
-        info.billboardGui:Destroy()
-    end
-    if info.character then
-        for _, part in pairs(info.character:GetChildren()) do
-            if (part:IsA("MeshPart") or part:IsA("Part")) then
-                for _, child in pairs(part:GetChildren()) do
-                    if child.Name == "ESPSurface" then
-                        child:Destroy()
-                    end
-                end
-            end
+
+local function removePlayerStatsESP(targetPlayer)
+    local entry = espObjects[targetPlayer]
+    if not entry then return end
+    entry.highlight:Destroy()
+    entry.billboard:Destroy()
+    espObjects[targetPlayer] = nil
+end
+
+local function setPlayerESPEnabled(enabled)
+    playerESPEnabled = enabled
+    if not enabled then
+        for _, entry in pairs(espObjects) do
+            entry.highlight.Parent = nil
+            entry.billboard.Parent = nil
         end
     end
-    playerInfos[player.UserId] = nil
 end
-local function updateESP()
-    if not espEnabled then return end
-    for _, player in pairs(Players:GetPlayers()) do
-        if player ~= Players.LocalPlayer then
-            if player.Character and player.Character:FindFirstChild("Head") then
-                if not playerInfos[player.UserId] then
-                    createESPForPlayer(player)
+
+for _, targetPlayer in ipairs(Players:GetPlayers()) do
+    createPlayerStatsESP(targetPlayer)
+end
+
+Players.PlayerAdded:Connect(function(targetPlayer)
+    createPlayerStatsESP(targetPlayer)
+end)
+
+Players.PlayerRemoving:Connect(function(targetPlayer)
+    removePlayerStatsESP(targetPlayer)
+end)
+
+task.spawn(function()
+    while not mainUI or not mainUI.MainGui or not mainUI.MainGui.Parent do
+        task.wait(0.25)
+    end
+    while mainUI.MainGui and mainUI.MainGui.Parent do
+        for targetPlayer, entry in pairs(espObjects) do
+            if targetPlayer.Parent ~= Players then
+                removePlayerStatsESP(targetPlayer)
+            elseif playerESPEnabled then
+                local character = targetPlayer.Character
+                local root = character and character:FindFirstChild("HumanoidRootPart")
+                if character and root then
+                    entry.highlight.Parent = character
+                    entry.billboard.Parent = root
+
+                    local sizeVal = findStatAny(targetPlayer, {"Size"})
+                    local maxVal = findStatAny(targetPlayer, {"MaxSize", "Max Size", "Max", "Capacity"})
+                    local multiVal = findStatAny(targetPlayer, {"Size Multiplier", "Multiplier", "Multi"})
+                    local eatVal = findStatAny(targetPlayer, {"eat speed", "eat level"})
+                    local hum = character:FindFirstChildOfClass("Humanoid")
+                    local walkSpeed = hum and math.floor(hum.WalkSpeed) or 16
+
+                    entry.label.Text = string.format(
+                        "[%s]\nSize: %s / %s\nMulti: %s | Eat: %s\nWalkSpeed: %s",
+                        targetPlayer.Name,
+                        tostring(sizeVal),
+                        tostring(maxVal),
+                        tostring(multiVal),
+                        tostring(eatVal),
+                        tostring(walkSpeed)
+                    )
+                else
+                    entry.highlight.Parent = nil
+                    entry.billboard.Parent = nil
                 end
             else
-                cleanupESPForPlayer(player)
+                entry.highlight.Parent = nil
+                entry.billboard.Parent = nil
             end
         end
+        task.wait(1)
     end
-end
-local function startESP()
-    for _, connection in pairs(espConnections) do
-        connection:Disconnect()
+
+    for targetPlayer in pairs(espObjects) do
+        removePlayerStatsESP(targetPlayer)
     end
-    espConnections = {}
-    for _, player in pairs(Players:GetPlayers()) do
-        if player ~= Players.LocalPlayer then
-            createESPForPlayer(player)
-        end
-    end
-    table.insert(espConnections, Players.PlayerAdded:Connect(function(player)
-        if player ~= Players.LocalPlayer then
-            player.CharacterAdded:Connect(function()
-                createESPForPlayer(player)
-            end)
-        end
-    end))
-    table.insert(espConnections, Players.PlayerRemoving:Connect(function(player)
-        cleanupESPForPlayer(player)
-    end))
-    table.insert(espConnections, Players.LocalPlayer.CharacterAdded:Connect(function()
-        for _, player in pairs(Players:GetPlayers()) do
-            if player ~= Players.LocalPlayer then
-                cleanupESPForPlayer(player)
-                createESPForPlayer(player)
-            end
-        end
-    end))
-    table.insert(espConnections, game:GetService("RunService").RenderStepped:Connect(updateESP))
-    print("ESP Enabled")
-end
-local function stopESP()
-    for _, connection in pairs(espConnections) do
-        connection:Disconnect()
-    end
-    espConnections = {}
-    for _, player in pairs(Players:GetPlayers()) do
-        if player ~= Players.LocalPlayer then
-            cleanupESPForPlayer(player)
-        end
-    end
-    print("ESP Disabled")
-end
-local function ToggleESP()
-    espEnabled = not espEnabled
-    if espEnabled then
-        startESP()
-        Message("ESP", "ESP enabled", 2)
-    else
-        stopESP()
-        Message("ESP", "ESP disabled", 2)
-    end
-end
-local mainUI = UI:NewWindow("dEnzCreator")
+end)
+
+
+mainUI = UI:NewWindow("dEnzCreator")
 local autoSection = mainUI:NewSection("Auto")
 autoSection:CreateToggle("Auto Farm", function(enabled)
     autofarm = enabled
@@ -3799,18 +3850,8 @@ figureSection:CreateToggle("Ragdoll", function(enabled)
         end
     end
 end)
-figureSection:CreateToggle("ESP", function(enabled)
-    ToggleESP()
-    for _, btn in ipairs(figureSection.Buttons) do
-        if btn.Name == "ToggleBtn_ESP" then
-            local stateLabel = btn:FindFirstChildOfClass("TextLabel")
-            if stateLabel then
-                stateLabel.Text = "ESP"
-                stateLabel.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
-            end
-            break
-        end
-    end
+figureSection:CreateToggle("ESP PLAYER", function(enabled)
+    setPlayerESPEnabled(enabled)
 end)
 local function rejoinCurrentServer()
     local Players = game:GetService("Players")
