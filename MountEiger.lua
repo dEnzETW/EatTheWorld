@@ -1,12 +1,3 @@
---[[
-    dEnzCreator MountEiger
-    Base: V6 (Other/Rejoin and Other/CS Grab removed; Character/CS Grab retained)
-    Integrated GELUT: Anti Anchor, Big Platform, SkyWalk, Flight Mode, Wall Clip
-    Character controls: Anti Fall, Flight Mode, Wall Clip, Run Speed and existing character tools
-    Other: Platform, SkyWalk, Hide Map, View Data, TP Slam, TP Grab
-    GELUT feature mechanics retained; UI adapted to MountEiger sections.
-]]
-
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualUser = game:GetService("VirtualUser")
@@ -3040,189 +3031,232 @@ local function ToggleRagdoll()
 end
 local mainUI
 
--- GELUT PLAYER STATS ESP | integrated into MountEiger UI
+-- dEnzCreator PLAYER ESP | V2.2 card integrated into MountEiger Character section
+-- Card: 160x65 | Avatar 47x47 | Name 12 | Username 11 | Stats 9
+-- No standalone control panel; the existing MountEiger ESP toggle controls this module.
 local playerESPEnabled = false
 local espObjects = {}
 
-local function findPlayerStat(targetPlayer, statName)
-    local variants = {
-        statName,
-        string.gsub(statName, " ", ""),
-        string.gsub(statName, " ", "_")
-    }
-
-    local function checkObject(obj)
-        for _, variant in ipairs(variants) do
-            if string.lower(obj.Name) == string.lower(variant)
-                and (obj:IsA("IntValue") or obj:IsA("NumberValue")) then
-                return obj.Value
-            end
-        end
-        return nil
-    end
-
-    for _, obj in ipairs(targetPlayer:GetDescendants()) do
-        local value = checkObject(obj)
-        if value ~= nil then return value end
-    end
-
-    for _, variant in ipairs(variants) do
-        local value = targetPlayer:GetAttribute(variant)
-        if value ~= nil then return value end
-        if targetPlayer.Character then
-            value = targetPlayer.Character:GetAttribute(variant)
-            if value ~= nil then return value end
-        end
-    end
-
-    local pGui = targetPlayer:FindFirstChild("PlayerGui")
-    if pGui then
-        for _, obj in ipairs(pGui:GetDescendants()) do
-            local value = checkObject(obj)
-            if value ~= nil then return value end
-        end
-    end
-
-    local replicatedStorage = game:GetService("ReplicatedStorage")
-    for _, obj in ipairs(replicatedStorage:GetDescendants()) do
-        if string.find(string.lower(obj.Name), string.lower(targetPlayer.Name), 1, true) then
-            for _, child in ipairs(obj:GetDescendants()) do
-                local value = checkObject(child)
-                if value ~= nil then return value end
-            end
-        end
-    end
-    return "?"
+local function readUpgradeLevel(player, upgradeName)
+    local upgrades = player:FindFirstChild("Upgrades")
+    if not upgrades then return nil end
+    local upgrade = upgrades:FindFirstChild(upgradeName)
+    if not upgrade then return nil end
+    local ok, value = pcall(function() return upgrade.Value end)
+    if ok and typeof(value) == "number" then return value end
+    return nil
 end
 
-local function findStatAny(targetPlayer, names)
-    for _, name in ipairs(names) do
-        local value = findPlayerStat(targetPlayer, name)
-        if value ~= "?" then return value end
+local function formatESPNumber(value)
+    if value == nil then return "N/A" end
+    if math.abs(value - math.floor(value)) < 0.000001 then
+        local raw = tostring(math.floor(value))
+        local formatted = raw:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+        return formatted:gsub("^,", "")
     end
-    return "?"
+    return string.format("%.1f", value):gsub("%.0$", "")
 end
 
-local function createPlayerStatsESP(targetPlayer)
-    if targetPlayer == LocalPlayer or espObjects[targetPlayer] then return end
-
-    local highlight = Instance.new("Highlight")
-    highlight.Name = "rEmPlayerStatsHighlight"
-    highlight.FillColor = Color3.fromRGB(0, 225, 245)
-    highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
-    highlight.FillTransparency = 0.65
-    highlight.OutlineTransparency = 0
-    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-
-    local billboard = Instance.new("BillboardGui")
-    billboard.Name = "rEmPlayerStatsText"
-    billboard.AlwaysOnTop = true
-    billboard.Size = UDim2.new(0, 190, 0, 76)
-    billboard.StudsOffset = Vector3.new(0, 3.2, 0)
-
-    local statsLabel = Instance.new("TextLabel")
-    statsLabel.Name = "Stats"
-    statsLabel.Parent = billboard
-    statsLabel.Size = UDim2.fromScale(1, 1)
-    statsLabel.BackgroundTransparency = 1
-    statsLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-    statsLabel.TextStrokeTransparency = 0
-    statsLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
-    statsLabel.Font = Enum.Font.GothamBold
-    statsLabel.TextSize = 10
-    statsLabel.TextWrapped = true
-    statsLabel.TextYAlignment = Enum.TextYAlignment.Bottom
-
-    local playerIndex = 0
-    for _, otherPlayer in ipairs(Players:GetPlayers()) do
-        if otherPlayer ~= LocalPlayer and otherPlayer.UserId <= targetPlayer.UserId then
-            playerIndex += 1
-        end
+-- Same effective-value formulas used by the standalone V2.2 module.
+local function getEffectiveESPValue(upgradeName, level)
+    if level == nil then return nil end
+    if upgradeName == "MaxSize" then
+        return math.floor(((level + 0.5) ^ 2 - 0.25) / 2 * 100)
+    elseif upgradeName == "Multiplier" then
+        return math.floor(level)
+    elseif upgradeName == "Speed" then
+        return math.floor(level * 2 + 10)
+    elseif upgradeName == "EatSpeed" then
+        return math.floor((1 + (level - 1) * 0.2) * 10) / 10
     end
-    billboard.StudsOffset = Vector3.new(0, 3.2 + ((playerIndex % 4) * 0.8), 0)
+    return nil
+end
 
-    espObjects[targetPlayer] = {
-        highlight = highlight,
-        billboard = billboard,
-        label = statsLabel
-    }
+local function espStatText(player, upgradeName)
+    local level = readUpgradeLevel(player, upgradeName)
+    if level == nil then return upgradeName .. ": N/A" end
+    local effective = getEffectiveESPValue(upgradeName, level)
+    if effective == nil then return upgradeName .. ": " .. formatESPNumber(level) end
+    return upgradeName .. ": " .. formatESPNumber(effective)
+        .. "  (Lv. " .. formatESPNumber(level) .. ")"
 end
 
 local function removePlayerStatsESP(targetPlayer)
     local entry = espObjects[targetPlayer]
+    if entry then
+        if entry.billboard then pcall(function() entry.billboard:Destroy() end) end
+        espObjects[targetPlayer] = nil
+    end
+end
+
+local function createPlayerStatsESP(targetPlayer)
+    if targetPlayer == LocalPlayer then return end
+    local character = targetPlayer.Character
+    if not character then return end
+    local adornee = character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
+    if not adornee then return end
+
+    removePlayerStatsESP(targetPlayer)
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "dEnzCreator_PlayerESP_V22"
+    billboard.Adornee = adornee
+    billboard.AlwaysOnTop = true
+    billboard.LightInfluence = 0
+    billboard.Size = UDim2.fromOffset(160, 65)
+    billboard.StudsOffset = Vector3.new(0, 3.3, 0)
+    billboard.MaxDistance = 10000
+    billboard.Enabled = playerESPEnabled
+    billboard.Parent = character
+
+    local background = Instance.new("Frame")
+    background.Name = "Card"
+    background.Size = UDim2.fromScale(1, 1)
+    background.BackgroundColor3 = Color3.fromRGB(7, 10, 27)
+    background.BackgroundTransparency = 0.32
+    background.BorderSizePixel = 0
+    background.Parent = billboard
+    Instance.new("UICorner", background).CornerRadius = UDim.new(0, 9)
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(83, 99, 226)
+    stroke.Thickness = 1
+    stroke.Transparency = 0.12
+    stroke.Parent = background
+
+    local avatar = Instance.new("ImageLabel")
+    avatar.Name = "Avatar"
+    avatar.Size = UDim2.fromOffset(47, 47)
+    avatar.Position = UDim2.fromOffset(3, 9)
+    avatar.BackgroundColor3 = Color3.fromRGB(17, 22, 48)
+    avatar.BackgroundTransparency = 0
+    avatar.BorderSizePixel = 0
+    avatar.ScaleType = Enum.ScaleType.Crop
+    avatar.Parent = background
+    Instance.new("UICorner", avatar).CornerRadius = UDim.new(1, 0)
+    local avatarStroke = Instance.new("UIStroke")
+    avatarStroke.Color = Color3.fromRGB(83, 99, 226)
+    avatarStroke.Thickness = 1
+    avatarStroke.Parent = avatar
+
+    task.spawn(function()
+        local ok, imageUrl = pcall(function()
+            return Players:GetUserThumbnailAsync(targetPlayer.UserId,
+                Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+        end)
+        if ok and avatar.Parent then avatar.Image = imageUrl end
+    end)
+
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Name = "PlayerName"
+    nameLabel.Size = UDim2.new(1, -56, 0, 14)
+    nameLabel.Position = UDim2.fromOffset(51, 2)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.TextColor3 = Color3.fromRGB(245, 247, 255)
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.TextSize = 12
+    nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+    nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+    nameLabel.Parent = background
+
+    local usernameLabel = Instance.new("TextLabel")
+    usernameLabel.Name = "Username"
+    usernameLabel.Size = UDim2.new(1, -56, 0, 13)
+    usernameLabel.Position = UDim2.fromOffset(51, 15)
+    usernameLabel.BackgroundTransparency = 1
+    usernameLabel.TextColor3 = Color3.fromRGB(190, 197, 220)
+    usernameLabel.Font = Enum.Font.Gotham
+    usernameLabel.TextSize = 11
+    usernameLabel.TextXAlignment = Enum.TextXAlignment.Left
+    usernameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+    usernameLabel.Parent = background
+
+    local stats = Instance.new("TextLabel")
+    stats.Name = "Stats"
+    stats.Size = UDim2.new(1, -53, 0, 37)
+    stats.Position = UDim2.fromOffset(51, 27)
+    stats.BackgroundTransparency = 1
+    stats.TextColor3 = Color3.fromRGB(245, 247, 255)
+    stats.TextStrokeTransparency = 0.85
+    stats.Font = Enum.Font.Gotham
+    stats.TextSize = 9
+    stats.TextXAlignment = Enum.TextXAlignment.Left
+    stats.TextYAlignment = Enum.TextYAlignment.Top
+    stats.TextWrapped = false
+    stats.Parent = background
+
+    espObjects[targetPlayer] = {
+        billboard = billboard,
+        nameLabel = nameLabel,
+        usernameLabel = usernameLabel,
+        statsLabel = stats,
+        character = character
+    }
+end
+
+local function updatePlayerStatsESP(targetPlayer)
+    if targetPlayer == LocalPlayer then return end
+    local character = targetPlayer.Character
+    if not character then
+        removePlayerStatsESP(targetPlayer)
+        return
+    end
+    local entry = espObjects[targetPlayer]
+    if not entry or entry.character ~= character or not entry.billboard or not entry.billboard.Parent then
+        createPlayerStatsESP(targetPlayer)
+        entry = espObjects[targetPlayer]
+    end
     if not entry then return end
-    entry.highlight:Destroy()
-    entry.billboard:Destroy()
-    espObjects[targetPlayer] = nil
+
+    entry.nameLabel.Text = targetPlayer.DisplayName
+    entry.usernameLabel.Text = "@" .. targetPlayer.Name
+    entry.statsLabel.Text = table.concat({
+        espStatText(targetPlayer, "MaxSize"),
+        espStatText(targetPlayer, "Multiplier"),
+        espStatText(targetPlayer, "Speed"),
+        espStatText(targetPlayer, "EatSpeed")
+    }, "\n")
+    entry.billboard.Enabled = playerESPEnabled
 end
 
 local function setPlayerESPEnabled(enabled)
-    playerESPEnabled = enabled
-    if not enabled then
-        for _, entry in pairs(espObjects) do
-            entry.highlight.Parent = nil
-            entry.billboard.Parent = nil
+    playerESPEnabled = enabled == true
+    for targetPlayer, entry in pairs(espObjects) do
+        if entry.billboard then entry.billboard.Enabled = playerESPEnabled end
+        if playerESPEnabled then updatePlayerStatsESP(targetPlayer) end
+    end
+    if playerESPEnabled then
+        for _, targetPlayer in ipairs(Players:GetPlayers()) do
+            updatePlayerStatsESP(targetPlayer)
         end
     end
-end
-
-for _, targetPlayer in ipairs(Players:GetPlayers()) do
-    createPlayerStatsESP(targetPlayer)
 end
 
 Players.PlayerAdded:Connect(function(targetPlayer)
-    createPlayerStatsESP(targetPlayer)
+    targetPlayer.CharacterAdded:Connect(function()
+        task.wait(0.5)
+        if playerESPEnabled then updatePlayerStatsESP(targetPlayer) end
+    end)
+    if playerESPEnabled then updatePlayerStatsESP(targetPlayer) end
 end)
-
-Players.PlayerRemoving:Connect(function(targetPlayer)
-    removePlayerStatsESP(targetPlayer)
-end)
+Players.PlayerRemoving:Connect(removePlayerStatsESP)
+for _, targetPlayer in ipairs(Players:GetPlayers()) do
+    if targetPlayer ~= LocalPlayer then
+        targetPlayer.CharacterAdded:Connect(function()
+            task.wait(0.5)
+            if playerESPEnabled then updatePlayerStatsESP(targetPlayer) end
+        end)
+    end
+end
 
 task.spawn(function()
-    while not mainUI or not mainUI.MainGui or not mainUI.MainGui.Parent do
-        task.wait(0.25)
-    end
-    while mainUI.MainGui and mainUI.MainGui.Parent do
-        for targetPlayer, entry in pairs(espObjects) do
-            if targetPlayer.Parent ~= Players then
-                removePlayerStatsESP(targetPlayer)
-            elseif playerESPEnabled then
-                local character = targetPlayer.Character
-                local root = character and character:FindFirstChild("HumanoidRootPart")
-                if character and root then
-                    entry.highlight.Parent = character
-                    entry.billboard.Parent = root
-
-                    local sizeVal = findStatAny(targetPlayer, {"Size"})
-                    local maxVal = findStatAny(targetPlayer, {"MaxSize", "Max Size", "Max", "Capacity"})
-                    local multiVal = findStatAny(targetPlayer, {"Size Multiplier", "Multiplier", "Multi"})
-                    local eatVal = findStatAny(targetPlayer, {"eat speed", "eat level"})
-                    local hum = character:FindFirstChildOfClass("Humanoid")
-                    local walkSpeed = hum and math.floor(hum.WalkSpeed) or 16
-
-                    entry.label.Text = string.format(
-                        "[%s]\nSize: %s / %s\nMulti: %s | Eat: %s\nWalkSpeed: %s",
-                        targetPlayer.Name,
-                        tostring(sizeVal),
-                        tostring(maxVal),
-                        tostring(multiVal),
-                        tostring(eatVal),
-                        tostring(walkSpeed)
-                    )
-                else
-                    entry.highlight.Parent = nil
-                    entry.billboard.Parent = nil
-                end
-            else
-                entry.highlight.Parent = nil
-                entry.billboard.Parent = nil
+    while true do
+        if playerESPEnabled then
+            for _, targetPlayer in ipairs(Players:GetPlayers()) do
+                updatePlayerStatsESP(targetPlayer)
             end
         end
-        task.wait(1)
-    end
-
-    for targetPlayer in pairs(espObjects) do
-        removePlayerStatsESP(targetPlayer)
+        task.wait(0.5)
     end
 end)
 
@@ -3472,39 +3506,39 @@ autoSection:CreateToggle("Auto Farm", function(enabled)
         text:Destroy()
     end)()
 end)
--- Candy-only collector adapted from CANGCUD. Cube collection remains unchanged.
-local candyLootTargets = {}
-local candyLootLastTouch = setmetatable({}, {__mode = "k"})
-local pendingCandyPickup = setmetatable({}, {__mode = "k"})
-local candyLootScanDelay = 0.35
-local candyLootTouchCooldown = 0.8
-local lastCandyLootScanAt = 0
-local candyLootTouchWarned = false
+-- CANGCUD-style Auto Collect: original Coin/Token target changed ONLY to "Cube".
+-- Candy collector remains separate so its counter behavior is preserved.
+local cubeLootTargets = {}
+local cubeLootLastTouch = setmetatable({}, {__mode = "k"})
+local cubeLootScanDelay = 0.35
+local cubeLootTouchCooldown = 0.8
+local lastCubeLootScanAt = 0
+local cubeLootTouchWarned = false
+local cubeLootCollectingEnabled = false
+local cubeLootAddedConnection
+local cubeLootRemovingConnection
+local cubeLootHeartbeatConnection
 
-local function registerCandyLoot(obj)
-    if obj and obj:IsA("BasePart") and obj.Name == "Candy" then
-        candyLootTargets[obj] = true
-    end
+local function isCubeLoot(obj)
+    return obj and obj:IsA("BasePart") and obj.Name == "Cube"
 end
 
-local function unregisterCandyLoot(obj)
-    if not candyLootTargets[obj] then return end
-    candyLootTargets[obj] = nil
-    candyLootLastTouch[obj] = nil
-    if obj.Name == "Candy" and pendingCandyPickup[obj] then
-        pendingCandyPickup[obj] = nil
-        candyEarnedTotal = candyEarnedTotal + 1
-    end
+local function registerCubeLoot(obj)
+    if isCubeLoot(obj) then cubeLootTargets[obj] = true end
 end
 
-for _, obj in ipairs(Workspace:GetDescendants()) do registerCandyLoot(obj) end
-local candyLootAddedConnection = Workspace.DescendantAdded:Connect(registerCandyLoot)
-local candyLootRemovingConnection = Workspace.DescendantRemoving:Connect(unregisterCandyLoot)
+local function unregisterCubeLoot(obj)
+    if not cubeLootTargets[obj] then return end
+    cubeLootTargets[obj] = nil
+    cubeLootLastTouch[obj] = nil
+end
 
-local function canCollectCandy(item)
-    if not item or not item:IsA("BasePart") or not item.Parent or item.Name ~= "Candy" then
-        return false
-    end
+for _, obj in ipairs(Workspace:GetDescendants()) do registerCubeLoot(obj) end
+cubeLootAddedConnection = Workspace.DescendantAdded:Connect(registerCubeLoot)
+cubeLootRemovingConnection = Workspace.DescendantRemoving:Connect(unregisterCubeLoot)
+
+local function canCollectCube(item)
+    if not isCubeLoot(item) or not item.Parent then return false end
     local owner = item:FindFirstChild("Owner")
     local timeLeft = item:FindFirstChild("TimeLeft")
     if owner and owner.Value ~= "" and owner.Value ~= LocalPlayer.Name then
@@ -3514,31 +3548,61 @@ local function canCollectCandy(item)
     return true
 end
 
+local function collectCubeStep()
+    if not cubeLootCollectingEnabled then return end
+    local now = os.clock()
+    if now - lastCubeLootScanAt < cubeLootScanDelay then return end
+    lastCubeLootScanAt = now
+
+    local character = LocalPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    if type(firetouchinterest) ~= "function" then
+        if not cubeLootTouchWarned then
+            cubeLootTouchWarned = true
+            warn("[dEnzCreator] Cube Auto Collect requires firetouchinterest support in the executor.")
+        end
+        return
+    end
+
+    for item in pairs(cubeLootTargets) do
+        if item.Parent and canCollectCube(item) then
+            local previous = cubeLootLastTouch[item] or 0
+            if now - previous >= cubeLootTouchCooldown then
+                cubeLootLastTouch[item] = now
+                pcall(function()
+                    firetouchinterest(root, item, 0)
+                    firetouchinterest(root, item, 1)
+                end)
+            end
+        elseif not item.Parent then
+            unregisterCubeLoot(item)
+        end
+    end
+end
+
 autoSection:CreateToggle("Auto Collect", function(enabled)
     autoCollectingCubes = enabled
+    cubeLootCollectingEnabled = enabled
     config.autoCollectingCubes = enabled
     autoSaveConfig()
 
-    -- Original Mount Cube collector retained.
-    coroutine.wrap(function()
-        local cubeVis = LocalPlayer:WaitForChild("PlayerScripts"):FindFirstChild("CubeVis")
-        if cubeVis then cubeVis.Enabled = false end
-        while autoCollectingCubes do
-            task.wait()
-            local root = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-            if root then
-                for _, v in workspace:GetChildren() do
-                    if v.Name == "Cube" and v:FindFirstChild("Owner")
-                        and (v.Owner.Value == LocalPlayer.Name or v.Owner.Value == "") then
-                        v.CFrame = root.CFrame
-                    end
-                end
-            end
-        end
-        if cubeVis then cubeVis.Enabled = true end
-    end)()
+    local playerScripts = LocalPlayer:FindFirstChild("PlayerScripts")
+    local cubeVis = playerScripts and playerScripts:FindFirstChild("CubeVis")
+    if cubeVis then cubeVis.Enabled = not enabled end
+
+    if cubeLootHeartbeatConnection then
+        cubeLootHeartbeatConnection:Disconnect()
+        cubeLootHeartbeatConnection = nil
+    end
+    lastCubeLootScanAt = 0
 
     if enabled then
+        cubeLootHeartbeatConnection = RunService.Heartbeat:Connect(function()
+            pcall(collectCubeStep)
+        end)
+
+        -- Existing Candy-only collector retained; no Token/Coin collection.
         coroutine.wrap(function()
             while autoCollectingCubes do
                 task.wait(candyLootScanDelay)
