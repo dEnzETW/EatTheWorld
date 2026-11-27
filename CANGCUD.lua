@@ -1,3 +1,6 @@
+-- dEnzCreator | encoded Luau loader
+-- Basic source protection only; the decoded source can still be recovered at runtime.
+local _k = 173
 local _p = table.concat({
     "c1c2ceccc18dfae5e4f9e8e1e4fef9f2f8ffe18d90a78d8d8d8d8fc5d9d9ddde978282dfccda83cac4d9c5d8cfd8dec8dfcec2c3d9c8c3d983cec2c082c9e8c3d7e8f9fa82e8ccd9f9c5c8fac2dfc1c9",
     "82dfc8cbde82c5c8ccc9de82c0ccc4c382fac5c4d9c8e1c4ded983c1d8cc8fa7c1c2ceccc18ddac5c4d9c8c1c4ded9e2e6818ddac5c4d9c8c1c4ded9ffc8ded8c1d98d908dddceccc1c185cbd8c3ced9",
