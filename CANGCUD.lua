@@ -1055,7 +1055,7 @@ layout.SortOrder = Enum.SortOrder.LayoutOrder
 layout.Padding = UDim.new(0, 5)
 local header = Instance.new("Frame")
 header.LayoutOrder = 1
-header.Size = UDim2.new(1, 0, 0, 106)
+header.Size = UDim2.new(1, 0, 0, 26)
 header.BackgroundColor3 = Color3.fromRGB(37, 39, 62)
 header.BackgroundTransparency = 0
 header.BorderSizePixel = 0
@@ -1065,19 +1065,19 @@ local headerStroke = Instance.new("UIStroke", header)
 headerStroke.Color = Color3.fromRGB(125, 105, 195)
 headerStroke.Thickness = 1
 local title = Instance.new("TextLabel")
-title.Size = UDim2.fromOffset(155, 20)
-title.Position = UDim2.fromOffset(6, 1)
+title.Size = UDim2.new(1, -52, 1, 0)
+title.Position = UDim2.fromOffset(6, 0)
 title.BackgroundTransparency = 1
 title.Text = "dEnzCreator Protect"
 title.TextColor3 = Color3.new(1, 1, 1)
-title.TextSize = 11
+title.TextSize = 10
 title.Font = Enum.Font.GothamBold
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.Parent = header
 local onlineStatus = Instance.new("TextLabel")
 onlineStatus.Name = "OnlineStatus"
 onlineStatus.Size = UDim2.fromOffset(60, 14)
-onlineStatus.Position = UDim2.fromOffset(6, 21)
+onlineStatus.Position = UDim2.fromOffset(6, 0)
 onlineStatus.BackgroundTransparency = 1
 onlineStatus.Text = "● ONLINE"
 onlineStatus.TextColor3 = Color3.fromRGB(80, 220, 145)
@@ -1105,10 +1105,65 @@ close.TextColor3 = Color3.new(1, 1, 1)
 close.BackgroundColor3 = Color3.fromRGB(49, 48, 76)
 close.Parent = header
 Instance.new("UICorner", close).CornerRadius = UDim.new(1, 0)
+local controlsFolderButton = Instance.new("TextButton")
+controlsFolderButton.Name = "ControlsFolderButton"
+controlsFolderButton.LayoutOrder = 2
+controlsFolderButton.Size = UDim2.new(1, 0, 0, 25)
+controlsFolderButton.BackgroundColor3 = Color3.fromRGB(49, 48, 76)
+controlsFolderButton.BorderSizePixel = 0
+controlsFolderButton.Text = "−  Controls"
+controlsFolderButton.TextColor3 = Color3.new(1, 1, 1)
+controlsFolderButton.TextSize = 9
+controlsFolderButton.Font = Enum.Font.GothamBold
+controlsFolderButton.Parent = frame
+Instance.new("UICorner", controlsFolderButton).CornerRadius = UDim.new(0, 6)
+
+local controlsContent = Instance.new("Frame")
+controlsContent.Name = "ControlsContent"
+controlsContent.LayoutOrder = 3
+controlsContent.Size = UDim2.new(1, 0, 0, 0)
+controlsContent.AutomaticSize = Enum.AutomaticSize.Y
+controlsContent.BackgroundTransparency = 1
+controlsContent.Parent = frame
+local controlsLayout = Instance.new("UIListLayout", controlsContent)
+controlsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+controlsLayout.Padding = UDim.new(0, 5)
+onlineStatus.Parent = controlsContent
+onlineStatus.Visible = true
+
+local statusFolderButton = Instance.new("TextButton")
+statusFolderButton.Name = "StatusHUDFolderButton"
+statusFolderButton.LayoutOrder = 4
+statusFolderButton.Size = UDim2.new(1, 0, 0, 25)
+statusFolderButton.BackgroundColor3 = Color3.fromRGB(49, 48, 76)
+statusFolderButton.BorderSizePixel = 0
+statusFolderButton.Text = "+  Status HUD"
+statusFolderButton.TextColor3 = Color3.new(1, 1, 1)
+statusFolderButton.TextSize = 9
+statusFolderButton.Font = Enum.Font.GothamBold
+statusFolderButton.Parent = frame
+Instance.new("UICorner", statusFolderButton).CornerRadius = UDim.new(0, 6)
+
+local statusContent = Instance.new("Frame")
+statusContent.Name = "StatusHUDContent"
+statusContent.LayoutOrder = 5
+statusContent.Size = UDim2.new(1, 0, 0, 0)
+statusContent.AutomaticSize = Enum.AutomaticSize.Y
+statusContent.BackgroundColor3 = Color3.fromRGB(37, 39, 62)
+statusContent.BackgroundTransparency = 0
+statusContent.BorderSizePixel = 0
+statusContent.Visible = false
+statusContent.Parent = frame
+Instance.new("UICorner", statusContent).CornerRadius = UDim.new(0, 6)
+local statusPadding = Instance.new("UIPadding", statusContent)
+statusPadding.PaddingLeft = UDim.new(0, 6)
+statusPadding.PaddingRight = UDim.new(0, 6)
+statusPadding.PaddingTop = UDim.new(0, 4)
+statusPadding.PaddingBottom = UDim.new(0, 4)
+
 local runtimeBlock = Instance.new("TextLabel")
 runtimeBlock.Name = "RuntimeBlock"
-runtimeBlock.Size = UDim2.new(1, -12, 0, 66)
-runtimeBlock.Position = UDim2.fromOffset(6, 38)
+runtimeBlock.Size = UDim2.new(1, 0, 0, 66)
 runtimeBlock.BackgroundTransparency = 1
 runtimeBlock.BorderSizePixel = 0
 runtimeBlock.RichText = true
@@ -1118,7 +1173,7 @@ runtimeBlock.TextSize = 9
 runtimeBlock.Font = Enum.Font.GothamMedium
 runtimeBlock.TextXAlignment = Enum.TextXAlignment.Left
 runtimeBlock.TextYAlignment = Enum.TextYAlignment.Center
-runtimeBlock.Parent = header
+runtimeBlock.Parent = statusContent
 local safetyGuardEnabled = false
 local safetyGuardMissingSince = nil
 local SAFETY_GUARD_TIMEOUT = 8
@@ -1175,7 +1230,7 @@ local function makeToggle(label, order, color, initial, callback)
     b.TextSize = 9
     b.Font = Enum.Font.GothamSemibold
     b.TextWrapped = true
-    b.Parent = frame
+    b.Parent = controlsContent
     Instance.new("UICorner", b).CornerRadius = UDim.new(0, 7)
     local enabled = initial
     b.Activated:Connect(function()
@@ -1260,15 +1315,30 @@ makeToggle("Safety Guard", 7, Color3.fromRGB(35, 150, 112), false, function(on)
     safetyGuardMissingSince = nil
     print("[dEnzCreator Protect] Safety Guard", on and "ON" or "OFF")
 end)
+local controlsExpanded = true
+local statusExpanded = false
 local minimized = false
+
+controlsFolderButton.Activated:Connect(function()
+    controlsExpanded = not controlsExpanded
+    controlsContent.Visible = controlsExpanded
+    controlsFolderButton.Text = (controlsExpanded and "−  Controls" or "+  Controls")
+end)
+
+statusFolderButton.Activated:Connect(function()
+    statusExpanded = not statusExpanded
+    statusContent.Visible = statusExpanded
+    statusFolderButton.Text = (statusExpanded and "−  Status HUD" or "+  Status HUD")
+end)
+
 minimize.Activated:Connect(function()
     minimized = not minimized
-    for _, child in ipairs(frame:GetChildren()) do
-        if child ~= header and child:IsA("GuiObject") then
-            child.Visible = not minimized
-        end
-    end
-    minimize.Text = minimized and "+" or "–"
+    controlsFolderButton.Visible = not minimized
+    controlsContent.Visible = not minimized and controlsExpanded
+    statusFolderButton.Visible = not minimized
+    statusContent.Visible = not minimized and statusExpanded
+    onlineStatus.Visible = not minimized
+    minimize.Text = minimized and "+" or "−"
 end)
 close.Activated:Connect(function()
     running, CFG.Farm = false, false
