@@ -1119,6 +1119,51 @@ runtimeBlock.Font = Enum.Font.GothamMedium
 runtimeBlock.TextXAlignment = Enum.TextXAlignment.Left
 runtimeBlock.TextYAlignment = Enum.TextYAlignment.Center
 runtimeBlock.Parent = header
+local safetyGuardEnabled = false
+local safetyGuardMissingSince = nil
+local SAFETY_GUARD_TIMEOUT = 8
+local autoFarmToggle = nil
+
+local function safetyGuardStep()
+    if not safetyGuardEnabled or not CFG.Farm then
+        safetyGuardMissingSince = nil
+        return
+    end
+
+    local char = player.Character
+    local hum = char and char:FindFirstChildOfClass("Humanoid")
+    local root = char and char:FindFirstChild("HumanoidRootPart")
+    local events = char and char:FindFirstChild("Events")
+    local grab = events and events:FindFirstChild("Grab")
+    local eat = events and events:FindFirstChild("Eat")
+    local ready = hum and hum.Health > 0 and root and grab and eat
+
+    if ready then
+        safetyGuardMissingSince = nil
+        return
+    end
+
+    safetyGuardMissingSince = safetyGuardMissingSince or os.clock()
+    if os.clock() - safetyGuardMissingSince < SAFETY_GUARD_TIMEOUT then
+        return
+    end
+
+    -- Fail safe: stop farming; do not attempt to bypass or conceal game checks.
+    CFG.Farm = false
+    if autoFarmToggle then
+        autoFarmToggle.Text = "AutoFarm: OFF"
+        autoFarmToggle.BackgroundColor3 = Color3.fromRGB(54, 52, 76)
+    end
+    setCharacterTransition(false)
+    restoreWorldRoots()
+    setHiddenMaps(false)
+    removeFarmFloor()
+    pendingLandingMap = nil
+    landingConfirmedAt = nil
+    safetyGuardMissingSince = nil
+    warn("[dEnzCreator Protect] Safety Guard stopped AutoFarm: required character components unavailable.")
+end
+
 local function makeToggle(label, order, color, initial, callback)
     local b = Instance.new("TextButton")
     b.LayoutOrder = order
@@ -1141,7 +1186,7 @@ local function makeToggle(label, order, color, initial, callback)
     end)
     return b
 end
-makeToggle("AutoFarm", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
+autoFarmToggle = makeToggle("AutoFarm", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
     CFG.Farm = on
     if on then
         ensureFarmFloor()
@@ -1209,6 +1254,11 @@ end)
 makeToggle("AFK Protection", 6, Color3.fromRGB(35, 150, 112), true, function(on)
     afkProtectionEnabled = on
     print("[dEnzCreator] AFK Protection", on and "ON" or "OFF")
+end)
+makeToggle("Safety Guard", 7, Color3.fromRGB(35, 150, 112), false, function(on)
+    safetyGuardEnabled = on
+    safetyGuardMissingSince = nil
+    print("[dEnzCreator Protect] Safety Guard", on and "ON" or "OFF")
 end)
 local minimized = false
 minimize.Activated:Connect(function()
@@ -1314,6 +1364,7 @@ end)
 local connection = RunService.Heartbeat:Connect(function()
     if not running then return end
     pcall(updateRuntimeMonitor)
+    pcall(safetyGuardStep)
     pcall(claimRewardsStep)
     pcall(lootCoinsCandyStep)
     if CFG.Farm then
