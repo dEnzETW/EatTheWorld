@@ -1035,7 +1035,7 @@ gui.ResetOnSpawn = false
 gui.Parent = player:WaitForChild("PlayerGui")
 local frame = Instance.new("Frame")
 frame.Name = "Main"
-frame.Size = UDim2.fromOffset(170, 0)
+frame.Size = UDim2.fromOffset(140, 0)
 frame.AutomaticSize = Enum.AutomaticSize.Y
 frame.Position = UDim2.new(0, 12, 0.42, 0)
 frame.BackgroundColor3 = Color3.fromRGB(20, 22, 38)
@@ -1107,7 +1107,7 @@ close.Parent = header
 Instance.new("UICorner", close).CornerRadius = UDim.new(1, 0)
 local controlsFolderButton = Instance.new("TextButton")
 controlsFolderButton.Name = "ControlsFolderButton"
-controlsFolderButton.LayoutOrder = 2
+controlsFolderButton.LayoutOrder = 4
 controlsFolderButton.Size = UDim2.new(1, 0, 0, 25)
 controlsFolderButton.BackgroundColor3 = Color3.fromRGB(49, 48, 76)
 controlsFolderButton.BorderSizePixel = 0
@@ -1120,7 +1120,7 @@ Instance.new("UICorner", controlsFolderButton).CornerRadius = UDim.new(0, 6)
 
 local controlsContent = Instance.new("Frame")
 controlsContent.Name = "ControlsContent"
-controlsContent.LayoutOrder = 3
+controlsContent.LayoutOrder = 5
 controlsContent.Size = UDim2.new(1, 0, 0, 0)
 controlsContent.AutomaticSize = Enum.AutomaticSize.Y
 controlsContent.BackgroundTransparency = 1
@@ -1132,12 +1132,12 @@ onlineStatus.Parent = controlsContent
 onlineStatus.Visible = true
 
 local statusFolderButton = Instance.new("TextButton")
-statusFolderButton.Name = "StatusHUDFolderButton"
-statusFolderButton.LayoutOrder = 4
+statusFolderButton.Name = "StatusFolderButton"
+statusFolderButton.LayoutOrder = 2
 statusFolderButton.Size = UDim2.new(1, 0, 0, 25)
 statusFolderButton.BackgroundColor3 = Color3.fromRGB(49, 48, 76)
 statusFolderButton.BorderSizePixel = 0
-statusFolderButton.Text = "+  Status HUD"
+statusFolderButton.Text = "+  Status"
 statusFolderButton.TextColor3 = Color3.new(1, 1, 1)
 statusFolderButton.TextSize = 9
 statusFolderButton.Font = Enum.Font.GothamBold
@@ -1145,8 +1145,8 @@ statusFolderButton.Parent = frame
 Instance.new("UICorner", statusFolderButton).CornerRadius = UDim.new(0, 6)
 
 local statusContent = Instance.new("Frame")
-statusContent.Name = "StatusHUDContent"
-statusContent.LayoutOrder = 5
+statusContent.Name = "StatusContent"
+statusContent.LayoutOrder = 3
 statusContent.Size = UDim2.new(1, 0, 0, 0)
 statusContent.AutomaticSize = Enum.AutomaticSize.Y
 statusContent.BackgroundColor3 = Color3.fromRGB(37, 39, 62)
@@ -1328,7 +1328,7 @@ end)
 statusFolderButton.Activated:Connect(function()
     statusExpanded = not statusExpanded
     statusContent.Visible = statusExpanded
-    statusFolderButton.Text = (statusExpanded and "−  Status HUD" or "+  Status HUD")
+    statusFolderButton.Text = (statusExpanded and "−  Status" or "+  Status")
 end)
 
 minimize.Activated:Connect(function()
