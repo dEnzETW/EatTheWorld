@@ -1,7 +1,22 @@
--- dEnzCreator | encoded Luau loader
--- Basic source protection only; the decoded source can still be recovered at runtime.
-local _k = 173
-local _p = table.concat({
+-- dEnzCreator | compatibility obfuscated loader
+-- Decoder uses pure Lua arithmetic; it does not require the bit32 library.
+local _key = 173
+
+local function _xorByte(a, b)
+    local result, place = 0, 1
+    for _ = 1, 8 do
+        local aa, bb = a % 2, b % 2
+        if aa ~= bb then
+            result = result + place
+        end
+        a = (a - aa) / 2
+        b = (b - bb) / 2
+        place = place * 2
+    end
+    return result
+end
+
+local _hex = table.concat({
     "c1c2ceccc18dfae5e4f9e8e1e4fef9f2f8ffe18d90a78d8d8d8d8fc5d9d9ddde978282dfccda83cac4d9c5d8cfd8dec8dfcec2c3d9c8c3d983cec2c082c9e8c3d7e8f9fa82e8ccd9f9c5c8fac2dfc1c9",
     "82dfc8cbde82c5c8ccc9de82c0ccc4c382fac5c4d9c8e1c4ded983c1d8cc8fa7c1c2ceccc18ddac5c4d9c8c1c4ded9e2e6818ddac5c4d9c8c1c4ded9ffc8ded8c1d98d908dddceccc1c185cbd8c3ced9",
     "c4c2c38584a78d8d8d8dc1c2ceccc18ddec2d8dfcec88d908dcaccc0c897e5d9d9ddeac8d985fae5e4f9e8e1e4fef9f2f8ffe184a78d8d8d8dccdedec8dfd985d9d4ddc885dec2d8dfcec8848d90908d",
@@ -698,11 +713,29 @@ local _p = table.concat({
     "8dc0ccdd8dded8dfcbcccec88dcfc8cbc2dfc88de0ccdd82eec5d8c3c6de8dc9c8d9cccec5968ddfc2c2d9de8ddfc8ded9c2dfc8c98ddac5c8c38decd8d9c2ebccdfc08dd9d8dfc3de8de2ebeb968dea",
     "dfcccf82e8ccd98dccc3c4c0ccd9c4c2c38d98d5968deadfcccf82ddc2ded980eadfcccf8dc9c8c1ccd4de8d9d839d9fde829c9f838f84a7dddfc4c3d9858ff6c9e8c3d7eedfc8ccd9c2df8dfb9e839e",
     "839bf08defccdf82ceccddcccec4d9d48dc9c8d9c8ced9c4c2c38dc1c2ccc9c8c9838de8ccd982eadfcccf8dded9ccd48dccced9c4dbc8968decd8d9c2fec8c1c18d868decd8d9c2fec6c4dd8dc8c3cc",
-    "cfc1c8c9838f84a7",
+    "cfc1c8c9838f84a7"
 })
-local _s = _p:gsub("%x%x", function(_h)
-    return string.char(bit32.bxor(tonumber(_h, 16), _k))
+
+local _ok, _source = pcall(function()
+    assert(type(_hex) == "string" and #_hex % 2 == 0,
+        "Invalid encoded payload")
+    return (_hex:gsub("%x%x", function(pair)
+        local value = tonumber(pair, 16)
+        return string.char(_xorByte(value, _key))
+    end))
 end)
-local _f, _e = loadstring(_s)
-if not _f then error("dEnzCreator loader error: " .. tostring(_e)) end
-return _f()
+
+if not _ok then
+    error("[dEnzCreator] Decode failed: " .. tostring(_source))
+end
+
+if type(loadstring) ~= "function" then
+    error("[dEnzCreator] This executor does not provide loadstring.")
+end
+
+local _chunk, _compileError = loadstring(_source)
+if not _chunk then
+    error("[dEnzCreator] Compile failed: " .. tostring(_compileError))
+end
+
+return _chunk()
