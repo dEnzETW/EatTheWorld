@@ -296,8 +296,19 @@ function UI:NewWindow(title)
     self.CloseBtn.TextColor3 = UI.Theme.Text
     self.CloseBtn.Parent = self.TitleBar
     self:TrackConnection(self.CloseBtn.MouseButton1Click:Connect(function()
-        if not self._destroyed and self.MainGui then
-            self.MainGui:Destroy()
+        if self._destroyed then return end
+
+        -- Closing the main panel is a full shutdown, not just GUI destruction.
+        -- The shutdown callback is registered after initialization and is
+        -- available by the time the user can click this button.
+        local shutdownFn = currentInstance and currentInstance.shutdown
+        if type(shutdownFn) == "function" then
+            local ok, result = pcall(shutdownFn)
+            if not ok or result ~= true then
+                warn("[dEnzCreator] Close aborted: cleanup did not confirm success.")
+            end
+        else
+            warn("[dEnzCreator] Close aborted: cleanup handler is not ready.")
         end
     end))
     self.ContentContainer = Instance.new("Frame")
@@ -663,6 +674,7 @@ end
 local autofarm = config.autofarm
 local autoCollectingCubes = config.autoCollectingCubes
 local autoClaimRewards = config.autoClaimRewards
+local autoClaimThread = nil
 local antiAnchorEnabled = config.keepUnanchor
 local antiAnchorConnection = nil
 local antiFallEnabled = config.antiFallEnabled
@@ -4085,17 +4097,48 @@ autoSection:CreateToggle("Auto Claim", function(enabled)
     autoClaimRewards = enabled
     config.autoClaimRewards = enabled
     autoSaveConfig()
-    coroutine.wrap(function()
-        while autoClaimRewards do
-            task.wait(1)
-            for _, reward in LocalPlayer.TimedRewards:GetChildren() do
-                if reward.Value > 0 then
-                    Events.RewardEvent:FireServer(reward)
+
+    if enabled then
+        -- Prevent duplicate Auto Claim workers.
+        if autoClaimThread then
+            pcall(task.cancel, autoClaimThread)
+            autoClaimThread = nil
+        end
+
+        autoClaimThread = task.spawn(function()
+            while autoClaimRewards do
+                task.wait(1)
+                if not autoClaimRewards then break end
+
+                local timedRewards = LocalPlayer:FindFirstChild("TimedRewards")
+                if timedRewards then
+                    for _, reward in ipairs(timedRewards:GetChildren()) do
+                        if not autoClaimRewards then break end
+                        local valueOK, rewardValue = pcall(function()
+                            return reward.Value
+                        end)
+                        if valueOK and rewardValue > 0 then
+                            pcall(function()
+                                Events.RewardEvent:FireServer(reward)
+                            end)
+                        end
+                    end
+                end
+
+                if autoClaimRewards then
+                    pcall(function()
+                        Events.SpinEvent:FireServer()
+                    end)
                 end
             end
-            Events.SpinEvent:FireServer()
+            autoClaimThread = nil
+        end)
+    else
+        if autoClaimThread then
+            pcall(task.cancel, autoClaimThread)
+            autoClaimThread = nil
         end
-    end)()
+    end
 end)
 autoSection:CreateToggle("Move Mode", function(enabled)
     farmMoving = enabled
@@ -4973,6 +5016,12 @@ local function dEnzCreatorShutdownPreviousInstance()
     autofarm = false
     autoCollectingCubes = false
     autoClaimRewards = false
+    if autoClaimThread then
+        attempt("Auto Claim worker", function()
+            task.cancel(autoClaimThread)
+            autoClaimThread = nil
+        end)
+    end
     autoeat = false
     farmMoving = false
     continuousGrabEnabled = false
