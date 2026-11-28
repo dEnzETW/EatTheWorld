@@ -1,1513 +1,1042 @@
-local WHITELIST_URL =
-    "https://raw.githubusercontent.com/dEnzETW/EatTheWorld/refs/heads/main/WhiteList.lua"
-local whitelistOK, whitelistResult = pcall(function()
-    local source = game:HttpGet(WHITELIST_URL)
-    assert(type(source) == "string" and #source > 0,
-        "Whitelist file kosong")
-    local chunk, compileError = loadstring(source)
-    assert(chunk, compileError or "Whitelist compile gagal")
-    return chunk()
-end)
-if not whitelistOK or whitelistResult ~= true then
-    warn("[dEnzCreator] WHITELIST DENIED / LOAD FAILED")
-    pcall(function()
-        game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = "dEnzCreator",
-            Text = "Whitelist gagal atau akses ditolak.",
-            Duration = 5
-        })
-    end)
-    return
-end
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local VirtualUser = game:GetService("VirtualUser")
-local Workspace = game:GetService("Workspace")
-local player = Players.LocalPlayer
-if not player then return end
-local afkProtectionEnabled = true
-local afkProtectionConnection = player.Idled:Connect(function()
-    if not afkProtectionEnabled then return end
-    pcall(function()
-        VirtualUser:CaptureController()
-        VirtualUser:ClickButton2(Vector2.new(0, 0))
-    end)
-end)
-local CFG = {
-    Farm = false,
-    AutoSkipAfterSell = true,
-    UseMappedSkipRemote = true,
-}
-local running, lastMap = true, ""
-local grabEatPhase = "grab"
-local nextGrabEatActionAt = 0
-local GRAB_DELAY_BASE = 0.02
-local POST_GRAB_DELAY_BASE = 0.02
-local DELAY_ACCELERATION = 12
-local GRAB_DELAY = GRAB_DELAY_BASE / DELAY_ACCELERATION
-local POST_GRAB_DELAY = POST_GRAB_DELAY_BASE / DELAY_ACCELERATION
-local lastSellAttempt = 0
-local wasFull = false
-local skipSentForCycle = false
-local lastSize = nil
-local lastBarProgress = nil
-local pendingLandingMap = nil
-local landingConfirmedAt = nil
-local lastLandingAttempt = 0
-local missingActionSince = nil
-local missingActionSkipSent = false
-local cycleStartedAt = nil
-local completedCycleSeconds = 0
-local noFoodSkipSentForMap = false
-local noFoodMapKey = ""
-local noFoodSince = nil
-local noFoodChunksRoot = nil
-local chunksReadySince = nil
-local lastFoodScanAt = 0
-local lastMissingActionMap = ""
-local hiddenMapsEnabled = false
-local hiddenMapOriginals = setmetatable({}, {__mode = "k"})
-local workspaceMapConnection = nil
-local characterTransitionEnabled = false
-local transitionBoundCharacter = nil
-local transitionDisabledScripts = {}
-local characterTransitionConnection = nil
-local function setCharacterScriptDisabled(scriptObject, disabled)
-    if not scriptObject or not scriptObject:IsA("LocalScript") then return end
-    if transitionDisabledScripts[scriptObject] == nil then
-        transitionDisabledScripts[scriptObject] = scriptObject.Disabled
-    end
-    pcall(function()
-        scriptObject.Disabled = disabled
-    end)
-end
-local function applyCharacterTransitionToCharacter(char, hum)
-    if not characterTransitionEnabled or not char then return end
-    if transitionBoundCharacter ~= char then
-        transitionBoundCharacter = char
-    end
-    setCharacterScriptDisabled(char:FindFirstChild("LocalChunkManager"), true)
-    setCharacterScriptDisabled(char:FindFirstChild("Animate"), true)
-end
-local function restoreCharacterTransition()
-    characterTransitionEnabled = false
-    transitionBoundCharacter = nil
-    for scriptObject, wasDisabled in pairs(transitionDisabledScripts) do
-        if scriptObject then
-            pcall(function()
-                scriptObject.Disabled = wasDisabled
-            end)
-        end
-    end
-    table.clear(transitionDisabledScripts)
-end
-local function setCharacterTransition(enabled)
-    characterTransitionEnabled = enabled and true or false
-    if not characterTransitionEnabled then
-        restoreCharacterTransition()
-        return
-    end
-    local char, hum = player.Character, nil
-    if char then hum = char:FindFirstChildOfClass("Humanoid") end
-    applyCharacterTransitionToCharacter(char, hum)
-end
-local function norm(v)
-    return string.lower(tostring(v or "")):gsub("^%s+", ""):gsub("%s+$", ""):gsub("%s+", " ")
-end
-local worldRootsDetached = false
-local detachedWorldRoots = {Map = {}, Chunks = {}}
-local latestDetachedMapRoot = nil
-local function detachWorldRoot(root)
-    if not root or (root.Name ~= "Map" and root.Name ~= "Chunks") then return end
-    local bucket = detachedWorldRoots[root.Name]
-    for _, saved in ipairs(bucket) do
-        if saved == root then return end
-    end
-    table.clear(bucket)
-    table.insert(bucket, root)
-    if root.Name == "Map" then latestDetachedMapRoot = root end
-    pcall(function() root.Parent = nil end)
-end
-local function detachCurrentWorldRoots()
-    worldRootsDetached = true
-    local mapRoot = Workspace:FindFirstChild("Map")
-    local chunksRoot = Workspace:FindFirstChild("Chunks")
-    if mapRoot then detachWorldRoot(mapRoot) end
-    if chunksRoot then detachWorldRoot(chunksRoot) end
-end
-local function restoreWorldRoots()
-    worldRootsDetached = false
-    for _, rootName in ipairs({"Map", "Chunks"}) do
-        local bucket = detachedWorldRoots[rootName]
-        for _, root in ipairs(bucket) do
-            if root then
-                pcall(function()
-                    if root.Parent == nil then root.Parent = Workspace end
-                end)
-            end
-        end
-        table.clear(bucket)
-    end
-    latestDetachedMapRoot = nil
-end
-local function getMapName()
-    local candidates = {}
-    local settings = ReplicatedStorage:FindFirstChild("ServerSettings")
-    if settings then
-        for _, key in ipairs({"MapName", "CurrentMap"}) do
-            local obj = settings:FindFirstChild(key)
-            if obj then pcall(function() table.insert(candidates, obj.Value) end) end
-        end
-    end
-    local map = Workspace:FindFirstChild("Map") or latestDetachedMapRoot
-    if map then
-        table.insert(candidates, map.Name)
-        local value = map:FindFirstChild("MapName")
-        if value and value:IsA("ValueBase") then table.insert(candidates, value.Value) end
-    end
-    local playerMap = player:FindFirstChild("CurrentMap")
-    if playerMap then pcall(function() table.insert(candidates, playerMap.Value) end) end
-    for _, value in ipairs(candidates) do
-        if norm(value) ~= "" and norm(value) ~= "map" then
-            return tostring(value), norm(value)
-        end
-    end
-    return "Unknown", ""
-end
-local function getParts()
-    local char = player.Character
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    local root = char:FindFirstChild("HumanoidRootPart")
-    local events = char:FindFirstChild("Events")
-    if hum and root then return char, hum, root, events end
-end
-local FARM_FLOOR_NAME = "dEnzCreator_FarmFloor"
-local FARM_FLOOR_SIZE = Vector3.new(2048, 10, 2048)
-local FARM_FLOOR_HALF_HEIGHT = FARM_FLOOR_SIZE.Y / 2
-local FARM_LANDING_X = 0
-local FARM_LANDING_Z = 100
-local FARM_SURFACE_SCAN_INTERVAL = 0.20
-local FARM_SURFACE_RAY_TOP = 10000
-local FARM_SURFACE_RAY_LENGTH = 20000
-local farmFloor = nil
-local farmSurfaceMapKey = ""
-local farmSurfaceTopY = nil
-local lastFarmSurfaceScan = 0
-local function lockFarmFloor(floor)
-    if not floor or not floor:IsA("BasePart") then return nil end
-    if floor.Size ~= FARM_FLOOR_SIZE then
-        floor.Size = FARM_FLOOR_SIZE
-    end
-    if not floor.Anchored then floor.Anchored = true end
-    if not floor.CanCollide then floor.CanCollide = true end
-    if not floor.CanTouch then floor.CanTouch = true end
-    if not floor.CanQuery then floor.CanQuery = true end
-    return floor
-end
-local function ensureFarmFloor()
-    if farmFloor and farmFloor.Parent == Workspace then
-        return lockFarmFloor(farmFloor)
-    end
-    local existing = Workspace:FindFirstChild(FARM_FLOOR_NAME)
-    if existing and existing:IsA("BasePart") then
-        farmFloor = existing
-        return lockFarmFloor(farmFloor)
-    end
-    local floor = Instance.new("Part")
-    floor.Name = FARM_FLOOR_NAME
-    floor.CastShadow = false
-    floor.Color = Color3.fromRGB(5, 5, 7)
-    floor.Material = Enum.Material.SmoothPlastic
-    floor.TopSurface = Enum.SurfaceType.Studs
-    floor.BottomSurface = Enum.SurfaceType.Smooth
-    floor.Parent = Workspace
-    farmFloor = floor
-    return lockFarmFloor(farmFloor)
-end
-local function detectMapSurfaceTopY()
-    local mapRoot = Workspace:FindFirstChild("Map")
-    if not mapRoot then return nil end
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Include
-    params.FilterDescendantsInstances = {mapRoot, Workspace.Terrain}
-    params.IgnoreWater = true
-    local offsets = {
-        {0, 0}, {4, 0}, {-4, 0}, {0, 4}, {0, -4},
-        {8, 8}, {-8, 8}, {8, -8}, {-8, -8}
-    }
-    local heights = {}
-    for _, offset in ipairs(offsets) do
-        local origin = Vector3.new(FARM_LANDING_X + offset[1], FARM_SURFACE_RAY_TOP,
-            FARM_LANDING_Z + offset[2])
-        local result = Workspace:Raycast(origin,
-            Vector3.new(0, -FARM_SURFACE_RAY_LENGTH, 0), params)
-        if result and result.Normal.Y >= 0.82 then
-            local hit = result.Instance
-            local acceptable = hit == Workspace.Terrain
-            if hit:IsA("BasePart") then
-                acceptable = hit.CanCollide and hit.CanQuery
-                    and hit.CFrame.UpVector.Y >= 0.82
-                    and hit.Size.X >= 12 and hit.Size.Z >= 12
-            end
-            if acceptable then table.insert(heights, result.Position.Y) end
-        end
-    end
-    if #heights == 0 then return nil end
-    table.sort(heights)
-    local middle = math.floor((#heights + 1) / 2)
-    if #heights % 2 == 0 then
-        return (heights[middle] + heights[middle + 1]) / 2
-    end
-    return heights[middle]
-end
-local function positionFarmFloorForMap(mapKey, floor)
-    if farmSurfaceMapKey ~= mapKey then
-        farmSurfaceMapKey = mapKey
-        farmSurfaceTopY = nil
-        lastFarmSurfaceScan = 0
-    end
-    if farmSurfaceTopY ~= nil then return true end
-    local now = os.clock()
-    if now - lastFarmSurfaceScan < FARM_SURFACE_SCAN_INTERVAL then return false end
-    lastFarmSurfaceScan = now
-    local mapTopY = detectMapSurfaceTopY()
-    if mapTopY == nil then return false end
-    farmSurfaceTopY = mapTopY + 0.05
-    floor = floor or ensureFarmFloor()
-    floor.CFrame = CFrame.new(0, farmSurfaceTopY - FARM_FLOOR_HALF_HEIGHT, 0)
-    floor.Anchored = true
-    print("[dEnzCreator] Raycast floor matched map surface:", mapKey,
-        "topY:", math.floor(farmSurfaceTopY * 100 + 0.5) / 100)
-    return true
-end
-local function removeFarmFloor()
-    if farmFloor then
-        pcall(function() farmFloor:Destroy() end)
-        farmFloor = nil
-    end
-    farmSurfaceMapKey = ""
-    farmSurfaceTopY = nil
-    lastFarmSurfaceScan = 0
-    local existing = Workspace:FindFirstChild(FARM_FLOOR_NAME)
-    if existing then pcall(function() existing:Destroy() end) end
-end
-local function farmAnchor()
-    local char, hum, root = getParts()
-    if not char then return false end
-    local mapName, key = getMapName()
-    local z = FARM_LANDING_Z
-    local mapChanged = mapName ~= lastMap
-    if mapChanged then
-        lastMap = mapName
-        pendingLandingMap = mapName
-        landingConfirmedAt = nil
-        noFoodMapKey = key
-        noFoodChunksRoot = nil
-        chunksReadySince = nil
-        noFoodSince = nil
-        noFoodSkipSentForMap = false
-        lastFoodScanAt = 0
-        lastLandingAttempt = 0
-        print("[dEnzCreator] Map transition detected; keeping map Hidden and preparing farm:", mapName)
-    end
-    local floor = ensureFarmFloor()
-    local newSurfaceReady = positionFarmFloorForMap(key, floor)
-    if not newSurfaceReady then
-        local safeTop = floor.Position.Y + floor.Size.Y / 2
-        local safeRootY = safeTop + hum.HipHeight + root.Size.Y / 2 + 0.08
-        local p = root.Position
-        local horizontalDrift = (Vector3.new(p.X, 0, p.Z)
-            - Vector3.new(FARM_LANDING_X, 0, z)).Magnitude
-        if horizontalDrift > 2.0 or p.Y < safeRootY - 3.0 or p.Y > safeRootY + 8.0 then
-            root.CFrame = CFrame.new(FARM_LANDING_X, safeRootY, z)
-            root.AssemblyLinearVelocity = Vector3.zero
-            root.AssemblyAngularVelocity = Vector3.zero
-            lastLandingAttempt = os.clock()
-        end
-        return false
-    end
-    local floorTop = floor.Position.Y + floor.Size.Y / 2
-    local targetY = floorTop + hum.HipHeight + root.Size.Y / 2 + 0.08
-    local targetCFrame = CFrame.new(FARM_LANDING_X, targetY, z)
-    local position = root.Position
-    local horizontalDrift = (Vector3.new(position.X, 0, position.Z)
-        - Vector3.new(FARM_LANDING_X, 0, z)).Magnitude
-    local verticalDrift = math.abs(position.Y - targetY)
-    if mapChanged or horizontalDrift > 2.0 or verticalDrift > 0.35 then
-        root.CFrame = targetCFrame
-        root.AssemblyLinearVelocity = Vector3.zero
-        root.AssemblyAngularVelocity = Vector3.zero
-        pcall(function()
-            hum:ChangeState(Enum.HumanoidStateType.GettingUp)
-        end)
-        lastLandingAttempt = os.clock()
-    else
-        local velocity = root.AssemblyLinearVelocity
-        if math.abs(velocity.Y) > 0.5 then
-            root.AssemblyLinearVelocity = Vector3.new(velocity.X, 0, velocity.Z)
-        end
-        if root.AssemblyAngularVelocity.Magnitude > 0.5 then
-            root.AssemblyAngularVelocity = Vector3.zero
-        end
-    end
-    return true
-end
-local function fire(obj)
-    if not obj then return end
-    pcall(function()
-        if obj:IsA("RemoteEvent") then obj:FireServer()
-        elseif obj:IsA("BindableEvent") then obj:Fire() end
-    end)
-end
-local function requestSkip(forceNoEatSkip)
-    if (not forceNoEatSkip and not CFG.AutoSkipAfterSell) or not CFG.UseMappedSkipRemote then
-        return false
-    end
-    local folder = ReplicatedStorage:FindFirstChild("Events")
-    local remote = folder and folder:FindFirstChild("SetServerSettings")
-    if not remote or not remote:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.3.6] SetServerSettings RemoteEvent not found.")
-        return false
-    end
-    local ok, err = pcall(function()
-        local args = {{MapTime = -1, Paused = false}}
-        remote:FireServer(unpack(args))
-    end)
-    if ok then
-        print("[dEnzCreator V3.3.6] AutoSkip request sent (timer not paused).")
-        return true
-    end
-    warn("[dEnzCreator V3.3.6] AutoSkip error:", err)
-    return false
-end
-local function monitorGrabEatAvailability()
-    local char = player.Character
-    if not char then return end
-    local mapName, key = getMapName()
-    if key ~= lastMissingActionMap then
-        lastMissingActionMap = key
-        missingActionSince = nil
-        missingActionSkipSent = false
-    end
-    local events = char:FindFirstChild("Events")
-    local grab = events and events:FindFirstChild("Grab")
-    local eat = events and events:FindFirstChild("Eat")
-    local ready = grab ~= nil and eat ~= nil
-    if ready then
-        missingActionSince = nil
-        missingActionSkipSent = false
-        return
-    end
-    if not missingActionSince then
-        missingActionSince = os.clock()
-        return
-    end
-    if not missingActionSkipSent and os.clock() - missingActionSince >= 3.0 then
-        warn("[dEnzCreator V3.3.6] Grab/Eat missing on", mapName,
-            "- requesting automatic map skip.")
-        missingActionSkipSent = true
-        requestSkip()
-    end
-end
-local function scanSellBarProgress()
-    local pg = player:FindFirstChildOfClass("PlayerGui")
-    if not pg then return nil end
-    local label
-    for _, obj in ipairs(pg:GetDescendants()) do
-        if (obj:IsA("TextLabel") or obj:IsA("TextButton")) then
-            if norm(obj.Text):find("klik untuk menjual", 1, true) then
-                label = obj
-                break
-            end
-        end
-    end
-    if not label then return nil end
-    local labelY = label.AbsolutePosition.Y + label.AbsoluteSize.Y / 2
-    local ancestor = label.Parent
-    for _ = 1, 7 do
-        if not ancestor then break end
-        if ancestor:IsA("GuiObject") and ancestor.AbsoluteSize.X >= 250 then
-            local trackWidth = ancestor.AbsoluteSize.X
-            local bestRatio = nil
-            for _, obj in ipairs(ancestor:GetDescendants()) do
-                if obj:IsA("GuiObject") and obj.Visible
-                    and obj.AbsoluteSize.X >= 80 and obj.AbsoluteSize.Y >= 8 then
-                    local centerY = obj.AbsolutePosition.Y + obj.AbsoluteSize.Y / 2
-                    local nearBar = math.abs(centerY - labelY) <= 90
-                    local c = obj.BackgroundColor3
-                    local green = c.G > c.R * 1.15 and c.G > c.B * 1.08
-                    if nearBar and green then
-                        local ratio = math.clamp(obj.AbsoluteSize.X / trackWidth, 0, 1)
-                        if not bestRatio or ratio > bestRatio then
-                            bestRatio = ratio
-                        end
-                    end
-                end
-            end
-            if bestRatio then
-                return bestRatio
-            end
-        end
-        ancestor = ancestor.Parent
-    end
-    return nil
-end
-local SELL_BAR_SCAN_INTERVAL = 0.15
-local lastSellBarScanAt = 0
-local cachedSellBarProgress = nil
-local function getSellBarProgress()
-    local now = os.clock()
-    if now - lastSellBarScanAt < SELL_BAR_SCAN_INTERVAL then
-        return cachedSellBarProgress
-    end
-    lastSellBarScanAt = now
-    cachedSellBarProgress = scanSellBarProgress()
-    return cachedSellBarProgress
-end
-local function getCapacityState(char)
-    local sizeObj = char and char:FindFirstChild("Size")
-    local upgrades = player:FindFirstChild("Upgrades")
-    local maxObj = upgrades and upgrades:FindFirstChild("MaxSize")
-    local size = sizeObj and tonumber(sizeObj.Value) or nil
-    local maxSize = maxObj and tonumber(maxObj.Value) or nil
-    local numericFull = size ~= nil and maxSize ~= nil and maxSize > 0
-        and size >= maxSize
-    return size, maxSize, numericFull
-end
-local function sendAutoSell(events)
-    local sell = events and events:FindFirstChild("Sell")
-    if not sell then
-        warn("[dEnzCreator V3.3.6] Character.Events.Sell not found.")
-        return false
-    end
-    if not sell:IsA("RemoteEvent") then
-        warn("[dEnzCreator V3.3.6] Sell exists but is not a RemoteEvent:", sell.ClassName)
-        return false
-    end
-    local ok, err = pcall(function()
-        sell:FireServer()
-    end)
-    if not ok then
-        warn("[dEnzCreator V3.3.6] AutoSell error:", err)
-        return false
-    end
-    print("[dEnzCreator V3.3.6] AutoSell request sent; waiting for sale confirmation.")
-    return true
-end
-local NO_FOOD_CONFIRM_SECONDS = 3.0
-local NO_FOOD_SCAN_INTERVAL = 0.35
-local function getActiveChunksRoot()
-    local live = Workspace:FindFirstChild("Chunks")
-    if live then return live end
-    if worldRootsDetached then
-        local bucket = detachedWorldRoots.Chunks
-        return bucket and bucket[#bucket] or nil
-    end
-    return nil
-end
-local lootCoinsCandyEnabled = false
-
--- MountEiger Loot Cube + Candy collector.
--- Both target sets register existing Workspace descendants and newly added objects.
--- Candy count increases only after a touched Candy leaves Workspace.
-local LOOT_SCAN_DELAY = 0.35
-local LOOT_TOUCH_COOLDOWN = 0.8
-local lastCubeLootScanAt = 0
-local lastCandyLootScanAt = 0
-local lootTouchWarned = false
-local cubeLootTargets = {}
-local candyLootTargets = {}
-local cubeLootLastTouch = setmetatable({}, {__mode = "k"})
-local candyLootLastTouch = setmetatable({}, {__mode = "k"})
-local pendingCandyPickup = setmetatable({}, {__mode = "k"})
-local lootAddedConnection
-local lootRemovingConnection
-local candyEarnedTotal = 0
-local farmCycleTotal = 0
-
-local function isCubeLoot(obj)
-    return obj and obj:IsA("BasePart") and obj.Name == "Cube"
-end
-
-local function isCandyLoot(obj)
-    return obj and obj:IsA("BasePart") and obj.Name == "Candy"
-end
-
-local function registerLoot(obj)
-    if isCubeLoot(obj) then
-        cubeLootTargets[obj] = true
-    elseif isCandyLoot(obj) then
-        candyLootTargets[obj] = true
-    end
-end
-
-local function unregisterLoot(obj)
-    if cubeLootTargets[obj] then
-        cubeLootTargets[obj] = nil
-        cubeLootLastTouch[obj] = nil
-    end
-
-    if candyLootTargets[obj] then
-        candyLootTargets[obj] = nil
-        candyLootLastTouch[obj] = nil
-        if pendingCandyPickup[obj] then
-            pendingCandyPickup[obj] = nil
-            candyEarnedTotal = candyEarnedTotal + 1
-        end
-    end
-end
-
-for _, obj in ipairs(Workspace:GetDescendants()) do
-    registerLoot(obj)
-end
-lootAddedConnection = Workspace.DescendantAdded:Connect(registerLoot)
-lootRemovingConnection = Workspace.DescendantRemoving:Connect(unregisterLoot)
-
-local function canCollectLoot(item, expectedName)
-    if not item or not item:IsA("BasePart") or not item.Parent
-        or item.Name ~= expectedName then
-        return false
-    end
-
-    local owner = item:FindFirstChild("Owner")
-    local timeLeft = item:FindFirstChild("TimeLeft")
-    if owner and owner.Value ~= "" and owner.Value ~= player.Name then
-        local remaining = timeLeft and tonumber(timeLeft.Value)
-        if remaining and remaining > 0 then
-            return false
-        end
-    end
-    return true
-end
-
-local function lootCoinsCandyStep()
-    if not lootCoinsCandyEnabled then return end
-
-    local now = os.clock()
-    local char = player.Character
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-
-    if type(firetouchinterest) ~= "function" then
-        if not lootTouchWarned then
-            lootTouchWarned = true
-            warn("[dEnzCreator] Loot Cube & Candy requires firetouchinterest support in the executor.")
-        end
-        return
-    end
-
-    -- Cube collector: global Workspace registry, matching MountEiger.
-    if now - lastCubeLootScanAt >= LOOT_SCAN_DELAY then
-        lastCubeLootScanAt = now
-        for item in pairs(cubeLootTargets) do
-            if item.Parent and canCollectLoot(item, "Cube") then
-                local previous = cubeLootLastTouch[item] or 0
-                if now - previous >= LOOT_TOUCH_COOLDOWN then
-                    cubeLootLastTouch[item] = now
-                    pcall(function()
-                        firetouchinterest(root, item, 0)
-                        firetouchinterest(root, item, 1)
-                    end)
-                end
-            elseif not item.Parent then
-                unregisterLoot(item)
-            end
-        end
-    end
-
-    -- Candy collector remains independent so its counter is not mixed with Cube.
-    if now - lastCandyLootScanAt >= LOOT_SCAN_DELAY then
-        lastCandyLootScanAt = now
-        for item in pairs(candyLootTargets) do
-            if item.Parent and canCollectLoot(item, "Candy") then
-                local previous = candyLootLastTouch[item] or 0
-                if now - previous >= LOOT_TOUCH_COOLDOWN then
-                    candyLootLastTouch[item] = now
-                    local touched = pcall(function()
-                        firetouchinterest(root, item, 0)
-                        firetouchinterest(root, item, 1)
-                    end)
-                    if touched then
-                        pendingCandyPickup[item] = true
-                    end
-                end
-            elseif not item.Parent then
-                unregisterLoot(item)
-            end
-        end
-    end
-end
-local function findNearbyFood(root)
-    local chunks = getActiveChunksRoot()
-    if not chunks then
-        return nil -- nil means map/chunks are not ready; do not start/count timer
-    end
-    local ok, descendants = pcall(function() return chunks:GetDescendants() end)
-    if not ok then return nil end
-    for _, obj in ipairs(descendants) do
-        if obj:IsA("BasePart") and obj.Parent and obj:IsDescendantOf(chunks) then
-            return true
-        end
-    end
-    return false
-end
-local function monitorLandingEatProgress(hum, root)
-    local chunks = getActiveChunksRoot()
-    if not chunks then
-        noFoodSince = nil
-        noFoodChunksRoot = nil
-        chunksReadySince = nil
-        landingConfirmedAt = nil
-        return false
-    end
-    local mapName, key = getMapName()
-    local identity = key ~= "" and ("map:" .. key) or chunks
-    local changed = false
-    if typeof(identity) == "Instance" then
-        changed = noFoodChunksRoot ~= identity
-    else
-        changed = noFoodMapKey ~= identity
-    end
-    if changed then
-        noFoodMapKey = typeof(identity) == "string" and identity or ""
-        noFoodChunksRoot = typeof(identity) == "Instance" and identity or chunks
-        chunksReadySince = os.clock()
-        noFoodSince = nil
-        landingConfirmedAt = nil
-        noFoodSkipSentForMap = false
-        lastFoodScanAt = 0
-        pendingLandingMap = mapName
-        print("[dEnzCreator] AutoSkip: Chunks/map changed; waiting for stable map:", mapName)
-        return false
-    end
-    if noFoodSkipSentForMap then
-        return false
-    end
-    local now = os.clock()
-    if not chunksReadySince then
-        chunksReadySince = now
-        return false
-    end
-    if now - chunksReadySince < 1.5 then
-        return false
-    end
-    if now - lastFoodScanAt < NO_FOOD_SCAN_INTERVAL then
-        return false
-    end
-    lastFoodScanAt = now
-    local foodState = findNearbyFood(root)
-    if foodState == nil then
-        noFoodSince = nil
-        return false
-    elseif foodState then
-        noFoodSince = nil
-        pendingLandingMap = nil
-        return false
-    end
-    if not noFoodSince then
-        noFoodSince = now
-        print("[dEnzCreator] AutoSkip: no food detected; starting 3-second timer:", mapName)
-        return false
-    end
-    if now - noFoodSince >= NO_FOOD_CONFIRM_SECONDS then
-        if requestSkip(true) then
-            noFoodSkipSentForMap = true
-            pendingLandingMap = nil
-            warn("[dEnzCreator] AutoSkip: map empty for 3 seconds; skip request sent:", mapName)
-        else
-            noFoodSince = now
-            warn("[dEnzCreator] AutoSkip: request failed; retrying after 3 seconds:", mapName)
-        end
-    end
-    return false
-end
-local GRAB_ANIMATION_SPEED = 5.0
-local EAT_ANIMATION_SPEED = 5.0
-local ANIMATION_SCAN_INTERVAL = 0.15
-local lastAnimationScanAt = 0
-local function accelerateActionAnimations(hum)
-    if not hum then return end
-    local now = os.clock()
-    if now - lastAnimationScanAt < ANIMATION_SCAN_INTERVAL then return end
-    lastAnimationScanAt = now
-    local ok, tracks = pcall(function()
-        return hum:GetPlayingAnimationTracks()
-    end)
-    if not ok or type(tracks) ~= "table" then return end
-    for _, track in ipairs(tracks) do
-        local trackName = string.lower(tostring(track.Name or ""))
-        local speed = nil
-        if trackName:find("grab", 1, true) then
-            speed = GRAB_ANIMATION_SPEED
-        elseif trackName:find("eat", 1, true) then
-            speed = EAT_ANIMATION_SPEED
-        end
-        if speed then
-            pcall(function()
-                track:AdjustSpeed(speed)
-            end)
-        end
-    end
-end
-local function farmStep()
-    local char, hum, root, events = getParts()
-    if not char then return end
-    applyCharacterTransitionToCharacter(char, hum)
-    local surfaceReady = farmAnchor()
-    if surfaceReady and CFG.Farm then
-        detachCurrentWorldRoots()
-    end
-    accelerateActionAnimations(hum)
-    monitorLandingEatProgress(hum, root)
-    if events then
-        local now = os.clock()
-        local grabEvent = events:FindFirstChild("Grab")
-        local eatEvent = events:FindFirstChild("Eat")
-        if grabEvent and eatEvent and now >= nextGrabEatActionAt then
-            if grabEatPhase == "grab" then
-                fire(grabEvent)
-                grabEatPhase = "eat"
-                nextGrabEatActionAt = now + POST_GRAB_DELAY
-            else
-                if cycleStartedAt == nil then
-                    cycleStartedAt = now
-                    completedCycleSeconds = 0
-                    print("[dEnzCreator] Season Time started: first Eat action.")
-                end
-                fire(eatEvent)
-                grabEatPhase = "grab"
-                nextGrabEatActionAt = now + GRAB_DELAY
-            end
-        end
-    end
-    local size, maxSize, numericFull = getCapacityState(char)
-    local previousBarProgress = lastBarProgress
-    local barProgress = getSellBarProgress()
-    lastBarProgress = barProgress
-    local full
-    local barFull = barProgress ~= nil and barProgress >= 0.985
-    if size ~= nil and maxSize ~= nil and maxSize > 0 then
-        full = numericFull or (barFull and size >= maxSize * 0.97)
-    else
-        full = barFull
-    end
-    if full then
-        if not wasFull then
-            wasFull = true
-            skipSentForCycle = false
-            lastSellAttempt = os.clock()
-            sendAutoSell(events)
-            skipSentForCycle = requestSkip()
-            print("[dEnzCreator] FULL detected | Sell sent, then Skip sent with no added delay.")
-        elseif os.clock() - lastSellAttempt >= 1.75 then
-            lastSellAttempt = os.clock()
-            sendAutoSell(events)
-        end
-    end
-    local sizeDropAfterFull = size ~= nil and maxSize ~= nil and lastSize ~= nil
-        and lastSize >= maxSize * 0.90 and size < lastSize * 0.50
-    local sizeReset = size ~= nil and maxSize ~= nil and size <= maxSize * 0.05
-        and lastSize ~= nil and lastSize > size
-    local barDropAfterFull = barProgress ~= nil and previousBarProgress ~= nil
-        and previousBarProgress >= 0.985 and barProgress < 0.90
-    local saleConfirmed = sizeDropAfterFull or sizeReset or barDropAfterFull
-    if saleConfirmed then
-        if cycleStartedAt ~= nil or wasFull then
-            farmCycleTotal = farmCycleTotal + 1
-            print("[dEnzCreator] Farm Cycle completed:", farmCycleTotal)
-        end
-        if cycleStartedAt ~= nil then
-            completedCycleSeconds = math.max(0, os.clock() - cycleStartedAt)
-            cycleStartedAt = nil
-            print("[dEnzCreator] Season Time stopped and saved: sale/reset confirmed (AutoSell or manual Sell).")
-        end
-        if wasFull then
-            print("[dEnzCreator V3.3.6] Sale/reset detected; requesting AutoSkip.")
-            if not skipSentForCycle then
-                skipSentForCycle = requestSkip()
-            end
-        end
-        wasFull = false
-        lastSellAttempt = 0
-        print("[dEnzCreator] Sale/reset detected; next Season Time will start on the next Eat action.")
-    end
-    if size ~= nil then
-        lastSize = size
-    end
-end
-local hiddenMapRoot = nil
-local hiddenMapAddedConnection = nil
-local hiddenMapGeneration = 0
-local hiddenChunksRoot = nil
-local hiddenChunksAddedConnection = nil
-local hiddenChunksGeneration = 0
-local HIDDEN_MAP_BATCH_SIZE = 160
-local HIDDEN_CHUNKS_BATCH_SIZE = 160
-local function isProtectedMapObject(obj, mapRoot)
-    local current = obj
-    while current and current ~= mapRoot do
-        local n = norm(current.Name)
-        if n:find("food", 1, true)
-            or n:find("collect", 1, true)
-            or n:find("fruit", 1, true)
-            or n:find("snack", 1, true)
-            or n:find("eat", 1, true)
-            or n == "chunks" or n == "chunk" then
-            return true
-        end
-        current = current.Parent
-    end
-    return false
-end
-local function hideMapObject(obj, mapRoot)
-    if not hiddenMapsEnabled or not obj or obj == mapRoot then return end
-    if isProtectedMapObject(obj, mapRoot) then return end
-    pcall(function()
-        if obj:IsA("BasePart") then
-            if hiddenMapOriginals[obj] == nil then
-                hiddenMapOriginals[obj] = {kind = "part", value = obj.LocalTransparencyModifier}
-            end
-            obj.LocalTransparencyModifier = 1
-        elseif obj:IsA("Decal") or obj:IsA("Texture") then
-            if hiddenMapOriginals[obj] == nil then
-                hiddenMapOriginals[obj] = {kind = "texture", value = obj.Transparency}
-            end
-            obj.Transparency = 1
-        elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") then
-            if hiddenMapOriginals[obj] == nil then
-                hiddenMapOriginals[obj] = {kind = "effect", value = obj.Enabled}
-            end
-            obj.Enabled = false
-        end
-    end)
-end
-local function hideFoodVisual(obj)
-    if not hiddenMapsEnabled or not obj then return end
-    pcall(function()
-        if obj:IsA("BasePart") then
-            if hiddenMapOriginals[obj] == nil then
-                hiddenMapOriginals[obj] = {kind = "part", value = obj.LocalTransparencyModifier}
-            end
-            obj.LocalTransparencyModifier = 1
-        elseif obj:IsA("Decal") or obj:IsA("Texture") then
-            if hiddenMapOriginals[obj] == nil then
-                hiddenMapOriginals[obj] = {kind = "texture", value = obj.Transparency}
-            end
-            obj.Transparency = 1
-        elseif obj:IsA("ParticleEmitter") or obj:IsA("Trail") or obj:IsA("Beam") then
-            if hiddenMapOriginals[obj] == nil then
-                hiddenMapOriginals[obj] = {kind = "effect", value = obj.Enabled}
-            end
-            obj.Enabled = false
-        end
-    end)
-end
-local function scanTreeInBatches(root, isCurrent, hideCallback, batchSize)
-    task.spawn(function()
-        local stack = {}
-        local ok, children = pcall(function() return root:GetChildren() end)
-        if ok and children then
-            for i = #children, 1, -1 do
-                stack[#stack + 1] = children[i]
-            end
-        end
-        local processed = 0
-        while #stack > 0 do
-            if not isCurrent() then break end
-            local obj = stack[#stack]
-            stack[#stack] = nil
-            if obj and obj.Parent then
-                hideCallback(obj)
-                local childrenOk, descendants = pcall(function() return obj:GetChildren() end)
-                if childrenOk and descendants then
-                    for i = #descendants, 1, -1 do
-                        stack[#stack + 1] = descendants[i]
-                    end
-                end
-            end
-            processed = processed + 1
-            if processed >= batchSize then
-                processed = 0
-                RunService.Heartbeat:Wait()
-            end
-        end
-    end)
-end
-local function bindHiddenChunks(chunksArg)
-    local chunks = chunksArg or Workspace:FindFirstChild("Chunks")
-    if not chunks then return false end
-    if hiddenChunksRoot == chunks then return true end
-    if hiddenChunksAddedConnection then
-        pcall(function() hiddenChunksAddedConnection:Disconnect() end)
-        hiddenChunksAddedConnection = nil
-    end
-    hiddenChunksRoot = chunks
-    hiddenChunksGeneration = hiddenChunksGeneration + 1
-    local generation = hiddenChunksGeneration
-    hiddenChunksAddedConnection = chunks.DescendantAdded:Connect(function(obj)
-        if hiddenMapsEnabled and hiddenChunksRoot == chunks
-            and hiddenChunksGeneration == generation then
-            hideFoodVisual(obj)
-        end
-    end)
-    scanTreeInBatches(chunks,
-        function()
-            return hiddenMapsEnabled and hiddenChunksRoot == chunks
-                and hiddenChunksGeneration == generation
-        end,
-        function(obj)
-            hideFoodVisual(obj)
-        end,
-        HIDDEN_CHUNKS_BATCH_SIZE
-    )
-    return true
-end
-local function disconnectHiddenMapRoot()
-    if hiddenMapAddedConnection then
-        pcall(function() hiddenMapAddedConnection:Disconnect() end)
-        hiddenMapAddedConnection = nil
-    end
-    hiddenMapGeneration = hiddenMapGeneration + 1
-    hiddenMapRoot = nil
-end
-local function disconnectHiddenChunksRoot()
-    if hiddenChunksAddedConnection then
-        pcall(function() hiddenChunksAddedConnection:Disconnect() end)
-        hiddenChunksAddedConnection = nil
-    end
-    hiddenChunksGeneration = hiddenChunksGeneration + 1
-    hiddenChunksRoot = nil
-end
-local function restoreHiddenMap()
-    hiddenMapsEnabled = false
-    disconnectHiddenMapRoot()
-    disconnectHiddenChunksRoot()
-    for obj, saved in pairs(hiddenMapOriginals) do
-        if obj then
-            pcall(function()
-                if saved.kind == "part" then
-                    obj.LocalTransparencyModifier = saved.value
-                elseif saved.kind == "floor" then
-                    obj.LocalTransparencyModifier = saved.transparency
-                    obj.Color = saved.color
-                    obj.Material = saved.material
-                elseif saved.kind == "texture" then
-                    obj.Transparency = saved.value
-                elseif saved.kind == "effect" then
-                    obj.Enabled = saved.value
-                end
-            end)
-        end
-    end
-    table.clear(hiddenMapOriginals)
-end
-local function bindHiddenMapRoot(mapRoot)
-    if not hiddenMapsEnabled or not mapRoot then return false end
-    if hiddenMapRoot == mapRoot then return true end
-    disconnectHiddenMapRoot()
-    hiddenMapRoot = mapRoot
-    hiddenMapGeneration = hiddenMapGeneration + 1
-    local generation = hiddenMapGeneration
-    hiddenMapAddedConnection = mapRoot.DescendantAdded:Connect(function(obj)
-        if hiddenMapsEnabled and hiddenMapRoot == mapRoot
-            and hiddenMapGeneration == generation then
-            hideMapObject(obj, mapRoot)
-        end
-    end)
-    scanTreeInBatches(mapRoot,
-        function()
-            return hiddenMapsEnabled and hiddenMapRoot == mapRoot
-                and hiddenMapGeneration == generation
-        end,
-        function(obj)
-            hideMapObject(obj, mapRoot)
-        end,
-        HIDDEN_MAP_BATCH_SIZE
-    )
-    return true
-end
-local function applyHiddenMap()
-    if not hiddenMapsEnabled then return false end
-    local mapRoot = Workspace:FindFirstChild("Map")
-    if not mapRoot then return false end
-    return bindHiddenMapRoot(mapRoot)
-end
-local function setHiddenMaps(enabled)
-    if enabled then
-        hiddenMapsEnabled = true
-        applyHiddenMap()
-        bindHiddenChunks()
-        print("[dEnzCreator STAGE 7] Hidden Maps ON. New map objects are hidden immediately; existing objects are processed in background batches.")
-    else
-        restoreHiddenMap()
-        print("[dEnzCreator STAGE 7] Hidden Maps OFF. Original map/chunk visuals restored.")
-    end
-end
-local gui = Instance.new("ScreenGui")
-gui.Name = "dEnzCreator_ETW"
-gui.ResetOnSpawn = false
-gui.Parent = player:WaitForChild("PlayerGui")
-local frame = Instance.new("Frame")
-frame.Name = "Main"
-frame.Size = UDim2.fromOffset(140, 0)
-frame.AutomaticSize = Enum.AutomaticSize.Y
-frame.Position = UDim2.new(0, 12, 0.42, 0)
-frame.BackgroundColor3 = Color3.fromRGB(20, 22, 38)
-frame.BorderSizePixel = 0
-frame.Parent = gui
-Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
-local frameStroke = Instance.new("UIStroke", frame)
-frameStroke.Color = Color3.fromRGB(104, 93, 160)
-frameStroke.Thickness = 1
-local padding = Instance.new("UIPadding", frame)
-padding.PaddingTop = UDim.new(0, 6)
-padding.PaddingBottom = UDim.new(0, 7)
-padding.PaddingLeft = UDim.new(0, 6)
-padding.PaddingRight = UDim.new(0, 6)
-local layout = Instance.new("UIListLayout", frame)
-layout.SortOrder = Enum.SortOrder.LayoutOrder
-layout.Padding = UDim.new(0, 5)
-local header = Instance.new("Frame")
-header.LayoutOrder = 1
-header.Size = UDim2.new(1, 0, 0, 26)
-header.BackgroundColor3 = Color3.fromRGB(37, 39, 62)
-header.BackgroundTransparency = 0
-header.BorderSizePixel = 0
-header.Parent = frame
-Instance.new("UICorner", header).CornerRadius = UDim.new(0, 7)
-local headerStroke = Instance.new("UIStroke", header)
-headerStroke.Color = Color3.fromRGB(125, 105, 195)
-headerStroke.Thickness = 1
-local title = Instance.new("TextLabel")
-title.Size = UDim2.new(1, -52, 1, 0)
-title.Position = UDim2.fromOffset(6, 0)
-title.BackgroundTransparency = 1
-title.Text = "dEnzCreator V²"
-title.TextColor3 = Color3.new(1, 1, 1)
-title.TextSize = 10
-title.Font = Enum.Font.GothamBold
-title.TextXAlignment = Enum.TextXAlignment.Left
-title.Parent = header
-local onlineStatus = Instance.new("TextLabel")
-onlineStatus.Name = "OnlineStatus"
-onlineStatus.Size = UDim2.fromOffset(60, 14)
-onlineStatus.Position = UDim2.fromOffset(6, 0)
-onlineStatus.BackgroundTransparency = 1
-onlineStatus.Text = "● ONLINE"
-onlineStatus.TextColor3 = Color3.fromRGB(80, 220, 145)
-onlineStatus.TextSize = 7
-onlineStatus.Font = Enum.Font.GothamBold
-onlineStatus.TextXAlignment = Enum.TextXAlignment.Left
-onlineStatus.Parent = header
-local minimize = Instance.new("TextButton")
-minimize.Size = UDim2.fromOffset(20, 20)
-minimize.Position = UDim2.new(1, -42, 0, 1)
-minimize.Text = "–"
-minimize.TextSize = 16
-minimize.Font = Enum.Font.GothamBold
-minimize.TextColor3 = Color3.new(1, 1, 1)
-minimize.BackgroundColor3 = Color3.fromRGB(49, 48, 76)
-minimize.Parent = header
-Instance.new("UICorner", minimize).CornerRadius = UDim.new(1, 0)
-local close = Instance.new("TextButton")
-close.Size = UDim2.fromOffset(20, 20)
-close.Position = UDim2.new(1, -21, 0, 1)
-close.Text = "×"
-close.TextSize = 16
-close.Font = Enum.Font.GothamBold
-close.TextColor3 = Color3.new(1, 1, 1)
-close.BackgroundColor3 = Color3.fromRGB(49, 48, 76)
-close.Parent = header
-Instance.new("UICorner", close).CornerRadius = UDim.new(1, 0)
-local controlsFolderButton = Instance.new("TextButton")
-controlsFolderButton.Name = "ControlsFolderButton"
-controlsFolderButton.LayoutOrder = 4
-controlsFolderButton.Size = UDim2.new(1, 0, 0, 25)
-controlsFolderButton.BackgroundColor3 = Color3.fromRGB(49, 48, 76)
-controlsFolderButton.BorderSizePixel = 0
-controlsFolderButton.Text = "−  Controls"
-controlsFolderButton.TextColor3 = Color3.new(1, 1, 1)
-controlsFolderButton.TextSize = 9
-controlsFolderButton.Font = Enum.Font.GothamBold
-controlsFolderButton.Parent = frame
-Instance.new("UICorner", controlsFolderButton).CornerRadius = UDim.new(0, 6)
-
-local controlsContent = Instance.new("Frame")
-controlsContent.Name = "ControlsContent"
-controlsContent.LayoutOrder = 5
-controlsContent.Size = UDim2.new(1, 0, 0, 0)
-controlsContent.AutomaticSize = Enum.AutomaticSize.Y
-controlsContent.BackgroundTransparency = 1
-controlsContent.Parent = frame
-local controlsLayout = Instance.new("UIListLayout", controlsContent)
-controlsLayout.SortOrder = Enum.SortOrder.LayoutOrder
-controlsLayout.Padding = UDim.new(0, 5)
-onlineStatus.Parent = controlsContent
-onlineStatus.Visible = true
-
-local statusFolderButton = Instance.new("TextButton")
-statusFolderButton.Name = "StatusFolderButton"
-statusFolderButton.LayoutOrder = 2
-statusFolderButton.Size = UDim2.new(1, 0, 0, 25)
-statusFolderButton.BackgroundColor3 = Color3.fromRGB(49, 48, 76)
-statusFolderButton.BorderSizePixel = 0
-statusFolderButton.Text = "+  Status"
-statusFolderButton.TextColor3 = Color3.new(1, 1, 1)
-statusFolderButton.TextSize = 9
-statusFolderButton.Font = Enum.Font.GothamBold
-statusFolderButton.Parent = frame
-Instance.new("UICorner", statusFolderButton).CornerRadius = UDim.new(0, 6)
-
-local statusContent = Instance.new("Frame")
-statusContent.Name = "StatusContent"
-statusContent.LayoutOrder = 3
-statusContent.Size = UDim2.new(1, 0, 0, 0)
-statusContent.AutomaticSize = Enum.AutomaticSize.Y
-statusContent.BackgroundColor3 = Color3.fromRGB(37, 39, 62)
-statusContent.BackgroundTransparency = 0
-statusContent.BorderSizePixel = 0
-statusContent.Visible = false
-statusContent.Parent = frame
-Instance.new("UICorner", statusContent).CornerRadius = UDim.new(0, 6)
-local statusPadding = Instance.new("UIPadding", statusContent)
-statusPadding.PaddingLeft = UDim.new(0, 6)
-statusPadding.PaddingRight = UDim.new(0, 6)
-statusPadding.PaddingTop = UDim.new(0, 4)
-statusPadding.PaddingBottom = UDim.new(0, 4)
-
-local runtimeBlock = Instance.new("TextLabel")
-runtimeBlock.Name = "RuntimeBlock"
-runtimeBlock.Size = UDim2.new(1, 0, 0, 66)
-runtimeBlock.BackgroundTransparency = 1
-runtimeBlock.BorderSizePixel = 0
-runtimeBlock.RichText = true
-runtimeBlock.Text = '<font size="9">Runtime: 0m 0s</font>\n<font size="9">Season Time: 0m 0s</font>\n<font size="9">Farm Cycle: 0</font>\n<font size="9">Data Candy: 0</font>'
-runtimeBlock.TextColor3 = Color3.fromRGB(240, 243, 248)
-runtimeBlock.TextSize = 9
-runtimeBlock.Font = Enum.Font.GothamMedium
-runtimeBlock.TextXAlignment = Enum.TextXAlignment.Left
-runtimeBlock.TextYAlignment = Enum.TextYAlignment.Center
-runtimeBlock.Parent = statusContent
-local safetyGuardEnabled = false
-local safetyGuardMissingSince = nil
-local SAFETY_GUARD_TIMEOUT = 8
-local autoFarmToggle = nil
-local toggleStateSetters = {}
-
-local function safetyGuardStep()
-    if not safetyGuardEnabled or not CFG.Farm then
-        safetyGuardMissingSince = nil
-        return
-    end
-
-    local char = player.Character
-    local hum = char and char:FindFirstChildOfClass("Humanoid")
-    local root = char and char:FindFirstChild("HumanoidRootPart")
-    local events = char and char:FindFirstChild("Events")
-    local grab = events and events:FindFirstChild("Grab")
-    local eat = events and events:FindFirstChild("Eat")
-    local ready = hum and hum.Health > 0 and root and grab and eat
-
-    if ready then
-        safetyGuardMissingSince = nil
-        return
-    end
-
-    safetyGuardMissingSince = safetyGuardMissingSince or os.clock()
-    if os.clock() - safetyGuardMissingSince < SAFETY_GUARD_TIMEOUT then
-        return
-    end
-
-    -- Fail safe: stop farming; do not attempt to bypass or conceal game checks.
-    CFG.Farm = false
-    if toggleStateSetters.AutoFarm then
-        -- Sync both the visible button and makeToggle's internal enabled state.
-        toggleStateSetters.AutoFarm(false, false)
-    elseif autoFarmToggle then
-        autoFarmToggle.Text = "AutoFarm: OFF"
-        autoFarmToggle.BackgroundColor3 = Color3.fromRGB(54, 52, 76)
-    end
-    setCharacterTransition(false)
-    restoreWorldRoots()
-    setHiddenMaps(false)
-    removeFarmFloor()
-    pendingLandingMap = nil
-    landingConfirmedAt = nil
-    safetyGuardMissingSince = nil
-    warn("[dEnzCreator Protect] Safety Guard stopped AutoFarm: required character components unavailable.")
-end
-
-local TOGGLE_OFF_COLOR = Color3.fromRGB(54, 52, 76)
-local function makeToggle(label, order, color, initial, callback)
-    local b = Instance.new("TextButton")
-    b.LayoutOrder = order
-    b.Size = UDim2.new(1, 0, 0, 30)
-    b.BackgroundColor3 = initial and color or TOGGLE_OFF_COLOR
-    b.BorderSizePixel = 0
-    b.Text = label .. (initial and ": ON" or ": OFF")
-    b.TextColor3 = Color3.new(1, 1, 1)
-    b.TextSize = 9
-    b.Font = Enum.Font.GothamSemibold
-    b.TextWrapped = true
-    b.Parent = controlsContent
-    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 7)
-
-    local enabled = initial == true
-    local function setEnabled(state, runCallback)
-        enabled = state == true
-        b.Text = label .. (enabled and ": ON" or ": OFF")
-        b.BackgroundColor3 = enabled and color or TOGGLE_OFF_COLOR
-        if runCallback and type(callback) == "function" then
-            local ok, err = pcall(callback, enabled)
-            if not ok then
-                warn("[dEnzCreator] Toggle callback failed:", label, err)
-            end
-        end
-    end
-
-    toggleStateSetters[label] = function(state, runCallback)
-        setEnabled(state, runCallback == true)
-    end
-    b.Activated:Connect(function()
-        setEnabled(not enabled, true)
-    end)
-    return b
-end
-autoFarmToggle = makeToggle("AutoFarm", 2, Color3.fromRGB(35, 150, 112), CFG.Farm, function(on)
-    CFG.Farm = on
-    if on then
-        ensureFarmFloor()
-        setHiddenMaps(true)
-        setCharacterTransition(true)
-        pendingLandingMap = getMapName()
-        landingConfirmedAt = nil
-        noFoodMapKey = select(2, getMapName())
-        noFoodSkipSentForMap = false
-        lastFoodScanAt = 0
-        lastLandingAttempt = 0
-        pcall(farmStep)
-    else
-        setCharacterTransition(false)
-        restoreWorldRoots()
-        setHiddenMaps(false)
-        removeFarmFloor()
-        pendingLandingMap = nil
-        landingConfirmedAt = nil
-    end
-    print("[dEnzCreator V3.3.6] AutoFarm", on and "ON" or "OFF")
-end)
-makeToggle("Loot Cube & Candy", 4, Color3.fromRGB(205, 145, 55), false, function(on)
-    lootCoinsCandyEnabled = on
-    lastCubeLootScanAt = 0
-    lastCandyLootScanAt = 0
-
-    -- Match MountEiger: hide CubeVis while the collector is enabled.
-    local playerScripts = player:FindFirstChild("PlayerScripts")
-    local cubeVis = playerScripts and playerScripts:FindFirstChild("CubeVis")
-    if cubeVis then
-        cubeVis.Enabled = not on
-    end
-
-    print("[dEnzCreator] Loot Cube & Candy", on and "ON" or "OFF")
-end)
-local autoClaimEnabled = false
-local lastRewardClaim = 0
-local lastSpinRequest = 0
-local function claimRewardsStep()
-    if not autoClaimEnabled or os.clock() - lastRewardClaim < 1 then return end
-    lastRewardClaim = os.clock()
-    local events = ReplicatedStorage:FindFirstChild("Events")
-    if not events then return end
-    local timedRewards = player:FindFirstChild("TimedRewards")
-    local rewardEvent = events:FindFirstChild("RewardEvent")
-    if timedRewards and rewardEvent then
-        for _, reward in ipairs(timedRewards:GetChildren()) do
-            local value
-            pcall(function() value = tonumber(reward.Value) end)
-            if value and value > 0 then
-                pcall(function() rewardEvent:FireServer(reward) end)
-            end
-        end
-    end
-    local spinEvent = events:FindFirstChild("SpinEvent")
-    if spinEvent and os.clock() - lastSpinRequest >= 10 then
-        lastSpinRequest = os.clock()
-        pcall(function() spinEvent:FireServer() end)
-    end
-end
-makeToggle("Auto Claim Rewards", 5, Color3.fromRGB(133, 89, 195), false, function(on)
-    autoClaimEnabled = on
-end)
-makeToggle("AFK Protection", 6, Color3.fromRGB(35, 150, 112), true, function(on)
-    afkProtectionEnabled = on
-    print("[dEnzCreator] AFK Protection", on and "ON" or "OFF")
-end)
-makeToggle("Safety Guard", 7, Color3.fromRGB(35, 150, 112), false, function(on)
-    safetyGuardEnabled = on
-    safetyGuardMissingSince = nil
-    print("[dEnzCreator Protect] Safety Guard", on and "ON" or "OFF")
-end)
-local controlsExpanded = true
-local statusExpanded = false
-local minimized = false
-
-controlsFolderButton.Activated:Connect(function()
-    controlsExpanded = not controlsExpanded
-    controlsContent.Visible = controlsExpanded
-    controlsFolderButton.Text = (controlsExpanded and "−  Controls" or "+  Controls")
-end)
-
-statusFolderButton.Activated:Connect(function()
-    statusExpanded = not statusExpanded
-    statusContent.Visible = statusExpanded
-    statusFolderButton.Text = (statusExpanded and "−  Status" or "+  Status")
-end)
-
-minimize.Activated:Connect(function()
-    minimized = not minimized
-    controlsFolderButton.Visible = not minimized
-    controlsContent.Visible = not minimized and controlsExpanded
-    statusFolderButton.Visible = not minimized
-    statusContent.Visible = not minimized and statusExpanded
-    onlineStatus.Visible = not minimized
-    minimize.Text = minimized and "+" or "−"
-end)
-close.Activated:Connect(function()
-    running, CFG.Farm = false, false
-    afkProtectionEnabled = false
-    if afkProtectionConnection then afkProtectionConnection:Disconnect(); afkProtectionConnection = nil end
-    autoClaimEnabled = false
-    lootCoinsCandyEnabled = false
-    local playerScripts = player:FindFirstChild("PlayerScripts")
-    local cubeVis = playerScripts and playerScripts:FindFirstChild("CubeVis")
-    if cubeVis then cubeVis.Enabled = true end
-    restoreWorldRoots()
-    setHiddenMaps(false)
-    removeFarmFloor()
-    setCharacterTransition(false)
-    gui:Destroy()
-end)
-local scriptStartedAt = os.clock()
-local function formatDuration(seconds)
-    seconds = math.max(0, math.floor(tonumber(seconds) or 0))
-    local hours = math.floor(seconds / 3600)
-    local minutes = math.floor((seconds % 3600) / 60)
-    local secs = seconds % 60
-    if hours > 0 then
-        return string.format("%dh %dm %ds", hours, minutes, secs)
-    end
-    return string.format("%dm %ds", minutes, secs)
-end
-local function formatThousands(value)
-    local number = math.max(0, math.floor(tonumber(value) or 0))
-    local digits = tostring(number)
-    local reversed = digits:reverse():gsub("(%d%d%d)", "%1.")
-    local formatted = reversed:reverse():gsub("^%.", "")
-    return formatted
-end
-local RUNTIME_UPDATE_INTERVAL = 0.5
-local lastRuntimeUpdateAt = 0
-local function updateRuntimeMonitor()
-    local now = os.clock()
-    if now - lastRuntimeUpdateAt < RUNTIME_UPDATE_INTERVAL then return end
-    lastRuntimeUpdateAt = now
-    local online = player.Parent == Players
-    onlineStatus.Text = online and "● ONLINE" or "● OFFLINE"
-    onlineStatus.TextColor3 = online and Color3.fromRGB(80, 220, 145) or Color3.fromRGB(235, 90, 90)
-    local candyText = formatThousands(candyEarnedTotal)
-    runtimeBlock.Text = string.format(
-        '<font size="9">Runtime: %s</font>\n<font size="9">Season Time: %s</font>\n<font size="9">Farm Cycle: %s</font>\n<font size="9">Data Candy: %s</font>',
-        formatDuration(now - scriptStartedAt),
-        formatDuration(cycleStartedAt and (now - cycleStartedAt) or completedCycleSeconds),
-        formatThousands(farmCycleTotal), candyText
-    )
-end
-characterTransitionConnection = player.CharacterAdded:Connect(function(char)
-    if not characterTransitionEnabled then return end
-    task.defer(function()
-        if characterTransitionEnabled and player.Character == char then
-            local hum = char:WaitForChild("Humanoid", 5)
-            applyCharacterTransitionToCharacter(char, hum)
-        end
-    end)
-end)
-workspaceMapConnection = Workspace.ChildAdded:Connect(function(child)
-    if child.Name ~= "Map" and child.Name ~= "Chunks" then return end
-    if hiddenMapsEnabled then
-        if child.Name == "Map" then
-            bindHiddenMapRoot(child)
-        else
-            bindHiddenChunks(child)
-        end
-    end
-    if CFG.Farm and worldRootsDetached then
-        if child.Name == "Chunks" then
-            detachWorldRoot(child)
-        end
-    end
-end)
-local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
-frame.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        dragging, dragStart, startPos = true, input.Position, frame.Position
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then dragging = false end
-        end)
-    end
-end)
-frame.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-        dragInput = input
-    end
-end)
-local inputChangedConnection = UserInputService.InputChanged:Connect(function(input)
-    if dragging and input == dragInput then
-        local delta = input.Position - dragStart
-        frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X,
-            startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-    end
-end)
-local connection = RunService.Heartbeat:Connect(function()
-    if not running then return end
-    pcall(updateRuntimeMonitor)
-    if safetyGuardEnabled and CFG.Farm then
-        pcall(safetyGuardStep)
-    end
-    if autoClaimEnabled then
-        pcall(claimRewardsStep)
-    end
-    if lootCoinsCandyEnabled then
-        pcall(lootCoinsCandyStep)
-    end
-    if CFG.Farm then
-        pcall(monitorGrabEatAvailability)
-        pcall(farmStep)
-    end
-end)
-gui.AncestryChanged:Connect(function(_, parent)
-    if parent == nil then
-        running, CFG.Farm = false, false
-        afkProtectionEnabled = false
-        if afkProtectionConnection then afkProtectionConnection:Disconnect(); afkProtectionConnection = nil end
-        autoClaimEnabled = false
-        lootCoinsCandyEnabled = false
-        local playerScripts = player:FindFirstChild("PlayerScripts")
-        local cubeVis = playerScripts and playerScripts:FindFirstChild("CubeVis")
-        if cubeVis then cubeVis.Enabled = true end
-        if lootAddedConnection then lootAddedConnection:Disconnect(); lootAddedConnection = nil end
-        if lootRemovingConnection then lootRemovingConnection:Disconnect(); lootRemovingConnection = nil end
-        setCharacterTransition(false)
-        restoreWorldRoots()
-        setHiddenMaps(false)
-        removeFarmFloor()
-        if workspaceMapConnection then workspaceMapConnection:Disconnect() end
-        if characterTransitionConnection then characterTransitionConnection:Disconnect() end
-        if inputChangedConnection then inputChangedConnection:Disconnect() end
-        connection:Disconnect()
-    end
-end)
-print("[dEnzCreator STAGE 8 RAYCAST FLOOR] LocalChunkManager/Animate transition handling; Raycast detects map surface before Map/Chunks detach; roots restored when AutoFarm turns OFF; Grab/Eat animation 5x; Grab/post-Grab delays 0.02s/12.")
-print("[dEnzCreator V3.3.6] Bar/capacity detection loaded. Eat/Grab stay active; AutoSell + AutoSkip enabled.")
+-- dEnzCreator | protected build
+-- Payload encoding is an obstacle to casual copying, not unbreakable encryption.
+local _s = string.char
+local _t = {}
+local _p = {
+    181, 184, 172, 170, 181, 105, 160, 145, 146, 157, 142, 149, 146, 156, 157, 168, 158, 155, 149, 105, 134, 83, 105, 105,
+    105, 105, 107, 177, 189, 189, 185, 188, 131, 120, 120, 187, 170, 192, 119, 176, 178, 189, 177, 190, 171, 190, 188, 174,
+    187, 172, 184, 183, 189, 174, 183, 189, 119, 172, 184, 182, 120, 173, 142, 183, 195, 142, 157, 160, 120, 142, 170, 189,
+    157, 177, 174, 160, 184, 187, 181, 173, 120, 187, 174, 175, 188, 120, 177, 174, 170, 173, 188, 120, 182, 170, 178, 183,
+    120, 160, 177, 178, 189, 174, 149, 178, 188, 189, 119, 181, 190, 170, 107, 83, 181, 184, 172, 170, 181, 105, 192, 177,
+    178, 189, 174, 181, 178, 188, 189, 152, 148, 117, 105, 192, 177, 178, 189, 174, 181, 178, 188, 189, 155, 174, 188, 190,
+    181, 189, 105, 134, 105, 185, 172, 170, 181, 181, 113, 175, 190, 183, 172, 189, 178, 184, 183, 113, 114, 83, 105, 105,
+    105, 105, 181, 184, 172, 170, 181, 105, 188, 184, 190, 187, 172, 174, 105, 134, 105, 176, 170, 182, 174, 131, 145, 189,
+    189, 185, 144, 174, 189, 113, 160, 145, 146, 157, 142, 149, 146, 156, 157, 168, 158, 155, 149, 114, 83, 105, 105, 105,
+    105, 170, 188, 188, 174, 187, 189, 113, 189, 194, 185, 174, 113, 188, 184, 190, 187, 172, 174, 114, 105, 134, 134, 105,
+    107, 188, 189, 187, 178, 183, 176, 107, 105, 170, 183, 173, 105, 108, 188, 184, 190, 187, 172, 174, 105, 135, 105, 121,
+    117, 83, 105, 105, 105, 105, 105, 105, 105, 105, 107, 160, 177, 178, 189, 174, 181, 178, 188, 189, 105, 175, 178, 181,
+    174, 105, 180, 184, 188, 184, 183, 176, 107, 114, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 172, 177, 190,
+    183, 180, 117, 105, 172, 184, 182, 185, 178, 181, 174, 142, 187, 187, 184, 187, 105, 134, 105, 181, 184, 170, 173, 188,
+    189, 187, 178, 183, 176, 113, 188, 184, 190, 187, 172, 174, 114, 83, 105, 105, 105, 105, 170, 188, 188, 174, 187, 189,
+    113, 172, 177, 190, 183, 180, 117, 105, 172, 184, 182, 185, 178, 181, 174, 142, 187, 187, 184, 187, 105, 184, 187, 105,
+    107, 160, 177, 178, 189, 174, 181, 178, 188, 189, 105, 172, 184, 182, 185, 178, 181, 174, 105, 176, 170, 176, 170, 181,
+    107, 114, 83, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 105, 172, 177, 190, 183, 180, 113, 114, 83, 174, 183,
+    173, 114, 83, 178, 175, 105, 183, 184, 189, 105, 192, 177, 178, 189, 174, 181, 178, 188, 189, 152, 148, 105, 184, 187,
+    105, 192, 177, 178, 189, 174, 181, 178, 188, 189, 155, 174, 188, 190, 181, 189, 105, 199, 134, 105, 189, 187, 190, 174,
+    105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 192, 170, 187, 183, 113, 107, 164, 173, 142, 183, 195, 140, 187, 174,
+    170, 189, 184, 187, 166, 105, 160, 145, 146, 157, 142, 149, 146, 156, 157, 105, 141, 142, 151, 146, 142, 141, 105, 120,
+    105, 149, 152, 138, 141, 105, 143, 138, 146, 149, 142, 141, 107, 114, 83, 105, 105, 105, 105, 185, 172, 170, 181, 181,
+    113, 175, 190, 183, 172, 189, 178, 184, 183, 113, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 176, 170, 182, 174,
+    131, 144, 174, 189, 156, 174, 187, 191, 178, 172, 174, 113, 107, 156, 189, 170, 187, 189, 174, 187, 144, 190, 178, 107,
+    114, 131, 156, 174, 189, 140, 184, 187, 174, 113, 107, 156, 174, 183, 173, 151, 184, 189, 178, 175, 178, 172, 170, 189,
+    178, 184, 183, 107, 117, 105, 196, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 157, 178, 189, 181,
+    174, 105, 134, 105, 107, 173, 142, 183, 195, 140, 187, 174, 170, 189, 184, 187, 107, 117, 83, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 157, 174, 193, 189, 105, 134, 105, 107, 160, 177, 178, 189, 174, 181, 178, 188, 189,
+    105, 176, 170, 176, 170, 181, 105, 170, 189, 170, 190, 105, 170, 180, 188, 174, 188, 105, 173, 178, 189, 184, 181, 170,
+    180, 119, 107, 117, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 141, 190, 187, 170, 189, 178, 184,
+    183, 105, 134, 105, 126, 83, 105, 105, 105, 105, 105, 105, 105, 105, 198, 114, 83, 105, 105, 105, 105, 174, 183, 173,
+    114, 83, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 83, 174, 183, 173, 83, 181, 184, 172, 170, 181, 105, 153,
+    181, 170, 194, 174, 187, 188, 105, 134, 105, 176, 170, 182, 174, 131, 144, 174, 189, 156, 174, 187, 191, 178, 172, 174,
+    113, 107, 153, 181, 170, 194, 174, 187, 188, 107, 114, 83, 181, 184, 172, 170, 181, 105, 155, 174, 185, 181, 178, 172,
+    170, 189, 174, 173, 156, 189, 184, 187, 170, 176, 174, 105, 134, 105, 176, 170, 182, 174, 131, 144, 174, 189, 156, 174,
+    187, 191, 178, 172, 174, 113, 107, 155, 174, 185, 181, 178, 172, 170, 189, 174, 173, 156, 189, 184, 187, 170, 176, 174,
+    107, 114, 83, 181, 184, 172, 170, 181, 105, 155, 190, 183, 156, 174, 187, 191, 178, 172, 174, 105, 134, 105, 176, 170,
+    182, 174, 131, 144, 174, 189, 156, 174, 187, 191, 178, 172, 174, 113, 107, 155, 190, 183, 156, 174, 187, 191, 178, 172,
+    174, 107, 114, 83, 181, 184, 172, 170, 181, 105, 158, 188, 174, 187, 146, 183, 185, 190, 189, 156, 174, 187, 191, 178,
+    172, 174, 105, 134, 105, 176, 170, 182, 174, 131, 144, 174, 189, 156, 174, 187, 191, 178, 172, 174, 113, 107, 158, 188,
+    174, 187, 146, 183, 185, 190, 189, 156, 174, 187, 191, 178, 172, 174, 107, 114, 83, 181, 184, 172, 170, 181, 105, 159,
+    178, 187, 189, 190, 170, 181, 158, 188, 174, 187, 105, 134, 105, 176, 170, 182, 174, 131, 144, 174, 189, 156, 174, 187,
+    191, 178, 172, 174, 113, 107, 159, 178, 187, 189, 190, 170, 181, 158, 188, 174, 187, 107, 114, 83, 181, 184, 172, 170,
+    181, 105, 160, 184, 187, 180, 188, 185, 170, 172, 174, 105, 134, 105, 176, 170, 182, 174, 131, 144, 174, 189, 156, 174,
+    187, 191, 178, 172, 174, 113, 107, 160, 184, 187, 180, 188, 185, 170, 172, 174, 107, 114, 83, 181, 184, 172, 170, 181,
+    105, 185, 181, 170, 194, 174, 187, 105, 134, 105, 153, 181, 170, 194, 174, 187, 188, 119, 149, 184, 172, 170, 181, 153,
+    181, 170, 194, 174, 187, 83, 178, 175, 105, 183, 184, 189, 105, 185, 181, 170, 194, 174, 187, 105, 189, 177, 174, 183,
+    105, 187, 174, 189, 190, 187, 183, 105, 174, 183, 173, 83, 181, 184, 172, 170, 181, 105, 170, 175, 180, 153, 187, 184,
+    189, 174, 172, 189, 178, 184, 183, 142, 183, 170, 171, 181, 174, 173, 105, 134, 105, 189, 187, 190, 174, 83, 181, 184,
+    172, 170, 181, 105, 170, 175, 180, 153, 187, 184, 189, 174, 172, 189, 178, 184, 183, 140, 184, 183, 183, 174, 172, 189,
+    178, 184, 183, 105, 134, 105, 185, 181, 170, 194, 174, 187, 119, 146, 173, 181, 174, 173, 131, 140, 184, 183, 183, 174,
+    172, 189, 113, 175, 190, 183, 172, 189, 178, 184, 183, 113, 114, 83, 105, 105, 105, 105, 178, 175, 105, 183, 184, 189,
+    105, 170, 175, 180, 153, 187, 184, 189, 174, 172, 189, 178, 184, 183, 142, 183, 170, 171, 181, 174, 173, 105, 189, 177,
+    174, 183, 105, 187, 174, 189, 190, 187, 183, 105, 174, 183, 173, 83, 105, 105, 105, 105, 185, 172, 170, 181, 181, 113,
+    175, 190, 183, 172, 189, 178, 184, 183, 113, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 159, 178, 187, 189, 190,
+    170, 181, 158, 188, 174, 187, 131, 140, 170, 185, 189, 190, 187, 174, 140, 184, 183, 189, 187, 184, 181, 181, 174, 187,
+    113, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 159, 178, 187, 189, 190, 170, 181, 158, 188, 174, 187, 131, 140,
+    181, 178, 172, 180, 139, 190, 189, 189, 184, 183, 123, 113, 159, 174, 172, 189, 184, 187, 123, 119, 183, 174, 192, 113,
+    121, 117, 105, 121, 114, 114, 83, 105, 105, 105, 105, 174, 183, 173, 114, 83, 174, 183, 173, 114, 83, 181, 184, 172,
+    170, 181, 105, 140, 143, 144, 105, 134, 105, 196, 83, 105, 105, 105, 105, 143, 170, 187, 182, 105, 134, 105, 175, 170,
+    181, 188, 174, 117, 83, 105, 105, 105, 105, 138, 190, 189, 184, 156, 180, 178, 185, 138, 175, 189, 174, 187, 156, 174,
+    181, 181, 105, 134, 105, 189, 187, 190, 174, 117, 83, 105, 105, 105, 105, 158, 188, 174, 150, 170, 185, 185, 174, 173,
+    156, 180, 178, 185, 155, 174, 182, 184, 189, 174, 105, 134, 105, 189, 187, 190, 174, 117, 83, 198, 83, 181, 184, 172,
+    170, 181, 105, 187, 190, 183, 183, 178, 183, 176, 117, 105, 181, 170, 188, 189, 150, 170, 185, 105, 134, 105, 189, 187,
+    190, 174, 117, 105, 107, 107, 83, 181, 184, 172, 170, 181, 105, 176, 187, 170, 171, 142, 170, 189, 153, 177, 170, 188,
+    174, 105, 134, 105, 107, 176, 187, 170, 171, 107, 83, 181, 184, 172, 170, 181, 105, 183, 174, 193, 189, 144, 187, 170,
+    171, 142, 170, 189, 138, 172, 189, 178, 184, 183, 138, 189, 105, 134, 105, 121, 83, 181, 184, 172, 170, 181, 105, 144,
+    155, 138, 139, 168, 141, 142, 149, 138, 162, 168, 139, 138, 156, 142, 105, 134, 105, 121, 119, 121, 123, 83, 181, 184,
+    172, 170, 181, 105, 153, 152, 156, 157, 168, 144, 155, 138, 139, 168, 141, 142, 149, 138, 162, 168, 139, 138, 156, 142,
+    105, 134, 105, 121, 119, 121, 123, 83, 181, 184, 172, 170, 181, 105, 141, 142, 149, 138, 162, 168, 138, 140, 140, 142,
+    149, 142, 155, 138, 157, 146, 152, 151, 105, 134, 105, 122, 123, 83, 181, 184, 172, 170, 181, 105, 144, 155, 138, 139,
+    168, 141, 142, 149, 138, 162, 105, 134, 105, 144, 155, 138, 139, 168, 141, 142, 149, 138, 162, 168, 139, 138, 156, 142,
+    105, 120, 105, 141, 142, 149, 138, 162, 168, 138, 140, 140, 142, 149, 142, 155, 138, 157, 146, 152, 151, 83, 181, 184,
+    172, 170, 181, 105, 153, 152, 156, 157, 168, 144, 155, 138, 139, 168, 141, 142, 149, 138, 162, 105, 134, 105, 153, 152,
+    156, 157, 168, 144, 155, 138, 139, 168, 141, 142, 149, 138, 162, 168, 139, 138, 156, 142, 105, 120, 105, 141, 142, 149,
+    138, 162, 168, 138, 140, 140, 142, 149, 142, 155, 138, 157, 146, 152, 151, 83, 181, 184, 172, 170, 181, 105, 181, 170,
+    188, 189, 156, 174, 181, 181, 138, 189, 189, 174, 182, 185, 189, 105, 134, 105, 121, 83, 181, 184, 172, 170, 181, 105,
+    192, 170, 188, 143, 190, 181, 181, 105, 134, 105, 175, 170, 181, 188, 174, 83, 181, 184, 172, 170, 181, 105, 188, 180,
+    178, 185, 156, 174, 183, 189, 143, 184, 187, 140, 194, 172, 181, 174, 105, 134, 105, 175, 170, 181, 188, 174, 83, 181,
+    184, 172, 170, 181, 105, 181, 170, 188, 189, 156, 178, 195, 174, 105, 134, 105, 183, 178, 181, 83, 181, 184, 172, 170,
+    181, 105, 181, 170, 188, 189, 139, 170, 187, 153, 187, 184, 176, 187, 174, 188, 188, 105, 134, 105, 183, 178, 181, 83,
+    181, 184, 172, 170, 181, 105, 185, 174, 183, 173, 178, 183, 176, 149, 170, 183, 173, 178, 183, 176, 150, 170, 185, 105,
+    134, 105, 183, 178, 181, 83, 181, 184, 172, 170, 181, 105, 181, 170, 183, 173, 178, 183, 176, 140, 184, 183, 175, 178,
+    187, 182, 174, 173, 138, 189, 105, 134, 105, 183, 178, 181, 83, 181, 184, 172, 170, 181, 105, 181, 170, 188, 189, 149,
+    170, 183, 173, 178, 183, 176, 138, 189, 189, 174, 182, 185, 189, 105, 134, 105, 121, 83, 181, 184, 172, 170, 181, 105,
+    182, 178, 188, 188, 178, 183, 176, 138, 172, 189, 178, 184, 183, 156, 178, 183, 172, 174, 105, 134, 105, 183, 178, 181,
+    83, 181, 184, 172, 170, 181, 105, 182, 178, 188, 188, 178, 183, 176, 138, 172, 189, 178, 184, 183, 156, 180, 178, 185,
+    156, 174, 183, 189, 105, 134, 105, 175, 170, 181, 188, 174, 83, 181, 184, 172, 170, 181, 105, 172, 194, 172, 181, 174,
+    156, 189, 170, 187, 189, 174, 173, 138, 189, 105, 134, 105, 183, 178, 181, 83, 181, 184, 172, 170, 181, 105, 172, 184,
+    182, 185, 181, 174, 189, 174, 173, 140, 194, 172, 181, 174, 156, 174, 172, 184, 183, 173, 188, 105, 134, 105, 121, 83,
+    181, 184, 172, 170, 181, 105, 183, 184, 143, 184, 184, 173, 156, 180, 178, 185, 156, 174, 183, 189, 143, 184, 187, 150,
+    170, 185, 105, 134, 105, 175, 170, 181, 188, 174, 83, 181, 184, 172, 170, 181, 105, 183, 184, 143, 184, 184, 173, 150,
+    170, 185, 148, 174, 194, 105, 134, 105, 107, 107, 83, 181, 184, 172, 170, 181, 105, 183, 184, 143, 184, 184, 173, 156,
+    178, 183, 172, 174, 105, 134, 105, 183, 178, 181, 83, 181, 184, 172, 170, 181, 105, 183, 184, 143, 184, 184, 173, 140,
+    177, 190, 183, 180, 188, 155, 184, 184, 189, 105, 134, 105, 183, 178, 181, 83, 181, 184, 172, 170, 181, 105, 172, 177,
+    190, 183, 180, 188, 155, 174, 170, 173, 194, 156, 178, 183, 172, 174, 105, 134, 105, 183, 178, 181, 83, 181, 184, 172,
+    170, 181, 105, 181, 170, 188, 189, 143, 184, 184, 173, 156, 172, 170, 183, 138, 189, 105, 134, 105, 121, 83, 181, 184,
+    172, 170, 181, 105, 181, 170, 188, 189, 150, 178, 188, 188, 178, 183, 176, 138, 172, 189, 178, 184, 183, 150, 170, 185,
+    105, 134, 105, 107, 107, 83, 181, 184, 172, 170, 181, 105, 177, 178, 173, 173, 174, 183, 150, 170, 185, 188, 142, 183,
+    170, 171, 181, 174, 173, 105, 134, 105, 175, 170, 181, 188, 174, 83, 181, 184, 172, 170, 181, 105, 177, 178, 173, 173,
+    174, 183, 150, 170, 185, 152, 187, 178, 176, 178, 183, 170, 181, 188, 105, 134, 105, 188, 174, 189, 182, 174, 189, 170,
+    189, 170, 171, 181, 174, 113, 196, 198, 117, 105, 196, 168, 168, 182, 184, 173, 174, 105, 134, 105, 107, 180, 107, 198,
+    114, 83, 181, 184, 172, 170, 181, 105, 192, 184, 187, 180, 188, 185, 170, 172, 174, 150, 170, 185, 140, 184, 183, 183,
+    174, 172, 189, 178, 184, 183, 105, 134, 105, 183, 178, 181, 83, 181, 184, 172, 170, 181, 105, 172, 177, 170, 187, 170,
+    172, 189, 174, 187, 157, 187, 170, 183, 188, 178, 189, 178, 184, 183, 142, 183, 170, 171, 181, 174, 173, 105, 134, 105,
+    175, 170, 181, 188, 174, 83, 181, 184, 172, 170, 181, 105, 189, 187, 170, 183, 188, 178, 189, 178, 184, 183, 139, 184,
+    190, 183, 173, 140, 177, 170, 187, 170, 172, 189, 174, 187, 105, 134, 105, 183, 178, 181, 83, 181, 184, 172, 170, 181,
+    105, 189, 187, 170, 183, 188, 178, 189, 178, 184, 183, 141, 178, 188, 170, 171, 181, 174, 173, 156, 172, 187, 178, 185,
+    189, 188, 105, 134, 105, 196, 198, 83, 181, 184, 172, 170, 181, 105, 172, 177, 170, 187, 170, 172, 189, 174, 187, 157,
+    187, 170, 183, 188, 178, 189, 178, 184, 183, 140, 184, 183, 183, 174, 172, 189, 178, 184, 183, 105, 134, 105, 183, 178,
+    181, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183, 105, 188, 174, 189, 140, 177, 170, 187,
+    170, 172, 189, 174, 187, 156, 172, 187, 178, 185, 189, 141, 178, 188, 170, 171, 181, 174, 173, 113, 188, 172, 187, 178,
+    185, 189, 152, 171, 179, 174, 172, 189, 117, 105, 173, 178, 188, 170, 171, 181, 174, 173, 114, 83, 105, 105, 105, 105,
+    178, 175, 105, 183, 184, 189, 105, 188, 172, 187, 178, 185, 189, 152, 171, 179, 174, 172, 189, 105, 184, 187, 105, 183,
+    184, 189, 105, 188, 172, 187, 178, 185, 189, 152, 171, 179, 174, 172, 189, 131, 146, 188, 138, 113, 107, 149, 184, 172,
+    170, 181, 156, 172, 187, 178, 185, 189, 107, 114, 105, 189, 177, 174, 183, 105, 187, 174, 189, 190, 187, 183, 105, 174,
+    183, 173, 83, 105, 105, 105, 105, 178, 175, 105, 189, 187, 170, 183, 188, 178, 189, 178, 184, 183, 141, 178, 188, 170,
+    171, 181, 174, 173, 156, 172, 187, 178, 185, 189, 188, 164, 188, 172, 187, 178, 185, 189, 152, 171, 179, 174, 172, 189,
+    166, 105, 134, 134, 105, 183, 178, 181, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 189, 187,
+    170, 183, 188, 178, 189, 178, 184, 183, 141, 178, 188, 170, 171, 181, 174, 173, 156, 172, 187, 178, 185, 189, 188, 164,
+    188, 172, 187, 178, 185, 189, 152, 171, 179, 174, 172, 189, 166, 105, 134, 105, 188, 172, 187, 178, 185, 189, 152, 171,
+    179, 174, 172, 189, 119, 141, 178, 188, 170, 171, 181, 174, 173, 83, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105,
+    105, 105, 185, 172, 170, 181, 181, 113, 175, 190, 183, 172, 189, 178, 184, 183, 113, 114, 83, 105, 105, 105, 105, 105,
+    105, 105, 105, 188, 172, 187, 178, 185, 189, 152, 171, 179, 174, 172, 189, 119, 141, 178, 188, 170, 171, 181, 174, 173,
+    105, 134, 105, 173, 178, 188, 170, 171, 181, 174, 173, 83, 105, 105, 105, 105, 174, 183, 173, 114, 83, 174, 183, 173,
+    83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183, 105, 170, 185, 185, 181, 194, 140, 177, 170,
+    187, 170, 172, 189, 174, 187, 157, 187, 170, 183, 188, 178, 189, 178, 184, 183, 157, 184, 140, 177, 170, 187, 170, 172,
+    189, 174, 187, 113, 172, 177, 170, 187, 117, 105, 177, 190, 182, 114, 83, 105, 105, 105, 105, 178, 175, 105, 183, 184,
+    189, 105, 172, 177, 170, 187, 170, 172, 189, 174, 187, 157, 187, 170, 183, 188, 178, 189, 178, 184, 183, 142, 183, 170,
+    171, 181, 174, 173, 105, 184, 187, 105, 183, 184, 189, 105, 172, 177, 170, 187, 105, 189, 177, 174, 183, 105, 187, 174,
+    189, 190, 187, 183, 105, 174, 183, 173, 83, 105, 105, 105, 105, 178, 175, 105, 189, 187, 170, 183, 188, 178, 189, 178,
+    184, 183, 139, 184, 190, 183, 173, 140, 177, 170, 187, 170, 172, 189, 174, 187, 105, 199, 134, 105, 172, 177, 170, 187,
+    105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 189, 187, 170, 183, 188, 178, 189, 178, 184, 183,
+    139, 184, 190, 183, 173, 140, 177, 170, 187, 170, 172, 189, 174, 187, 105, 134, 105, 172, 177, 170, 187, 83, 105, 105,
+    105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 188, 174, 189, 140, 177, 170, 187, 170, 172, 189, 174, 187, 156, 172,
+    187, 178, 185, 189, 141, 178, 188, 170, 171, 181, 174, 173, 113, 172, 177, 170, 187, 131, 143, 178, 183, 173, 143, 178,
+    187, 188, 189, 140, 177, 178, 181, 173, 113, 107, 149, 184, 172, 170, 181, 140, 177, 190, 183, 180, 150, 170, 183, 170,
+    176, 174, 187, 107, 114, 117, 105, 189, 187, 190, 174, 114, 83, 105, 105, 105, 105, 188, 174, 189, 140, 177, 170, 187,
+    170, 172, 189, 174, 187, 156, 172, 187, 178, 185, 189, 141, 178, 188, 170, 171, 181, 174, 173, 113, 172, 177, 170, 187,
+    131, 143, 178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 113, 107, 138, 183, 178, 182, 170, 189, 174,
+    107, 114, 117, 105, 189, 187, 190, 174, 114, 83, 174, 183, 173, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172,
+    189, 178, 184, 183, 105, 187, 174, 188, 189, 184, 187, 174, 140, 177, 170, 187, 170, 172, 189, 174, 187, 157, 187, 170,
+    183, 188, 178, 189, 178, 184, 183, 113, 114, 83, 105, 105, 105, 105, 172, 177, 170, 187, 170, 172, 189, 174, 187, 157,
+    187, 170, 183, 188, 178, 189, 178, 184, 183, 142, 183, 170, 171, 181, 174, 173, 105, 134, 105, 175, 170, 181, 188, 174,
+    83, 105, 105, 105, 105, 189, 187, 170, 183, 188, 178, 189, 178, 184, 183, 139, 184, 190, 183, 173, 140, 177, 170, 187,
+    170, 172, 189, 174, 187, 105, 134, 105, 183, 178, 181, 83, 105, 105, 105, 105, 175, 184, 187, 105, 188, 172, 187, 178,
+    185, 189, 152, 171, 179, 174, 172, 189, 117, 105, 192, 170, 188, 141, 178, 188, 170, 171, 181, 174, 173, 105, 178, 183,
+    105, 185, 170, 178, 187, 188, 113, 189, 187, 170, 183, 188, 178, 189, 178, 184, 183, 141, 178, 188, 170, 171, 181, 174,
+    173, 156, 172, 187, 178, 185, 189, 188, 114, 105, 173, 184, 83, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105,
+    188, 172, 187, 178, 185, 189, 152, 171, 179, 174, 172, 189, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 185, 172, 170, 181, 181, 113, 175, 190, 183, 172, 189, 178, 184, 183, 113, 114, 83, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 188, 172, 187, 178, 185, 189, 152, 171, 179,
+    174, 172, 189, 119, 141, 178, 188, 170, 171, 181, 174, 173, 105, 134, 105, 192, 170, 188, 141, 178, 188, 170, 171, 181,
+    174, 173, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173, 114, 83, 105, 105, 105, 105,
+    105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 189, 170, 171, 181,
+    174, 119, 172, 181, 174, 170, 187, 113, 189, 187, 170, 183, 188, 178, 189, 178, 184, 183, 141, 178, 188, 170, 171, 181,
+    174, 173, 156, 172, 187, 178, 185, 189, 188, 114, 83, 174, 183, 173, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183,
+    172, 189, 178, 184, 183, 105, 188, 174, 189, 140, 177, 170, 187, 170, 172, 189, 174, 187, 157, 187, 170, 183, 188, 178,
+    189, 178, 184, 183, 113, 174, 183, 170, 171, 181, 174, 173, 114, 83, 105, 105, 105, 105, 172, 177, 170, 187, 170, 172,
+    189, 174, 187, 157, 187, 170, 183, 188, 178, 189, 178, 184, 183, 142, 183, 170, 171, 181, 174, 173, 105, 134, 105, 174,
+    183, 170, 171, 181, 174, 173, 105, 170, 183, 173, 105, 189, 187, 190, 174, 105, 184, 187, 105, 175, 170, 181, 188, 174,
+    83, 105, 105, 105, 105, 178, 175, 105, 183, 184, 189, 105, 172, 177, 170, 187, 170, 172, 189, 174, 187, 157, 187, 170,
+    183, 188, 178, 189, 178, 184, 183, 142, 183, 170, 171, 181, 174, 173, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105,
+    105, 105, 105, 105, 187, 174, 188, 189, 184, 187, 174, 140, 177, 170, 187, 170, 172, 189, 174, 187, 157, 187, 170, 183,
+    188, 178, 189, 178, 184, 183, 113, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 83,
+    105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 172, 177, 170, 187, 117, 105,
+    177, 190, 182, 105, 134, 105, 185, 181, 170, 194, 174, 187, 119, 140, 177, 170, 187, 170, 172, 189, 174, 187, 117, 105,
+    183, 178, 181, 83, 105, 105, 105, 105, 178, 175, 105, 172, 177, 170, 187, 105, 189, 177, 174, 183, 105, 177, 190, 182,
+    105, 134, 105, 172, 177, 170, 187, 131, 143, 178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 152, 175,
+    140, 181, 170, 188, 188, 113, 107, 145, 190, 182, 170, 183, 184, 178, 173, 107, 114, 105, 174, 183, 173, 83, 105, 105,
+    105, 105, 170, 185, 185, 181, 194, 140, 177, 170, 187, 170, 172, 189, 174, 187, 157, 187, 170, 183, 188, 178, 189, 178,
+    184, 183, 157, 184, 140, 177, 170, 187, 170, 172, 189, 174, 187, 113, 172, 177, 170, 187, 117, 105, 177, 190, 182, 114,
+    83, 174, 183, 173, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183, 105, 183, 184, 187, 182,
+    113, 191, 114, 83, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 105, 188, 189, 187, 178, 183, 176, 119, 181, 184,
+    192, 174, 187, 113, 189, 184, 188, 189, 187, 178, 183, 176, 113, 191, 105, 184, 187, 105, 107, 107, 114, 114, 131, 176,
+    188, 190, 171, 113, 107, 167, 110, 188, 116, 107, 117, 105, 107, 107, 114, 131, 176, 188, 190, 171, 113, 107, 110, 188,
+    116, 109, 107, 117, 105, 107, 107, 114, 131, 176, 188, 190, 171, 113, 107, 110, 188, 116, 107, 117, 105, 107, 105, 107,
+    114, 83, 174, 183, 173, 83, 181, 184, 172, 170, 181, 105, 192, 184, 187, 181, 173, 155, 184, 184, 189, 188, 141, 174,
+    189, 170, 172, 177, 174, 173, 105, 134, 105, 175, 170, 181, 188, 174, 83, 181, 184, 172, 170, 181, 105, 173, 174, 189,
+    170, 172, 177, 174, 173, 160, 184, 187, 181, 173, 155, 184, 184, 189, 188, 105, 134, 105, 196, 150, 170, 185, 105, 134,
+    105, 196, 198, 117, 105, 140, 177, 190, 183, 180, 188, 105, 134, 105, 196, 198, 198, 83, 181, 184, 172, 170, 181, 105,
+    181, 170, 189, 174, 188, 189, 141, 174, 189, 170, 172, 177, 174, 173, 150, 170, 185, 155, 184, 184, 189, 105, 134, 105,
+    183, 178, 181, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183, 105, 173, 174, 189, 170, 172,
+    177, 160, 184, 187, 181, 173, 155, 184, 184, 189, 113, 187, 184, 184, 189, 114, 83, 105, 105, 105, 105, 178, 175, 105,
+    183, 184, 189, 105, 187, 184, 184, 189, 105, 184, 187, 105, 113, 187, 184, 184, 189, 119, 151, 170, 182, 174, 105, 199,
+    134, 105, 107, 150, 170, 185, 107, 105, 170, 183, 173, 105, 187, 184, 184, 189, 119, 151, 170, 182, 174, 105, 199, 134,
+    105, 107, 140, 177, 190, 183, 180, 188, 107, 114, 105, 189, 177, 174, 183, 105, 187, 174, 189, 190, 187, 183, 105, 174,
+    183, 173, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 171, 190, 172, 180, 174, 189, 105, 134, 105, 173, 174,
+    189, 170, 172, 177, 174, 173, 160, 184, 187, 181, 173, 155, 184, 184, 189, 188, 164, 187, 184, 184, 189, 119, 151, 170,
+    182, 174, 166, 83, 105, 105, 105, 105, 175, 184, 187, 105, 168, 117, 105, 188, 170, 191, 174, 173, 105, 178, 183, 105,
+    178, 185, 170, 178, 187, 188, 113, 171, 190, 172, 180, 174, 189, 114, 105, 173, 184, 83, 105, 105, 105, 105, 105, 105,
+    105, 105, 178, 175, 105, 188, 170, 191, 174, 173, 105, 134, 134, 105, 187, 184, 184, 189, 105, 189, 177, 174, 183, 105,
+    187, 174, 189, 190, 187, 183, 105, 174, 183, 173, 83, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 189,
+    170, 171, 181, 174, 119, 172, 181, 174, 170, 187, 113, 171, 190, 172, 180, 174, 189, 114, 83, 105, 105, 105, 105, 189,
+    170, 171, 181, 174, 119, 178, 183, 188, 174, 187, 189, 113, 171, 190, 172, 180, 174, 189, 117, 105, 187, 184, 184, 189,
+    114, 83, 105, 105, 105, 105, 178, 175, 105, 187, 184, 184, 189, 119, 151, 170, 182, 174, 105, 134, 134, 105, 107, 150,
+    170, 185, 107, 105, 189, 177, 174, 183, 105, 181, 170, 189, 174, 188, 189, 141, 174, 189, 170, 172, 177, 174, 173, 150,
+    170, 185, 155, 184, 184, 189, 105, 134, 105, 187, 184, 184, 189, 105, 174, 183, 173, 83, 105, 105, 105, 105, 185, 172,
+    170, 181, 181, 113, 175, 190, 183, 172, 189, 178, 184, 183, 113, 114, 105, 187, 184, 184, 189, 119, 153, 170, 187, 174,
+    183, 189, 105, 134, 105, 183, 178, 181, 105, 174, 183, 173, 114, 83, 174, 183, 173, 83, 181, 184, 172, 170, 181, 105,
+    175, 190, 183, 172, 189, 178, 184, 183, 105, 173, 174, 189, 170, 172, 177, 140, 190, 187, 187, 174, 183, 189, 160, 184,
+    187, 181, 173, 155, 184, 184, 189, 188, 113, 114, 83, 105, 105, 105, 105, 192, 184, 187, 181, 173, 155, 184, 184, 189,
+    188, 141, 174, 189, 170, 172, 177, 174, 173, 105, 134, 105, 189, 187, 190, 174, 83, 105, 105, 105, 105, 181, 184, 172,
+    170, 181, 105, 182, 170, 185, 155, 184, 184, 189, 105, 134, 105, 160, 184, 187, 180, 188, 185, 170, 172, 174, 131, 143,
+    178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 113, 107, 150, 170, 185, 107, 114, 83, 105, 105, 105,
+    105, 181, 184, 172, 170, 181, 105, 172, 177, 190, 183, 180, 188, 155, 184, 184, 189, 105, 134, 105, 160, 184, 187, 180,
+    188, 185, 170, 172, 174, 131, 143, 178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 113, 107, 140, 177,
+    190, 183, 180, 188, 107, 114, 83, 105, 105, 105, 105, 178, 175, 105, 182, 170, 185, 155, 184, 184, 189, 105, 189, 177,
+    174, 183, 105, 173, 174, 189, 170, 172, 177, 160, 184, 187, 181, 173, 155, 184, 184, 189, 113, 182, 170, 185, 155, 184,
+    184, 189, 114, 105, 174, 183, 173, 83, 105, 105, 105, 105, 178, 175, 105, 172, 177, 190, 183, 180, 188, 155, 184, 184,
+    189, 105, 189, 177, 174, 183, 105, 173, 174, 189, 170, 172, 177, 160, 184, 187, 181, 173, 155, 184, 184, 189, 113, 172,
+    177, 190, 183, 180, 188, 155, 184, 184, 189, 114, 105, 174, 183, 173, 83, 174, 183, 173, 83, 181, 184, 172, 170, 181,
+    105, 175, 190, 183, 172, 189, 178, 184, 183, 105, 187, 174, 188, 189, 184, 187, 174, 160, 184, 187, 181, 173, 155, 184,
+    184, 189, 188, 113, 114, 83, 105, 105, 105, 105, 192, 184, 187, 181, 173, 155, 184, 184, 189, 188, 141, 174, 189, 170,
+    172, 177, 174, 173, 105, 134, 105, 175, 170, 181, 188, 174, 83, 105, 105, 105, 105, 175, 184, 187, 105, 168, 117, 105,
+    187, 184, 184, 189, 151, 170, 182, 174, 105, 178, 183, 105, 178, 185, 170, 178, 187, 188, 113, 196, 107, 150, 170, 185,
+    107, 117, 105, 107, 140, 177, 190, 183, 180, 188, 107, 198, 114, 105, 173, 184, 83, 105, 105, 105, 105, 105, 105, 105,
+    105, 181, 184, 172, 170, 181, 105, 171, 190, 172, 180, 174, 189, 105, 134, 105, 173, 174, 189, 170, 172, 177, 174, 173,
+    160, 184, 187, 181, 173, 155, 184, 184, 189, 188, 164, 187, 184, 184, 189, 151, 170, 182, 174, 166, 83, 105, 105, 105,
+    105, 105, 105, 105, 105, 175, 184, 187, 105, 168, 117, 105, 187, 184, 184, 189, 105, 178, 183, 105, 178, 185, 170, 178,
+    187, 188, 113, 171, 190, 172, 180, 174, 189, 114, 105, 173, 184, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 178, 175, 105, 187, 184, 184, 189, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 185, 172, 170, 181, 181, 113, 175, 190, 183, 172, 189, 178, 184, 183, 113, 114, 83,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 187,
+    184, 184, 189, 119, 153, 170, 187, 174, 183, 189, 105, 134, 134, 105, 183, 178, 181, 105, 189, 177, 174, 183, 105, 187,
+    184, 184, 189, 119, 153, 170, 187, 174, 183, 189, 105, 134, 105, 160, 184, 187, 180, 188, 185, 170, 172, 174, 105, 174,
+    183, 173, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173, 114, 83,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 105, 105, 105, 105,
+    174, 183, 173, 83, 105, 105, 105, 105, 105, 105, 105, 105, 189, 170, 171, 181, 174, 119, 172, 181, 174, 170, 187, 113,
+    171, 190, 172, 180, 174, 189, 114, 83, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 181, 170, 189, 174,
+    188, 189, 141, 174, 189, 170, 172, 177, 174, 173, 150, 170, 185, 155, 184, 184, 189, 105, 134, 105, 183, 178, 181, 83,
+    174, 183, 173, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183, 105, 176, 174, 189, 150, 170,
+    185, 151, 170, 182, 174, 113, 114, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 172, 170, 183, 173, 178, 173,
+    170, 189, 174, 188, 105, 134, 105, 196, 198, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 188, 174, 189, 189,
+    178, 183, 176, 188, 105, 134, 105, 155, 174, 185, 181, 178, 172, 170, 189, 174, 173, 156, 189, 184, 187, 170, 176, 174,
+    131, 143, 178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 113, 107, 156, 174, 187, 191, 174, 187, 156,
+    174, 189, 189, 178, 183, 176, 188, 107, 114, 83, 105, 105, 105, 105, 178, 175, 105, 188, 174, 189, 189, 178, 183, 176,
+    188, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 175, 184, 187, 105, 168, 117, 105, 180, 174,
+    194, 105, 178, 183, 105, 178, 185, 170, 178, 187, 188, 113, 196, 107, 150, 170, 185, 151, 170, 182, 174, 107, 117, 105,
+    107, 140, 190, 187, 187, 174, 183, 189, 150, 170, 185, 107, 198, 114, 105, 173, 184, 83, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 184, 171, 179, 105, 134, 105, 188, 174, 189, 189, 178, 183,
+    176, 188, 131, 143, 178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 113, 180, 174, 194, 114, 83, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 184, 171, 179, 105, 189, 177, 174, 183, 105, 185,
+    172, 170, 181, 181, 113, 175, 190, 183, 172, 189, 178, 184, 183, 113, 114, 105, 189, 170, 171, 181, 174, 119, 178, 183,
+    188, 174, 187, 189, 113, 172, 170, 183, 173, 178, 173, 170, 189, 174, 188, 117, 105, 184, 171, 179, 119, 159, 170, 181,
+    190, 174, 114, 105, 174, 183, 173, 114, 105, 174, 183, 173, 83, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173,
+    83, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 182, 170, 185, 105, 134,
+    105, 160, 184, 187, 180, 188, 185, 170, 172, 174, 131, 143, 178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181,
+    173, 113, 107, 150, 170, 185, 107, 114, 105, 184, 187, 105, 181, 170, 189, 174, 188, 189, 141, 174, 189, 170, 172, 177,
+    174, 173, 150, 170, 185, 155, 184, 184, 189, 83, 105, 105, 105, 105, 178, 175, 105, 182, 170, 185, 105, 189, 177, 174,
+    183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 189, 170, 171, 181, 174, 119, 178, 183, 188, 174, 187, 189, 113, 172,
+    170, 183, 173, 178, 173, 170, 189, 174, 188, 117, 105, 182, 170, 185, 119, 151, 170, 182, 174, 114, 83, 105, 105, 105,
+    105, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 191, 170, 181, 190, 174, 105, 134, 105, 182, 170, 185, 131, 143,
+    178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 113, 107, 150, 170, 185, 151, 170, 182, 174, 107, 114,
+    83, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 191, 170, 181, 190, 174, 105, 170, 183, 173, 105, 191, 170,
+    181, 190, 174, 131, 146, 188, 138, 113, 107, 159, 170, 181, 190, 174, 139, 170, 188, 174, 107, 114, 105, 189, 177, 174,
+    183, 105, 189, 170, 171, 181, 174, 119, 178, 183, 188, 174, 187, 189, 113, 172, 170, 183, 173, 178, 173, 170, 189, 174,
+    188, 117, 105, 191, 170, 181, 190, 174, 119, 159, 170, 181, 190, 174, 114, 105, 174, 183, 173, 83, 105, 105, 105, 105,
+    174, 183, 173, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 185, 181, 170, 194, 174, 187, 150, 170, 185, 105,
+    134, 105, 185, 181, 170, 194, 174, 187, 131, 143, 178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 113,
+    107, 140, 190, 187, 187, 174, 183, 189, 150, 170, 185, 107, 114, 83, 105, 105, 105, 105, 178, 175, 105, 185, 181, 170,
+    194, 174, 187, 150, 170, 185, 105, 189, 177, 174, 183, 105, 185, 172, 170, 181, 181, 113, 175, 190, 183, 172, 189, 178,
+    184, 183, 113, 114, 105, 189, 170, 171, 181, 174, 119, 178, 183, 188, 174, 187, 189, 113, 172, 170, 183, 173, 178, 173,
+    170, 189, 174, 188, 117, 105, 185, 181, 170, 194, 174, 187, 150, 170, 185, 119, 159, 170, 181, 190, 174, 114, 105, 174,
+    183, 173, 114, 105, 174, 183, 173, 83, 105, 105, 105, 105, 175, 184, 187, 105, 168, 117, 105, 191, 170, 181, 190, 174,
+    105, 178, 183, 105, 178, 185, 170, 178, 187, 188, 113, 172, 170, 183, 173, 178, 173, 170, 189, 174, 188, 114, 105, 173,
+    184, 83, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 183, 184, 187, 182, 113, 191, 170, 181, 190, 174, 114,
+    105, 199, 134, 105, 107, 107, 105, 170, 183, 173, 105, 183, 184, 187, 182, 113, 191, 170, 181, 190, 174, 114, 105, 199,
+    134, 105, 107, 182, 170, 185, 107, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 187, 174, 189, 190, 187, 183, 105, 189, 184, 188, 189, 187, 178, 183, 176, 113, 191, 170, 181, 190, 174, 114, 117,
+    105, 183, 184, 187, 182, 113, 191, 170, 181, 190, 174, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173,
+    83, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 105, 107, 158, 183, 180,
+    183, 184, 192, 183, 107, 117, 105, 107, 107, 83, 174, 183, 173, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172,
+    189, 178, 184, 183, 105, 176, 174, 189, 153, 170, 187, 189, 188, 113, 114, 83, 105, 105, 105, 105, 181, 184, 172, 170,
+    181, 105, 172, 177, 170, 187, 105, 134, 105, 185, 181, 170, 194, 174, 187, 119, 140, 177, 170, 187, 170, 172, 189, 174,
+    187, 83, 105, 105, 105, 105, 178, 175, 105, 183, 184, 189, 105, 172, 177, 170, 187, 105, 189, 177, 174, 183, 105, 187,
+    174, 189, 190, 187, 183, 105, 174, 183, 173, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 177, 190, 182, 105,
+    134, 105, 172, 177, 170, 187, 131, 143, 178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 152, 175, 140,
+    181, 170, 188, 188, 113, 107, 145, 190, 182, 170, 183, 184, 178, 173, 107, 114, 83, 105, 105, 105, 105, 181, 184, 172,
+    170, 181, 105, 187, 184, 184, 189, 105, 134, 105, 172, 177, 170, 187, 131, 143, 178, 183, 173, 143, 178, 187, 188, 189,
+    140, 177, 178, 181, 173, 113, 107, 145, 190, 182, 170, 183, 184, 178, 173, 155, 184, 184, 189, 153, 170, 187, 189, 107,
+    114, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 174, 191, 174, 183, 189, 188, 105, 134, 105, 172, 177, 170,
+    187, 131, 143, 178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 113, 107, 142, 191, 174, 183, 189, 188,
+    107, 114, 83, 105, 105, 105, 105, 178, 175, 105, 177, 190, 182, 105, 170, 183, 173, 105, 187, 184, 184, 189, 105, 189,
+    177, 174, 183, 105, 187, 174, 189, 190, 187, 183, 105, 172, 177, 170, 187, 117, 105, 177, 190, 182, 117, 105, 187, 184,
+    184, 189, 117, 105, 174, 191, 174, 183, 189, 188, 105, 174, 183, 173, 83, 174, 183, 173, 83, 181, 184, 172, 170, 181,
+    105, 143, 138, 155, 150, 168, 143, 149, 152, 152, 155, 168, 151, 138, 150, 142, 105, 134, 105, 107, 173, 142, 183, 195,
+    140, 187, 174, 170, 189, 184, 187, 168, 143, 170, 187, 182, 143, 181, 184, 184, 187, 107, 83, 181, 184, 172, 170, 181,
+    105, 143, 138, 155, 150, 168, 143, 149, 152, 152, 155, 168, 156, 146, 163, 142, 105, 134, 105, 159, 174, 172, 189, 184,
+    187, 124, 119, 183, 174, 192, 113, 123, 121, 125, 129, 117, 105, 122, 121, 117, 105, 123, 121, 125, 129, 114, 83, 181,
+    184, 172, 170, 181, 105, 143, 138, 155, 150, 168, 143, 149, 152, 152, 155, 168, 145, 138, 149, 143, 168, 145, 142, 146,
+    144, 145, 157, 105, 134, 105, 143, 138, 155, 150, 168, 143, 149, 152, 152, 155, 168, 156, 146, 163, 142, 119, 162, 105,
+    120, 105, 123, 83, 181, 184, 172, 170, 181, 105, 143, 138, 155, 150, 168, 149, 138, 151, 141, 146, 151, 144, 168, 161,
+    105, 134, 105, 121, 83, 181, 184, 172, 170, 181, 105, 143, 138, 155, 150, 168, 149, 138, 151, 141, 146, 151, 144, 168,
+    163, 105, 134, 105, 122, 121, 121, 83, 181, 184, 172, 170, 181, 105, 143, 138, 155, 150, 168, 156, 158, 155, 143, 138,
+    140, 142, 168, 156, 140, 138, 151, 168, 146, 151, 157, 142, 155, 159, 138, 149, 105, 134, 105, 121, 119, 123, 121, 83,
+    181, 184, 172, 170, 181, 105, 143, 138, 155, 150, 168, 156, 158, 155, 143, 138, 140, 142, 168, 155, 138, 162, 168, 157,
+    152, 153, 105, 134, 105, 122, 121, 121, 121, 121, 83, 181, 184, 172, 170, 181, 105, 143, 138, 155, 150, 168, 156, 158,
+    155, 143, 138, 140, 142, 168, 155, 138, 162, 168, 149, 142, 151, 144, 157, 145, 105, 134, 105, 123, 121, 121, 121, 121,
+    83, 181, 184, 172, 170, 181, 105, 175, 170, 187, 182, 143, 181, 184, 184, 187, 105, 134, 105, 183, 178, 181, 83, 181,
+    184, 172, 170, 181, 105, 175, 170, 187, 182, 156, 190, 187, 175, 170, 172, 174, 150, 170, 185, 148, 174, 194, 105, 134,
+    105, 107, 107, 83, 181, 184, 172, 170, 181, 105, 175, 170, 187, 182, 156, 190, 187, 175, 170, 172, 174, 157, 184, 185,
+    162, 105, 134, 105, 183, 178, 181, 83, 181, 184, 172, 170, 181, 105, 181, 170, 188, 189, 143, 170, 187, 182, 156, 190,
+    187, 175, 170, 172, 174, 156, 172, 170, 183, 105, 134, 105, 121, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172,
+    189, 178, 184, 183, 105, 181, 184, 172, 180, 143, 170, 187, 182, 143, 181, 184, 184, 187, 113, 175, 181, 184, 184, 187,
+    114, 83, 105, 105, 105, 105, 178, 175, 105, 183, 184, 189, 105, 175, 181, 184, 184, 187, 105, 184, 187, 105, 183, 184,
+    189, 105, 175, 181, 184, 184, 187, 131, 146, 188, 138, 113, 107, 139, 170, 188, 174, 153, 170, 187, 189, 107, 114, 105,
+    189, 177, 174, 183, 105, 187, 174, 189, 190, 187, 183, 105, 183, 178, 181, 105, 174, 183, 173, 83, 105, 105, 105, 105,
+    178, 175, 105, 175, 181, 184, 184, 187, 119, 156, 178, 195, 174, 105, 199, 134, 105, 143, 138, 155, 150, 168, 143, 149,
+    152, 152, 155, 168, 156, 146, 163, 142, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 175, 181,
+    184, 184, 187, 119, 156, 178, 195, 174, 105, 134, 105, 143, 138, 155, 150, 168, 143, 149, 152, 152, 155, 168, 156, 146,
+    163, 142, 83, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 178, 175, 105, 183, 184, 189, 105, 175, 181,
+    184, 184, 187, 119, 138, 183, 172, 177, 184, 187, 174, 173, 105, 189, 177, 174, 183, 105, 175, 181, 184, 184, 187, 119,
+    138, 183, 172, 177, 184, 187, 174, 173, 105, 134, 105, 189, 187, 190, 174, 105, 174, 183, 173, 83, 105, 105, 105, 105,
+    178, 175, 105, 183, 184, 189, 105, 175, 181, 184, 184, 187, 119, 140, 170, 183, 140, 184, 181, 181, 178, 173, 174, 105,
+    189, 177, 174, 183, 105, 175, 181, 184, 184, 187, 119, 140, 170, 183, 140, 184, 181, 181, 178, 173, 174, 105, 134, 105,
+    189, 187, 190, 174, 105, 174, 183, 173, 83, 105, 105, 105, 105, 178, 175, 105, 183, 184, 189, 105, 175, 181, 184, 184,
+    187, 119, 140, 170, 183, 157, 184, 190, 172, 177, 105, 189, 177, 174, 183, 105, 175, 181, 184, 184, 187, 119, 140, 170,
+    183, 157, 184, 190, 172, 177, 105, 134, 105, 189, 187, 190, 174, 105, 174, 183, 173, 83, 105, 105, 105, 105, 178, 175,
+    105, 183, 184, 189, 105, 175, 181, 184, 184, 187, 119, 140, 170, 183, 154, 190, 174, 187, 194, 105, 189, 177, 174, 183,
+    105, 175, 181, 184, 184, 187, 119, 140, 170, 183, 154, 190, 174, 187, 194, 105, 134, 105, 189, 187, 190, 174, 105, 174,
+    183, 173, 83, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 105, 175, 181, 184, 184, 187, 83, 174, 183, 173, 83,
+    181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183, 105, 174, 183, 188, 190, 187, 174, 143, 170, 187,
+    182, 143, 181, 184, 184, 187, 113, 114, 83, 105, 105, 105, 105, 178, 175, 105, 175, 170, 187, 182, 143, 181, 184, 184,
+    187, 105, 170, 183, 173, 105, 175, 170, 187, 182, 143, 181, 184, 184, 187, 119, 153, 170, 187, 174, 183, 189, 105, 134,
+    134, 105, 160, 184, 187, 180, 188, 185, 170, 172, 174, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105,
+    105, 187, 174, 189, 190, 187, 183, 105, 181, 184, 172, 180, 143, 170, 187, 182, 143, 181, 184, 184, 187, 113, 175, 170,
+    187, 182, 143, 181, 184, 184, 187, 114, 83, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 181, 184, 172,
+    170, 181, 105, 174, 193, 178, 188, 189, 178, 183, 176, 105, 134, 105, 160, 184, 187, 180, 188, 185, 170, 172, 174, 131,
+    143, 178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 113, 143, 138, 155, 150, 168, 143, 149, 152, 152,
+    155, 168, 151, 138, 150, 142, 114, 83, 105, 105, 105, 105, 178, 175, 105, 174, 193, 178, 188, 189, 178, 183, 176, 105,
+    170, 183, 173, 105, 174, 193, 178, 188, 189, 178, 183, 176, 131, 146, 188, 138, 113, 107, 139, 170, 188, 174, 153, 170,
+    187, 189, 107, 114, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 175, 170, 187, 182, 143, 181,
+    184, 184, 187, 105, 134, 105, 174, 193, 178, 188, 189, 178, 183, 176, 83, 105, 105, 105, 105, 105, 105, 105, 105, 187,
+    174, 189, 190, 187, 183, 105, 181, 184, 172, 180, 143, 170, 187, 182, 143, 181, 184, 184, 187, 113, 175, 170, 187, 182,
+    143, 181, 184, 184, 187, 114, 83, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181,
+    105, 175, 181, 184, 184, 187, 105, 134, 105, 146, 183, 188, 189, 170, 183, 172, 174, 119, 183, 174, 192, 113, 107, 153,
+    170, 187, 189, 107, 114, 83, 105, 105, 105, 105, 175, 181, 184, 184, 187, 119, 151, 170, 182, 174, 105, 134, 105, 143,
+    138, 155, 150, 168, 143, 149, 152, 152, 155, 168, 151, 138, 150, 142, 83, 105, 105, 105, 105, 175, 181, 184, 184, 187,
+    119, 140, 170, 188, 189, 156, 177, 170, 173, 184, 192, 105, 134, 105, 175, 170, 181, 188, 174, 83, 105, 105, 105, 105,
+    175, 181, 184, 184, 187, 119, 140, 184, 181, 184, 187, 105, 134, 105, 140, 184, 181, 184, 187, 124, 119, 175, 187, 184,
+    182, 155, 144, 139, 113, 126, 117, 105, 126, 117, 105, 128, 114, 83, 105, 105, 105, 105, 175, 181, 184, 184, 187, 119,
+    150, 170, 189, 174, 187, 178, 170, 181, 105, 134, 105, 142, 183, 190, 182, 119, 150, 170, 189, 174, 187, 178, 170, 181,
+    119, 156, 182, 184, 184, 189, 177, 153, 181, 170, 188, 189, 178, 172, 83, 105, 105, 105, 105, 175, 181, 184, 184, 187,
+    119, 157, 184, 185, 156, 190, 187, 175, 170, 172, 174, 105, 134, 105, 142, 183, 190, 182, 119, 156, 190, 187, 175, 170,
+    172, 174, 157, 194, 185, 174, 119, 156, 189, 190, 173, 188, 83, 105, 105, 105, 105, 175, 181, 184, 184, 187, 119, 139,
+    184, 189, 189, 184, 182, 156, 190, 187, 175, 170, 172, 174, 105, 134, 105, 142, 183, 190, 182, 119, 156, 190, 187, 175,
+    170, 172, 174, 157, 194, 185, 174, 119, 156, 182, 184, 184, 189, 177, 83, 105, 105, 105, 105, 175, 181, 184, 184, 187,
+    119, 153, 170, 187, 174, 183, 189, 105, 134, 105, 160, 184, 187, 180, 188, 185, 170, 172, 174, 83, 105, 105, 105, 105,
+    175, 170, 187, 182, 143, 181, 184, 184, 187, 105, 134, 105, 175, 181, 184, 184, 187, 83, 105, 105, 105, 105, 187, 174,
+    189, 190, 187, 183, 105, 181, 184, 172, 180, 143, 170, 187, 182, 143, 181, 184, 184, 187, 113, 175, 170, 187, 182, 143,
+    181, 184, 184, 187, 114, 83, 174, 183, 173, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183,
+    105, 173, 174, 189, 174, 172, 189, 150, 170, 185, 156, 190, 187, 175, 170, 172, 174, 157, 184, 185, 162, 113, 114, 83,
+    105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 182, 170, 185, 155, 184, 184, 189, 105, 134, 105, 160, 184, 187, 180,
+    188, 185, 170, 172, 174, 131, 143, 178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 113, 107, 150, 170,
+    185, 107, 114, 83, 105, 105, 105, 105, 178, 175, 105, 183, 184, 189, 105, 182, 170, 185, 155, 184, 184, 189, 105, 189,
+    177, 174, 183, 105, 187, 174, 189, 190, 187, 183, 105, 183, 178, 181, 105, 174, 183, 173, 83, 105, 105, 105, 105, 181,
+    184, 172, 170, 181, 105, 185, 170, 187, 170, 182, 188, 105, 134, 105, 155, 170, 194, 172, 170, 188, 189, 153, 170, 187,
+    170, 182, 188, 119, 183, 174, 192, 113, 114, 83, 105, 105, 105, 105, 185, 170, 187, 170, 182, 188, 119, 143, 178, 181,
+    189, 174, 187, 157, 194, 185, 174, 105, 134, 105, 142, 183, 190, 182, 119, 155, 170, 194, 172, 170, 188, 189, 143, 178,
+    181, 189, 174, 187, 157, 194, 185, 174, 119, 146, 183, 172, 181, 190, 173, 174, 83, 105, 105, 105, 105, 185, 170, 187,
+    170, 182, 188, 119, 143, 178, 181, 189, 174, 187, 141, 174, 188, 172, 174, 183, 173, 170, 183, 189, 188, 146, 183, 188,
+    189, 170, 183, 172, 174, 188, 105, 134, 105, 196, 182, 170, 185, 155, 184, 184, 189, 117, 105, 160, 184, 187, 180, 188,
+    185, 170, 172, 174, 119, 157, 174, 187, 187, 170, 178, 183, 198, 83, 105, 105, 105, 105, 185, 170, 187, 170, 182, 188,
+    119, 146, 176, 183, 184, 187, 174, 160, 170, 189, 174, 187, 105, 134, 105, 189, 187, 190, 174, 83, 105, 105, 105, 105,
+    181, 184, 172, 170, 181, 105, 184, 175, 175, 188, 174, 189, 188, 105, 134, 105, 196, 83, 105, 105, 105, 105, 105, 105,
+    105, 105, 196, 121, 117, 105, 121, 198, 117, 105, 196, 125, 117, 105, 121, 198, 117, 105, 196, 118, 125, 117, 105, 121,
+    198, 117, 105, 196, 121, 117, 105, 125, 198, 117, 105, 196, 121, 117, 105, 118, 125, 198, 117, 83, 105, 105, 105, 105,
+    105, 105, 105, 105, 196, 129, 117, 105, 129, 198, 117, 105, 196, 118, 129, 117, 105, 129, 198, 117, 105, 196, 129, 117,
+    105, 118, 129, 198, 117, 105, 196, 118, 129, 117, 105, 118, 129, 198, 83, 105, 105, 105, 105, 198, 83, 105, 105, 105,
+    105, 181, 184, 172, 170, 181, 105, 177, 174, 178, 176, 177, 189, 188, 105, 134, 105, 196, 198, 83, 105, 105, 105, 105,
+    175, 184, 187, 105, 168, 117, 105, 184, 175, 175, 188, 174, 189, 105, 178, 183, 105, 178, 185, 170, 178, 187, 188, 113,
+    184, 175, 175, 188, 174, 189, 188, 114, 105, 173, 184, 83, 105, 105, 105, 105, 105, 105, 105, 105, 181, 184, 172, 170,
+    181, 105, 184, 187, 178, 176, 178, 183, 105, 134, 105, 159, 174, 172, 189, 184, 187, 124, 119, 183, 174, 192, 113, 143,
+    138, 155, 150, 168, 149, 138, 151, 141, 146, 151, 144, 168, 161, 105, 116, 105, 184, 175, 175, 188, 174, 189, 164, 122,
+    166, 117, 105, 143, 138, 155, 150, 168, 156, 158, 155, 143, 138, 140, 142, 168, 155, 138, 162, 168, 157, 152, 153, 117,
+    83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 143, 138, 155, 150, 168, 149, 138, 151, 141, 146, 151,
+    144, 168, 163, 105, 116, 105, 184, 175, 175, 188, 174, 189, 164, 123, 166, 114, 83, 105, 105, 105, 105, 105, 105, 105,
+    105, 181, 184, 172, 170, 181, 105, 187, 174, 188, 190, 181, 189, 105, 134, 105, 160, 184, 187, 180, 188, 185, 170, 172,
+    174, 131, 155, 170, 194, 172, 170, 188, 189, 113, 184, 187, 178, 176, 178, 183, 117, 83, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 159, 174, 172, 189, 184, 187, 124, 119, 183, 174, 192, 113, 121, 117, 105, 118, 143, 138,
+    155, 150, 168, 156, 158, 155, 143, 138, 140, 142, 168, 155, 138, 162, 168, 149, 142, 151, 144, 157, 145, 117, 105, 121,
+    114, 117, 105, 185, 170, 187, 170, 182, 188, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 187, 174,
+    188, 190, 181, 189, 105, 170, 183, 173, 105, 187, 174, 188, 190, 181, 189, 119, 151, 184, 187, 182, 170, 181, 119, 162,
+    105, 135, 134, 105, 121, 119, 129, 123, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 181, 184, 172, 170, 181, 105, 177, 178, 189, 105, 134, 105, 187, 174, 188, 190, 181, 189, 119, 146, 183, 188,
+    189, 170, 183, 172, 174, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105,
+    170, 172, 172, 174, 185, 189, 170, 171, 181, 174, 105, 134, 105, 177, 178, 189, 105, 134, 134, 105, 160, 184, 187, 180,
+    188, 185, 170, 172, 174, 119, 157, 174, 187, 187, 170, 178, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 178, 175, 105, 177, 178, 189, 131, 146, 188, 138, 113, 107, 139, 170, 188, 174, 153, 170, 187, 189, 107, 114,
+    105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 170, 172,
+    172, 174, 185, 189, 170, 171, 181, 174, 105, 134, 105, 177, 178, 189, 119, 140, 170, 183, 140, 184, 181, 181, 178, 173,
+    174, 105, 170, 183, 173, 105, 177, 178, 189, 119, 140, 170, 183, 154, 190, 174, 187, 194, 83, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 170, 183, 173, 105, 177, 178, 189, 119, 140,
+    143, 187, 170, 182, 174, 119, 158, 185, 159, 174, 172, 189, 184, 187, 119, 162, 105, 135, 134, 105, 121, 119, 129, 123,
+    83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 170, 183, 173,
+    105, 177, 178, 189, 119, 156, 178, 195, 174, 119, 161, 105, 135, 134, 105, 122, 123, 105, 170, 183, 173, 105, 177, 178,
+    189, 119, 156, 178, 195, 174, 119, 163, 105, 135, 134, 105, 122, 123, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 170, 172,
+    172, 174, 185, 189, 170, 171, 181, 174, 105, 189, 177, 174, 183, 105, 189, 170, 171, 181, 174, 119, 178, 183, 188, 174,
+    187, 189, 113, 177, 174, 178, 176, 177, 189, 188, 117, 105, 187, 174, 188, 190, 181, 189, 119, 153, 184, 188, 178, 189,
+    178, 184, 183, 119, 162, 114, 105, 174, 183, 173, 83, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173, 83, 105,
+    105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 178, 175, 105, 108, 177, 174, 178, 176, 177, 189, 188, 105, 134,
+    134, 105, 121, 105, 189, 177, 174, 183, 105, 187, 174, 189, 190, 187, 183, 105, 183, 178, 181, 105, 174, 183, 173, 83,
+    105, 105, 105, 105, 189, 170, 171, 181, 174, 119, 188, 184, 187, 189, 113, 177, 174, 178, 176, 177, 189, 188, 114, 83,
+    105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 182, 178, 173, 173, 181, 174, 105, 134, 105, 182, 170, 189, 177, 119,
+    175, 181, 184, 184, 187, 113, 113, 108, 177, 174, 178, 176, 177, 189, 188, 105, 116, 105, 122, 114, 105, 120, 105, 123,
+    114, 83, 105, 105, 105, 105, 178, 175, 105, 108, 177, 174, 178, 176, 177, 189, 188, 105, 110, 105, 123, 105, 134, 134,
+    105, 121, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 105, 113,
+    177, 174, 178, 176, 177, 189, 188, 164, 182, 178, 173, 173, 181, 174, 166, 105, 116, 105, 177, 174, 178, 176, 177, 189,
+    188, 164, 182, 178, 173, 173, 181, 174, 105, 116, 105, 122, 166, 114, 105, 120, 105, 123, 83, 105, 105, 105, 105, 174,
+    183, 173, 83, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 105, 177, 174, 178, 176, 177, 189, 188, 164, 182, 178,
+    173, 173, 181, 174, 166, 83, 174, 183, 173, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183,
+    105, 185, 184, 188, 178, 189, 178, 184, 183, 143, 170, 187, 182, 143, 181, 184, 184, 187, 143, 184, 187, 150, 170, 185,
+    113, 182, 170, 185, 148, 174, 194, 117, 105, 175, 181, 184, 184, 187, 114, 83, 105, 105, 105, 105, 178, 175, 105, 175,
+    170, 187, 182, 156, 190, 187, 175, 170, 172, 174, 150, 170, 185, 148, 174, 194, 105, 199, 134, 105, 182, 170, 185, 148,
+    174, 194, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 175, 170, 187, 182, 156, 190, 187, 175,
+    170, 172, 174, 150, 170, 185, 148, 174, 194, 105, 134, 105, 182, 170, 185, 148, 174, 194, 83, 105, 105, 105, 105, 105,
+    105, 105, 105, 175, 170, 187, 182, 156, 190, 187, 175, 170, 172, 174, 157, 184, 185, 162, 105, 134, 105, 183, 178, 181,
+    83, 105, 105, 105, 105, 105, 105, 105, 105, 181, 170, 188, 189, 143, 170, 187, 182, 156, 190, 187, 175, 170, 172, 174,
+    156, 172, 170, 183, 105, 134, 105, 121, 83, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 178, 175, 105,
+    175, 170, 187, 182, 156, 190, 187, 175, 170, 172, 174, 157, 184, 185, 162, 105, 199, 134, 105, 183, 178, 181, 105, 189,
+    177, 174, 183, 105, 187, 174, 189, 190, 187, 183, 105, 189, 187, 190, 174, 105, 174, 183, 173, 83, 105, 105, 105, 105,
+    181, 184, 172, 170, 181, 105, 183, 184, 192, 105, 134, 105, 184, 188, 119, 172, 181, 184, 172, 180, 113, 114, 83, 105,
+    105, 105, 105, 178, 175, 105, 183, 184, 192, 105, 118, 105, 181, 170, 188, 189, 143, 170, 187, 182, 156, 190, 187, 175,
+    170, 172, 174, 156, 172, 170, 183, 105, 133, 105, 143, 138, 155, 150, 168, 156, 158, 155, 143, 138, 140, 142, 168, 156,
+    140, 138, 151, 168, 146, 151, 157, 142, 155, 159, 138, 149, 105, 189, 177, 174, 183, 105, 187, 174, 189, 190, 187, 183,
+    105, 175, 170, 181, 188, 174, 105, 174, 183, 173, 83, 105, 105, 105, 105, 181, 170, 188, 189, 143, 170, 187, 182, 156,
+    190, 187, 175, 170, 172, 174, 156, 172, 170, 183, 105, 134, 105, 183, 184, 192, 83, 105, 105, 105, 105, 181, 184, 172,
+    170, 181, 105, 182, 170, 185, 157, 184, 185, 162, 105, 134, 105, 173, 174, 189, 174, 172, 189, 150, 170, 185, 156, 190,
+    187, 175, 170, 172, 174, 157, 184, 185, 162, 113, 114, 83, 105, 105, 105, 105, 178, 175, 105, 182, 170, 185, 157, 184,
+    185, 162, 105, 134, 134, 105, 183, 178, 181, 105, 189, 177, 174, 183, 105, 187, 174, 189, 190, 187, 183, 105, 175, 170,
+    181, 188, 174, 105, 174, 183, 173, 83, 105, 105, 105, 105, 175, 170, 187, 182, 156, 190, 187, 175, 170, 172, 174, 157,
+    184, 185, 162, 105, 134, 105, 182, 170, 185, 157, 184, 185, 162, 105, 116, 105, 121, 119, 121, 126, 83, 105, 105, 105,
+    105, 175, 181, 184, 184, 187, 105, 134, 105, 175, 181, 184, 184, 187, 105, 184, 187, 105, 174, 183, 188, 190, 187, 174,
+    143, 170, 187, 182, 143, 181, 184, 184, 187, 113, 114, 83, 105, 105, 105, 105, 175, 181, 184, 184, 187, 119, 140, 143,
+    187, 170, 182, 174, 105, 134, 105, 140, 143, 187, 170, 182, 174, 119, 183, 174, 192, 113, 121, 117, 105, 175, 170, 187,
+    182, 156, 190, 187, 175, 170, 172, 174, 157, 184, 185, 162, 105, 118, 105, 143, 138, 155, 150, 168, 143, 149, 152, 152,
+    155, 168, 145, 138, 149, 143, 168, 145, 142, 146, 144, 145, 157, 117, 105, 121, 114, 83, 105, 105, 105, 105, 175, 181,
+    184, 184, 187, 119, 138, 183, 172, 177, 184, 187, 174, 173, 105, 134, 105, 189, 187, 190, 174, 83, 105, 105, 105, 105,
+    185, 187, 178, 183, 189, 113, 107, 164, 173, 142, 183, 195, 140, 187, 174, 170, 189, 184, 187, 166, 105, 155, 170, 194,
+    172, 170, 188, 189, 105, 175, 181, 184, 184, 187, 105, 182, 170, 189, 172, 177, 174, 173, 105, 182, 170, 185, 105, 188,
+    190, 187, 175, 170, 172, 174, 131, 107, 117, 105, 182, 170, 185, 148, 174, 194, 117, 83, 105, 105, 105, 105, 105, 105,
+    105, 105, 107, 189, 184, 185, 162, 131, 107, 117, 105, 182, 170, 189, 177, 119, 175, 181, 184, 184, 187, 113, 175, 170,
+    187, 182, 156, 190, 187, 175, 170, 172, 174, 157, 184, 185, 162, 105, 115, 105, 122, 121, 121, 105, 116, 105, 121, 119,
+    126, 114, 105, 120, 105, 122, 121, 121, 114, 83, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 105, 189, 187, 190,
+    174, 83, 174, 183, 173, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183, 105, 187, 174, 182,
+    184, 191, 174, 143, 170, 187, 182, 143, 181, 184, 184, 187, 113, 114, 83, 105, 105, 105, 105, 178, 175, 105, 175, 170,
+    187, 182, 143, 181, 184, 184, 187, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 185, 172, 170,
+    181, 181, 113, 175, 190, 183, 172, 189, 178, 184, 183, 113, 114, 105, 175, 170, 187, 182, 143, 181, 184, 184, 187, 131,
+    141, 174, 188, 189, 187, 184, 194, 113, 114, 105, 174, 183, 173, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 175,
+    170, 187, 182, 143, 181, 184, 184, 187, 105, 134, 105, 183, 178, 181, 83, 105, 105, 105, 105, 174, 183, 173, 83, 105,
+    105, 105, 105, 175, 170, 187, 182, 156, 190, 187, 175, 170, 172, 174, 150, 170, 185, 148, 174, 194, 105, 134, 105, 107,
+    107, 83, 105, 105, 105, 105, 175, 170, 187, 182, 156, 190, 187, 175, 170, 172, 174, 157, 184, 185, 162, 105, 134, 105,
+    183, 178, 181, 83, 105, 105, 105, 105, 181, 170, 188, 189, 143, 170, 187, 182, 156, 190, 187, 175, 170, 172, 174, 156,
+    172, 170, 183, 105, 134, 105, 121, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 174, 193, 178, 188, 189, 178,
+    183, 176, 105, 134, 105, 160, 184, 187, 180, 188, 185, 170, 172, 174, 131, 143, 178, 183, 173, 143, 178, 187, 188, 189,
+    140, 177, 178, 181, 173, 113, 143, 138, 155, 150, 168, 143, 149, 152, 152, 155, 168, 151, 138, 150, 142, 114, 83, 105,
+    105, 105, 105, 178, 175, 105, 174, 193, 178, 188, 189, 178, 183, 176, 105, 189, 177, 174, 183, 105, 185, 172, 170, 181,
+    181, 113, 175, 190, 183, 172, 189, 178, 184, 183, 113, 114, 105, 174, 193, 178, 188, 189, 178, 183, 176, 131, 141, 174,
+    188, 189, 187, 184, 194, 113, 114, 105, 174, 183, 173, 114, 105, 174, 183, 173, 83, 174, 183, 173, 83, 181, 184, 172,
+    170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183, 105, 175, 170, 187, 182, 138, 183, 172, 177, 184, 187, 113, 114,
+    83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 172, 177, 170, 187, 117, 105, 177, 190, 182, 117, 105, 187, 184,
+    184, 189, 105, 134, 105, 176, 174, 189, 153, 170, 187, 189, 188, 113, 114, 83, 105, 105, 105, 105, 178, 175, 105, 183,
+    184, 189, 105, 172, 177, 170, 187, 105, 189, 177, 174, 183, 105, 187, 174, 189, 190, 187, 183, 105, 175, 170, 181, 188,
+    174, 105, 174, 183, 173, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 182, 170, 185, 151, 170, 182, 174, 117,
+    105, 180, 174, 194, 105, 134, 105, 176, 174, 189, 150, 170, 185, 151, 170, 182, 174, 113, 114, 83, 105, 105, 105, 105,
+    181, 184, 172, 170, 181, 105, 195, 105, 134, 105, 143, 138, 155, 150, 168, 149, 138, 151, 141, 146, 151, 144, 168, 163,
+    83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 182, 170, 185, 140, 177, 170, 183, 176, 174, 173, 105, 134, 105,
+    182, 170, 185, 151, 170, 182, 174, 105, 199, 134, 105, 181, 170, 188, 189, 150, 170, 185, 83, 105, 105, 105, 105, 178,
+    175, 105, 182, 170, 185, 140, 177, 170, 183, 176, 174, 173, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105,
+    105, 105, 181, 170, 188, 189, 150, 170, 185, 105, 134, 105, 182, 170, 185, 151, 170, 182, 174, 83, 105, 105, 105, 105,
+    105, 105, 105, 105, 185, 174, 183, 173, 178, 183, 176, 149, 170, 183, 173, 178, 183, 176, 150, 170, 185, 105, 134, 105,
+    182, 170, 185, 151, 170, 182, 174, 83, 105, 105, 105, 105, 105, 105, 105, 105, 181, 170, 183, 173, 178, 183, 176, 140,
+    184, 183, 175, 178, 187, 182, 174, 173, 138, 189, 105, 134, 105, 183, 178, 181, 83, 105, 105, 105, 105, 105, 105, 105,
+    105, 183, 184, 143, 184, 184, 173, 150, 170, 185, 148, 174, 194, 105, 134, 105, 180, 174, 194, 83, 105, 105, 105, 105,
+    105, 105, 105, 105, 183, 184, 143, 184, 184, 173, 140, 177, 190, 183, 180, 188, 155, 184, 184, 189, 105, 134, 105, 183,
+    178, 181, 83, 105, 105, 105, 105, 105, 105, 105, 105, 172, 177, 190, 183, 180, 188, 155, 174, 170, 173, 194, 156, 178,
+    183, 172, 174, 105, 134, 105, 183, 178, 181, 83, 105, 105, 105, 105, 105, 105, 105, 105, 183, 184, 143, 184, 184, 173,
+    156, 178, 183, 172, 174, 105, 134, 105, 183, 178, 181, 83, 105, 105, 105, 105, 105, 105, 105, 105, 183, 184, 143, 184,
+    184, 173, 156, 180, 178, 185, 156, 174, 183, 189, 143, 184, 187, 150, 170, 185, 105, 134, 105, 175, 170, 181, 188, 174,
+    83, 105, 105, 105, 105, 105, 105, 105, 105, 181, 170, 188, 189, 143, 184, 184, 173, 156, 172, 170, 183, 138, 189, 105,
+    134, 105, 121, 83, 105, 105, 105, 105, 105, 105, 105, 105, 181, 170, 188, 189, 149, 170, 183, 173, 178, 183, 176, 138,
+    189, 189, 174, 182, 185, 189, 105, 134, 105, 121, 83, 105, 105, 105, 105, 105, 105, 105, 105, 185, 187, 178, 183, 189,
+    113, 107, 164, 173, 142, 183, 195, 140, 187, 174, 170, 189, 184, 187, 166, 105, 150, 170, 185, 105, 189, 187, 170, 183,
+    188, 178, 189, 178, 184, 183, 105, 173, 174, 189, 174, 172, 189, 174, 173, 132, 105, 180, 174, 174, 185, 178, 183, 176,
+    105, 182, 170, 185, 105, 145, 178, 173, 173, 174, 183, 105, 170, 183, 173, 105, 185, 187, 174, 185, 170, 187, 178, 183,
+    176, 105, 175, 170, 187, 182, 131, 107, 117, 105, 182, 170, 185, 151, 170, 182, 174, 114, 83, 105, 105, 105, 105, 174,
+    183, 173, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 175, 181, 184, 184, 187, 105, 134, 105, 174, 183, 188,
+    190, 187, 174, 143, 170, 187, 182, 143, 181, 184, 184, 187, 113, 114, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181,
+    105, 183, 174, 192, 156, 190, 187, 175, 170, 172, 174, 155, 174, 170, 173, 194, 105, 134, 105, 185, 184, 188, 178, 189,
+    178, 184, 183, 143, 170, 187, 182, 143, 181, 184, 184, 187, 143, 184, 187, 150, 170, 185, 113, 180, 174, 194, 117, 105,
+    175, 181, 184, 184, 187, 114, 83, 105, 105, 105, 105, 178, 175, 105, 183, 184, 189, 105, 183, 174, 192, 156, 190, 187,
+    175, 170, 172, 174, 155, 174, 170, 173, 194, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 181,
+    184, 172, 170, 181, 105, 188, 170, 175, 174, 157, 184, 185, 105, 134, 105, 175, 181, 184, 184, 187, 119, 153, 184, 188,
+    178, 189, 178, 184, 183, 119, 162, 105, 116, 105, 175, 181, 184, 184, 187, 119, 156, 178, 195, 174, 119, 162, 105, 120,
+    105, 123, 83, 105, 105, 105, 105, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 188, 170, 175, 174, 155, 184, 184,
+    189, 162, 105, 134, 105, 188, 170, 175, 174, 157, 184, 185, 105, 116, 105, 177, 190, 182, 119, 145, 178, 185, 145, 174,
+    178, 176, 177, 189, 105, 116, 105, 187, 184, 184, 189, 119, 156, 178, 195, 174, 119, 162, 105, 120, 105, 123, 105, 116,
+    105, 121, 119, 121, 129, 83, 105, 105, 105, 105, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 185, 105, 134, 105,
+    187, 184, 184, 189, 119, 153, 184, 188, 178, 189, 178, 184, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 181, 184,
+    172, 170, 181, 105, 177, 184, 187, 178, 195, 184, 183, 189, 170, 181, 141, 187, 178, 175, 189, 105, 134, 105, 113, 159,
+    174, 172, 189, 184, 187, 124, 119, 183, 174, 192, 113, 185, 119, 161, 117, 105, 121, 117, 105, 185, 119, 163, 114, 83,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 118, 105, 159, 174, 172, 189, 184, 187, 124, 119, 183, 174,
+    192, 113, 143, 138, 155, 150, 168, 149, 138, 151, 141, 146, 151, 144, 168, 161, 117, 105, 121, 117, 105, 195, 114, 114,
+    119, 150, 170, 176, 183, 178, 189, 190, 173, 174, 83, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 177, 184,
+    187, 178, 195, 184, 183, 189, 170, 181, 141, 187, 178, 175, 189, 105, 135, 105, 123, 119, 121, 105, 184, 187, 105, 185,
+    119, 162, 105, 133, 105, 188, 170, 175, 174, 155, 184, 184, 189, 162, 105, 118, 105, 124, 119, 121, 105, 184, 187, 105,
+    185, 119, 162, 105, 135, 105, 188, 170, 175, 174, 155, 184, 184, 189, 162, 105, 116, 105, 129, 119, 121, 105, 189, 177,
+    174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 187, 184, 184, 189, 119, 140, 143, 187, 170,
+    182, 174, 105, 134, 105, 140, 143, 187, 170, 182, 174, 119, 183, 174, 192, 113, 143, 138, 155, 150, 168, 149, 138, 151,
+    141, 146, 151, 144, 168, 161, 117, 105, 188, 170, 175, 174, 155, 184, 184, 189, 162, 117, 105, 195, 114, 83, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 187, 184, 184, 189, 119, 138, 188, 188, 174, 182, 171, 181, 194, 149,
+    178, 183, 174, 170, 187, 159, 174, 181, 184, 172, 178, 189, 194, 105, 134, 105, 159, 174, 172, 189, 184, 187, 124, 119,
+    195, 174, 187, 184, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 187, 184, 184, 189, 119, 138, 188,
+    188, 174, 182, 171, 181, 194, 138, 183, 176, 190, 181, 170, 187, 159, 174, 181, 184, 172, 178, 189, 194, 105, 134, 105,
+    159, 174, 172, 189, 184, 187, 124, 119, 195, 174, 187, 184, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 181, 170, 188, 189, 149, 170, 183, 173, 178, 183, 176, 138, 189, 189, 174, 182, 185, 189, 105, 134, 105, 184, 188,
+    119, 172, 181, 184, 172, 180, 113, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105,
+    105, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 105, 175, 170, 181, 188, 174, 83, 105, 105, 105, 105, 174, 183,
+    173, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 175, 181, 184, 184, 187, 157, 184, 185, 105, 134, 105, 175,
+    181, 184, 184, 187, 119, 153, 184, 188, 178, 189, 178, 184, 183, 119, 162, 105, 116, 105, 175, 181, 184, 184, 187, 119,
+    156, 178, 195, 174, 119, 162, 105, 120, 105, 123, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 189, 170, 187,
+    176, 174, 189, 162, 105, 134, 105, 175, 181, 184, 184, 187, 157, 184, 185, 105, 116, 105, 177, 190, 182, 119, 145, 178,
+    185, 145, 174, 178, 176, 177, 189, 105, 116, 105, 187, 184, 184, 189, 119, 156, 178, 195, 174, 119, 162, 105, 120, 105,
+    123, 105, 116, 105, 121, 119, 121, 129, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 189, 170, 187, 176, 174,
+    189, 140, 143, 187, 170, 182, 174, 105, 134, 105, 140, 143, 187, 170, 182, 174, 119, 183, 174, 192, 113, 143, 138, 155,
+    150, 168, 149, 138, 151, 141, 146, 151, 144, 168, 161, 117, 105, 189, 170, 187, 176, 174, 189, 162, 117, 105, 195, 114,
+    83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 185, 184, 188, 178, 189, 178, 184, 183, 105, 134, 105, 187, 184,
+    184, 189, 119, 153, 184, 188, 178, 189, 178, 184, 183, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 177, 184,
+    187, 178, 195, 184, 183, 189, 170, 181, 141, 187, 178, 175, 189, 105, 134, 105, 113, 159, 174, 172, 189, 184, 187, 124,
+    119, 183, 174, 192, 113, 185, 184, 188, 178, 189, 178, 184, 183, 119, 161, 117, 105, 121, 117, 105, 185, 184, 188, 178,
+    189, 178, 184, 183, 119, 163, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 118, 105, 159, 174, 172, 189, 184, 187,
+    124, 119, 183, 174, 192, 113, 143, 138, 155, 150, 168, 149, 138, 151, 141, 146, 151, 144, 168, 161, 117, 105, 121, 117,
+    105, 195, 114, 114, 119, 150, 170, 176, 183, 178, 189, 190, 173, 174, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181,
+    105, 191, 174, 187, 189, 178, 172, 170, 181, 141, 187, 178, 175, 189, 105, 134, 105, 182, 170, 189, 177, 119, 170, 171,
+    188, 113, 185, 184, 188, 178, 189, 178, 184, 183, 119, 162, 105, 118, 105, 189, 170, 187, 176, 174, 189, 162, 114, 83,
+    105, 105, 105, 105, 178, 175, 105, 182, 170, 185, 140, 177, 170, 183, 176, 174, 173, 105, 184, 187, 105, 177, 184, 187,
+    178, 195, 184, 183, 189, 170, 181, 141, 187, 178, 175, 189, 105, 135, 105, 123, 119, 121, 105, 184, 187, 105, 191, 174,
+    187, 189, 178, 172, 170, 181, 141, 187, 178, 175, 189, 105, 135, 105, 121, 119, 124, 126, 105, 189, 177, 174, 183, 83,
+    105, 105, 105, 105, 105, 105, 105, 105, 187, 184, 184, 189, 119, 140, 143, 187, 170, 182, 174, 105, 134, 105, 189, 170,
+    187, 176, 174, 189, 140, 143, 187, 170, 182, 174, 83, 105, 105, 105, 105, 105, 105, 105, 105, 187, 184, 184, 189, 119,
+    138, 188, 188, 174, 182, 171, 181, 194, 149, 178, 183, 174, 170, 187, 159, 174, 181, 184, 172, 178, 189, 194, 105, 134,
+    105, 159, 174, 172, 189, 184, 187, 124, 119, 195, 174, 187, 184, 83, 105, 105, 105, 105, 105, 105, 105, 105, 187, 184,
+    184, 189, 119, 138, 188, 188, 174, 182, 171, 181, 194, 138, 183, 176, 190, 181, 170, 187, 159, 174, 181, 184, 172, 178,
+    189, 194, 105, 134, 105, 159, 174, 172, 189, 184, 187, 124, 119, 195, 174, 187, 184, 83, 105, 105, 105, 105, 105, 105,
+    105, 105, 185, 172, 170, 181, 181, 113, 175, 190, 183, 172, 189, 178, 184, 183, 113, 114, 83, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 177, 190, 182, 131, 140, 177, 170, 183, 176, 174, 156, 189, 170, 189, 174, 113, 142,
+    183, 190, 182, 119, 145, 190, 182, 170, 183, 184, 178, 173, 156, 189, 170, 189, 174, 157, 194, 185, 174, 119, 144, 174,
+    189, 189, 178, 183, 176, 158, 185, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173, 114, 83, 105, 105,
+    105, 105, 105, 105, 105, 105, 181, 170, 188, 189, 149, 170, 183, 173, 178, 183, 176, 138, 189, 189, 174, 182, 185, 189,
+    105, 134, 105, 184, 188, 119, 172, 181, 184, 172, 180, 113, 114, 83, 105, 105, 105, 105, 174, 181, 188, 174, 83, 105,
+    105, 105, 105, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 191, 174, 181, 184, 172, 178, 189, 194, 105, 134, 105,
+    187, 184, 184, 189, 119, 138, 188, 188, 174, 182, 171, 181, 194, 149, 178, 183, 174, 170, 187, 159, 174, 181, 184, 172,
+    178, 189, 194, 83, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 182, 170, 189, 177, 119, 170, 171, 188, 113,
+    191, 174, 181, 184, 172, 178, 189, 194, 119, 162, 114, 105, 135, 105, 121, 119, 126, 105, 189, 177, 174, 183, 83, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 187, 184, 184, 189, 119, 138, 188, 188, 174, 182, 171, 181, 194,
+    149, 178, 183, 174, 170, 187, 159, 174, 181, 184, 172, 178, 189, 194, 105, 134, 105, 159, 174, 172, 189, 184, 187, 124,
+    119, 183, 174, 192, 113, 191, 174, 181, 184, 172, 178, 189, 194, 119, 161, 117, 105, 121, 117, 105, 191, 174, 181, 184,
+    172, 178, 189, 194, 119, 163, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105,
+    105, 105, 105, 105, 178, 175, 105, 187, 184, 184, 189, 119, 138, 188, 188, 174, 182, 171, 181, 194, 138, 183, 176, 190,
+    181, 170, 187, 159, 174, 181, 184, 172, 178, 189, 194, 119, 150, 170, 176, 183, 178, 189, 190, 173, 174, 105, 135, 105,
+    121, 119, 126, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 187, 184, 184,
+    189, 119, 138, 188, 188, 174, 182, 171, 181, 194, 138, 183, 176, 190, 181, 170, 187, 159, 174, 181, 184, 172, 178, 189,
+    194, 105, 134, 105, 159, 174, 172, 189, 184, 187, 124, 119, 195, 174, 187, 184, 83, 105, 105, 105, 105, 105, 105, 105,
+    105, 174, 183, 173, 83, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 105,
+    189, 187, 190, 174, 83, 174, 183, 173, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183, 105,
+    175, 178, 187, 174, 113, 184, 171, 179, 114, 83, 105, 105, 105, 105, 178, 175, 105, 183, 184, 189, 105, 184, 171, 179,
+    105, 189, 177, 174, 183, 105, 187, 174, 189, 190, 187, 183, 105, 174, 183, 173, 83, 105, 105, 105, 105, 185, 172, 170,
+    181, 181, 113, 175, 190, 183, 172, 189, 178, 184, 183, 113, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175,
+    105, 184, 171, 179, 131, 146, 188, 138, 113, 107, 155, 174, 182, 184, 189, 174, 142, 191, 174, 183, 189, 107, 114, 105,
+    189, 177, 174, 183, 105, 184, 171, 179, 131, 143, 178, 187, 174, 156, 174, 187, 191, 174, 187, 113, 114, 83, 105, 105,
+    105, 105, 105, 105, 105, 105, 174, 181, 188, 174, 178, 175, 105, 184, 171, 179, 131, 146, 188, 138, 113, 107, 139, 178,
+    183, 173, 170, 171, 181, 174, 142, 191, 174, 183, 189, 107, 114, 105, 189, 177, 174, 183, 105, 184, 171, 179, 131, 143,
+    178, 187, 174, 113, 114, 105, 174, 183, 173, 83, 105, 105, 105, 105, 174, 183, 173, 114, 83, 174, 183, 173, 83, 181,
+    184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183, 105, 187, 174, 186, 190, 174, 188, 189, 156, 180, 178,
+    185, 113, 175, 184, 187, 172, 174, 151, 184, 142, 170, 189, 156, 180, 178, 185, 114, 83, 105, 105, 105, 105, 178, 175,
+    105, 113, 183, 184, 189, 105, 175, 184, 187, 172, 174, 151, 184, 142, 170, 189, 156, 180, 178, 185, 105, 170, 183, 173,
+    105, 183, 184, 189, 105, 140, 143, 144, 119, 138, 190, 189, 184, 156, 180, 178, 185, 138, 175, 189, 174, 187, 156, 174,
+    181, 181, 114, 105, 184, 187, 105, 183, 184, 189, 105, 140, 143, 144, 119, 158, 188, 174, 150, 170, 185, 185, 174, 173,
+    156, 180, 178, 185, 155, 174, 182, 184, 189, 174, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105,
+    187, 174, 189, 190, 187, 183, 105, 175, 170, 181, 188, 174, 83, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105,
+    105, 181, 184, 172, 170, 181, 105, 175, 184, 181, 173, 174, 187, 105, 134, 105, 155, 174, 185, 181, 178, 172, 170, 189,
+    174, 173, 156, 189, 184, 187, 170, 176, 174, 131, 143, 178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173,
+    113, 107, 142, 191, 174, 183, 189, 188, 107, 114, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 187, 174, 182,
+    184, 189, 174, 105, 134, 105, 175, 184, 181, 173, 174, 187, 105, 170, 183, 173, 105, 175, 184, 181, 173, 174, 187, 131,
+    143, 178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 113, 107, 156, 174, 189, 156, 174, 187, 191, 174,
+    187, 156, 174, 189, 189, 178, 183, 176, 188, 107, 114, 83, 105, 105, 105, 105, 178, 175, 105, 183, 184, 189, 105, 187,
+    174, 182, 184, 189, 174, 105, 184, 187, 105, 183, 184, 189, 105, 187, 174, 182, 184, 189, 174, 131, 146, 188, 138, 113,
+    107, 155, 174, 182, 184, 189, 174, 142, 191, 174, 183, 189, 107, 114, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105,
+    105, 105, 105, 105, 192, 170, 187, 183, 113, 107, 164, 173, 142, 183, 195, 140, 187, 174, 170, 189, 184, 187, 105, 159,
+    124, 119, 124, 119, 127, 166, 105, 156, 174, 189, 156, 174, 187, 191, 174, 187, 156, 174, 189, 189, 178, 183, 176, 188,
+    105, 155, 174, 182, 184, 189, 174, 142, 191, 174, 183, 189, 105, 183, 184, 189, 105, 175, 184, 190, 183, 173, 119, 107,
+    114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 105, 175, 170, 181, 188, 174, 83, 105,
+    105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 184, 180, 117, 105, 174, 187, 187,
+    105, 134, 105, 185, 172, 170, 181, 181, 113, 175, 190, 183, 172, 189, 178, 184, 183, 113, 114, 83, 105, 105, 105, 105,
+    105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 170, 187, 176, 188, 105, 134, 105, 196, 196, 150, 170, 185, 157, 178,
+    182, 174, 105, 134, 105, 118, 122, 117, 105, 153, 170, 190, 188, 174, 173, 105, 134, 105, 175, 170, 181, 188, 174, 198,
+    198, 83, 105, 105, 105, 105, 105, 105, 105, 105, 187, 174, 182, 184, 189, 174, 131, 143, 178, 187, 174, 156, 174, 187,
+    191, 174, 187, 113, 190, 183, 185, 170, 172, 180, 113, 170, 187, 176, 188, 114, 114, 83, 105, 105, 105, 105, 174, 183,
+    173, 114, 83, 105, 105, 105, 105, 178, 175, 105, 184, 180, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105,
+    105, 105, 185, 187, 178, 183, 189, 113, 107, 164, 173, 142, 183, 195, 140, 187, 174, 170, 189, 184, 187, 105, 159, 124,
+    119, 124, 119, 127, 166, 105, 138, 190, 189, 184, 156, 180, 178, 185, 105, 187, 174, 186, 190, 174, 188, 189, 105, 188,
+    174, 183, 189, 105, 113, 189, 178, 182, 174, 187, 105, 183, 184, 189, 105, 185, 170, 190, 188, 174, 173, 114, 119, 107,
+    114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 105, 189, 187, 190, 174, 83, 105, 105,
+    105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 192, 170, 187, 183, 113, 107, 164, 173, 142, 183, 195, 140, 187, 174,
+    170, 189, 184, 187, 105, 159, 124, 119, 124, 119, 127, 166, 105, 138, 190, 189, 184, 156, 180, 178, 185, 105, 174, 187,
+    187, 184, 187, 131, 107, 117, 105, 174, 187, 187, 114, 83, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 105, 175,
+    170, 181, 188, 174, 83, 174, 183, 173, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183, 105,
+    182, 184, 183, 178, 189, 184, 187, 144, 187, 170, 171, 142, 170, 189, 138, 191, 170, 178, 181, 170, 171, 178, 181, 178,
+    189, 194, 113, 114, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 172, 177, 170, 187, 105, 134, 105, 185, 181,
+    170, 194, 174, 187, 119, 140, 177, 170, 187, 170, 172, 189, 174, 187, 83, 105, 105, 105, 105, 178, 175, 105, 183, 184,
+    189, 105, 172, 177, 170, 187, 105, 189, 177, 174, 183, 105, 187, 174, 189, 190, 187, 183, 105, 174, 183, 173, 83, 105,
+    105, 105, 105, 181, 184, 172, 170, 181, 105, 182, 170, 185, 151, 170, 182, 174, 117, 105, 180, 174, 194, 105, 134, 105,
+    176, 174, 189, 150, 170, 185, 151, 170, 182, 174, 113, 114, 83, 105, 105, 105, 105, 178, 175, 105, 180, 174, 194, 105,
+    199, 134, 105, 181, 170, 188, 189, 150, 178, 188, 188, 178, 183, 176, 138, 172, 189, 178, 184, 183, 150, 170, 185, 105,
+    189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 181, 170, 188, 189, 150, 178, 188, 188, 178, 183, 176,
+    138, 172, 189, 178, 184, 183, 150, 170, 185, 105, 134, 105, 180, 174, 194, 83, 105, 105, 105, 105, 105, 105, 105, 105,
+    182, 178, 188, 188, 178, 183, 176, 138, 172, 189, 178, 184, 183, 156, 178, 183, 172, 174, 105, 134, 105, 183, 178, 181,
+    83, 105, 105, 105, 105, 105, 105, 105, 105, 182, 178, 188, 188, 178, 183, 176, 138, 172, 189, 178, 184, 183, 156, 180,
+    178, 185, 156, 174, 183, 189, 105, 134, 105, 175, 170, 181, 188, 174, 83, 105, 105, 105, 105, 174, 183, 173, 83, 105,
+    105, 105, 105, 181, 184, 172, 170, 181, 105, 174, 191, 174, 183, 189, 188, 105, 134, 105, 172, 177, 170, 187, 131, 143,
+    178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 113, 107, 142, 191, 174, 183, 189, 188, 107, 114, 83,
+    105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 176, 187, 170, 171, 105, 134, 105, 174, 191, 174, 183, 189, 188, 105,
+    170, 183, 173, 105, 174, 191, 174, 183, 189, 188, 131, 143, 178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181,
+    173, 113, 107, 144, 187, 170, 171, 107, 114, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 174, 170, 189, 105,
+    134, 105, 174, 191, 174, 183, 189, 188, 105, 170, 183, 173, 105, 174, 191, 174, 183, 189, 188, 131, 143, 178, 183, 173,
+    143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 113, 107, 142, 170, 189, 107, 114, 83, 105, 105, 105, 105, 181, 184,
+    172, 170, 181, 105, 187, 174, 170, 173, 194, 105, 134, 105, 176, 187, 170, 171, 105, 199, 134, 105, 183, 178, 181, 105,
+    170, 183, 173, 105, 174, 170, 189, 105, 199, 134, 105, 183, 178, 181, 83, 105, 105, 105, 105, 178, 175, 105, 187, 174,
+    170, 173, 194, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 182, 178, 188, 188, 178, 183, 176,
+    138, 172, 189, 178, 184, 183, 156, 178, 183, 172, 174, 105, 134, 105, 183, 178, 181, 83, 105, 105, 105, 105, 105, 105,
+    105, 105, 182, 178, 188, 188, 178, 183, 176, 138, 172, 189, 178, 184, 183, 156, 180, 178, 185, 156, 174, 183, 189, 105,
+    134, 105, 175, 170, 181, 188, 174, 83, 105, 105, 105, 105, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 83, 105,
+    105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 178, 175, 105, 183, 184, 189, 105, 182, 178, 188, 188, 178, 183,
+    176, 138, 172, 189, 178, 184, 183, 156, 178, 183, 172, 174, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105,
+    105, 105, 182, 178, 188, 188, 178, 183, 176, 138, 172, 189, 178, 184, 183, 156, 178, 183, 172, 174, 105, 134, 105, 184,
+    188, 119, 172, 181, 184, 172, 180, 113, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183,
+    83, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 178, 175, 105, 183, 184, 189, 105, 182, 178, 188, 188,
+    178, 183, 176, 138, 172, 189, 178, 184, 183, 156, 180, 178, 185, 156, 174, 183, 189, 105, 170, 183, 173, 105, 184, 188,
+    119, 172, 181, 184, 172, 180, 113, 114, 105, 118, 105, 182, 178, 188, 188, 178, 183, 176, 138, 172, 189, 178, 184, 183,
+    156, 178, 183, 172, 174, 105, 135, 134, 105, 124, 119, 121, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105,
+    105, 105, 192, 170, 187, 183, 113, 107, 164, 173, 142, 183, 195, 140, 187, 174, 170, 189, 184, 187, 105, 159, 124, 119,
+    124, 119, 127, 166, 105, 144, 187, 170, 171, 120, 142, 170, 189, 105, 182, 178, 188, 188, 178, 183, 176, 105, 184, 183,
+    107, 117, 105, 182, 170, 185, 151, 170, 182, 174, 117, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    107, 118, 105, 187, 174, 186, 190, 174, 188, 189, 178, 183, 176, 105, 170, 190, 189, 184, 182, 170, 189, 178, 172, 105,
+    182, 170, 185, 105, 188, 180, 178, 185, 119, 107, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 182, 178, 188, 188,
+    178, 183, 176, 138, 172, 189, 178, 184, 183, 156, 180, 178, 185, 156, 174, 183, 189, 105, 134, 105, 189, 187, 190, 174,
+    83, 105, 105, 105, 105, 105, 105, 105, 105, 187, 174, 186, 190, 174, 188, 189, 156, 180, 178, 185, 113, 114, 83, 105,
+    105, 105, 105, 174, 183, 173, 83, 174, 183, 173, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184,
+    183, 105, 188, 172, 170, 183, 156, 174, 181, 181, 139, 170, 187, 153, 187, 184, 176, 187, 174, 188, 188, 113, 114, 83,
+    105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 185, 176, 105, 134, 105, 185, 181, 170, 194, 174, 187, 131, 143, 178,
+    183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 152, 175, 140, 181, 170, 188, 188, 113, 107, 153, 181, 170,
+    194, 174, 187, 144, 190, 178, 107, 114, 83, 105, 105, 105, 105, 178, 175, 105, 183, 184, 189, 105, 185, 176, 105, 189,
+    177, 174, 183, 105, 187, 174, 189, 190, 187, 183, 105, 183, 178, 181, 105, 174, 183, 173, 83, 105, 105, 105, 105, 181,
+    184, 172, 170, 181, 105, 181, 170, 171, 174, 181, 83, 105, 105, 105, 105, 175, 184, 187, 105, 168, 117, 105, 184, 171,
+    179, 105, 178, 183, 105, 178, 185, 170, 178, 187, 188, 113, 185, 176, 131, 144, 174, 189, 141, 174, 188, 172, 174, 183,
+    173, 170, 183, 189, 188, 113, 114, 114, 105, 173, 184, 83, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 113,
+    184, 171, 179, 131, 146, 188, 138, 113, 107, 157, 174, 193, 189, 149, 170, 171, 174, 181, 107, 114, 105, 184, 187, 105,
+    184, 171, 179, 131, 146, 188, 138, 113, 107, 157, 174, 193, 189, 139, 190, 189, 189, 184, 183, 107, 114, 114, 105, 189,
+    177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 183, 184, 187, 182, 113,
+    184, 171, 179, 119, 157, 174, 193, 189, 114, 131, 175, 178, 183, 173, 113, 107, 180, 181, 178, 180, 105, 190, 183, 189,
+    190, 180, 105, 182, 174, 183, 179, 190, 170, 181, 107, 117, 105, 122, 117, 105, 189, 187, 190, 174, 114, 105, 189, 177,
+    174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 181, 170, 171, 174, 181,
+    105, 134, 105, 184, 171, 179, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 171,
+    187, 174, 170, 180, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105,
+    105, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 178, 175, 105,
+    183, 184, 189, 105, 181, 170, 171, 174, 181, 105, 189, 177, 174, 183, 105, 187, 174, 189, 190, 187, 183, 105, 183, 178,
+    181, 105, 174, 183, 173, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 181, 170, 171, 174, 181, 162, 105, 134,
+    105, 181, 170, 171, 174, 181, 119, 138, 171, 188, 184, 181, 190, 189, 174, 153, 184, 188, 178, 189, 178, 184, 183, 119,
+    162, 105, 116, 105, 181, 170, 171, 174, 181, 119, 138, 171, 188, 184, 181, 190, 189, 174, 156, 178, 195, 174, 119, 162,
+    105, 120, 105, 123, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 170, 183, 172, 174, 188, 189, 184, 187, 105,
+    134, 105, 181, 170, 171, 174, 181, 119, 153, 170, 187, 174, 183, 189, 83, 105, 105, 105, 105, 175, 184, 187, 105, 168,
+    105, 134, 105, 122, 117, 105, 128, 105, 173, 184, 83, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 183, 184,
+    189, 105, 170, 183, 172, 174, 188, 189, 184, 187, 105, 189, 177, 174, 183, 105, 171, 187, 174, 170, 180, 105, 174, 183,
+    173, 83, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 170, 183, 172, 174, 188, 189, 184, 187, 131, 146, 188,
+    138, 113, 107, 144, 190, 178, 152, 171, 179, 174, 172, 189, 107, 114, 105, 170, 183, 173, 105, 170, 183, 172, 174, 188,
+    189, 184, 187, 119, 138, 171, 188, 184, 181, 190, 189, 174, 156, 178, 195, 174, 119, 161, 105, 135, 134, 105, 123, 126,
+    121, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 181, 184, 172, 170, 181,
+    105, 189, 187, 170, 172, 180, 160, 178, 173, 189, 177, 105, 134, 105, 170, 183, 172, 174, 188, 189, 184, 187, 119, 138,
+    171, 188, 184, 181, 190, 189, 174, 156, 178, 195, 174, 119, 161, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 181, 184, 172, 170, 181, 105, 171, 174, 188, 189, 155, 170, 189, 178, 184, 105, 134, 105, 183, 178, 181, 83,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 175, 184, 187, 105, 168, 117, 105, 184, 171, 179, 105, 178,
+    183, 105, 178, 185, 170, 178, 187, 188, 113, 170, 183, 172, 174, 188, 189, 184, 187, 131, 144, 174, 189, 141, 174, 188,
+    172, 174, 183, 173, 170, 183, 189, 188, 113, 114, 114, 105, 173, 184, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 184, 171, 179, 131, 146, 188, 138, 113, 107, 144, 190, 178, 152, 171,
+    179, 174, 172, 189, 107, 114, 105, 170, 183, 173, 105, 184, 171, 179, 119, 159, 178, 188, 178, 171, 181, 174, 83, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 170, 183, 173, 105, 184,
+    171, 179, 119, 138, 171, 188, 184, 181, 190, 189, 174, 156, 178, 195, 174, 119, 161, 105, 135, 134, 105, 129, 121, 105,
+    170, 183, 173, 105, 184, 171, 179, 119, 138, 171, 188, 184, 181, 190, 189, 174, 156, 178, 195, 174, 119, 162, 105, 135,
+    134, 105, 129, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 172, 174, 183, 189, 174, 187, 162, 105, 134, 105, 184, 171, 179,
+    119, 138, 171, 188, 184, 181, 190, 189, 174, 153, 184, 188, 178, 189, 178, 184, 183, 119, 162, 105, 116, 105, 184, 171,
+    179, 119, 138, 171, 188, 184, 181, 190, 189, 174, 156, 178, 195, 174, 119, 162, 105, 120, 105, 123, 83, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 183,
+    174, 170, 187, 139, 170, 187, 105, 134, 105, 182, 170, 189, 177, 119, 170, 171, 188, 113, 172, 174, 183, 189, 174, 187,
+    162, 105, 118, 105, 181, 170, 171, 174, 181, 162, 114, 105, 133, 134, 105, 130, 121, 83, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 172, 105, 134, 105,
+    184, 171, 179, 119, 139, 170, 172, 180, 176, 187, 184, 190, 183, 173, 140, 184, 181, 184, 187, 124, 83, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 176,
+    187, 174, 174, 183, 105, 134, 105, 172, 119, 144, 105, 135, 105, 172, 119, 155, 105, 115, 105, 122, 119, 122, 126, 105,
+    170, 183, 173, 105, 172, 119, 144, 105, 135, 105, 172, 119, 139, 105, 115, 105, 122, 119, 121, 129, 83, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 183, 174, 170, 187,
+    139, 170, 187, 105, 170, 183, 173, 105, 176, 187, 174, 174, 183, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 181, 184, 172, 170, 181,
+    105, 187, 170, 189, 178, 184, 105, 134, 105, 182, 170, 189, 177, 119, 172, 181, 170, 182, 185, 113, 184, 171, 179, 119,
+    138, 171, 188, 184, 181, 190, 189, 174, 156, 178, 195, 174, 119, 161, 105, 120, 105, 189, 187, 170, 172, 180, 160, 178,
+    173, 189, 177, 117, 105, 121, 117, 105, 122, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 183, 184, 189, 105, 171, 174, 188, 189, 155, 170,
+    189, 178, 184, 105, 184, 187, 105, 187, 170, 189, 178, 184, 105, 135, 105, 171, 174, 188, 189, 155, 170, 189, 178, 184,
+    105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 171, 174, 188, 189, 155, 170, 189, 178, 184, 105, 134, 105, 187, 170,
+    189, 178, 184, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    174, 183, 173, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 171, 174, 188, 189, 155, 170, 189, 178, 184, 105, 189, 177, 174,
+    183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183,
+    105, 171, 174, 188, 189, 155, 170, 189, 178, 184, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 174,
+    183, 173, 83, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 105, 105, 105, 105, 170,
+    183, 172, 174, 188, 189, 184, 187, 105, 134, 105, 170, 183, 172, 174, 188, 189, 184, 187, 119, 153, 170, 187, 174, 183,
+    189, 83, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 105, 183, 178, 181,
+    83, 174, 183, 173, 83, 181, 184, 172, 170, 181, 105, 156, 142, 149, 149, 168, 139, 138, 155, 168, 156, 140, 138, 151,
+    168, 146, 151, 157, 142, 155, 159, 138, 149, 105, 134, 105, 121, 119, 122, 126, 83, 181, 184, 172, 170, 181, 105, 181,
+    170, 188, 189, 156, 174, 181, 181, 139, 170, 187, 156, 172, 170, 183, 138, 189, 105, 134, 105, 121, 83, 181, 184, 172,
+    170, 181, 105, 172, 170, 172, 177, 174, 173, 156, 174, 181, 181, 139, 170, 187, 153, 187, 184, 176, 187, 174, 188, 188,
+    105, 134, 105, 183, 178, 181, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183, 105, 176, 174,
+    189, 156, 174, 181, 181, 139, 170, 187, 153, 187, 184, 176, 187, 174, 188, 188, 113, 114, 83, 105, 105, 105, 105, 181,
+    184, 172, 170, 181, 105, 183, 184, 192, 105, 134, 105, 184, 188, 119, 172, 181, 184, 172, 180, 113, 114, 83, 105, 105,
+    105, 105, 178, 175, 105, 183, 184, 192, 105, 118, 105, 181, 170, 188, 189, 156, 174, 181, 181, 139, 170, 187, 156, 172,
+    170, 183, 138, 189, 105, 133, 105, 156, 142, 149, 149, 168, 139, 138, 155, 168, 156, 140, 138, 151, 168, 146, 151, 157,
+    142, 155, 159, 138, 149, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 187, 174, 189, 190, 187,
+    183, 105, 172, 170, 172, 177, 174, 173, 156, 174, 181, 181, 139, 170, 187, 153, 187, 184, 176, 187, 174, 188, 188, 83,
+    105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 181, 170, 188, 189, 156, 174, 181, 181, 139, 170, 187, 156,
+    172, 170, 183, 138, 189, 105, 134, 105, 183, 184, 192, 83, 105, 105, 105, 105, 172, 170, 172, 177, 174, 173, 156, 174,
+    181, 181, 139, 170, 187, 153, 187, 184, 176, 187, 174, 188, 188, 105, 134, 105, 188, 172, 170, 183, 156, 174, 181, 181,
+    139, 170, 187, 153, 187, 184, 176, 187, 174, 188, 188, 113, 114, 83, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183,
+    105, 172, 170, 172, 177, 174, 173, 156, 174, 181, 181, 139, 170, 187, 153, 187, 184, 176, 187, 174, 188, 188, 83, 174,
+    183, 173, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183, 105, 176, 174, 189, 140, 170, 185,
+    170, 172, 178, 189, 194, 156, 189, 170, 189, 174, 113, 172, 177, 170, 187, 114, 83, 105, 105, 105, 105, 181, 184, 172,
+    170, 181, 105, 188, 178, 195, 174, 152, 171, 179, 105, 134, 105, 172, 177, 170, 187, 105, 170, 183, 173, 105, 172, 177,
+    170, 187, 131, 143, 178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 113, 107, 156, 178, 195, 174, 107,
+    114, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 190, 185, 176, 187, 170, 173, 174, 188, 105, 134, 105, 185,
+    181, 170, 194, 174, 187, 131, 143, 178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 113, 107, 158, 185,
+    176, 187, 170, 173, 174, 188, 107, 114, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 182, 170, 193, 152, 171,
+    179, 105, 134, 105, 190, 185, 176, 187, 170, 173, 174, 188, 105, 170, 183, 173, 105, 190, 185, 176, 187, 170, 173, 174,
+    188, 131, 143, 178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 113, 107, 150, 170, 193, 156, 178, 195,
+    174, 107, 114, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 188, 178, 195, 174, 105, 134, 105, 188, 178, 195,
+    174, 152, 171, 179, 105, 170, 183, 173, 105, 189, 184, 183, 190, 182, 171, 174, 187, 113, 188, 178, 195, 174, 152, 171,
+    179, 119, 159, 170, 181, 190, 174, 114, 105, 184, 187, 105, 183, 178, 181, 83, 105, 105, 105, 105, 181, 184, 172, 170,
+    181, 105, 182, 170, 193, 156, 178, 195, 174, 105, 134, 105, 182, 170, 193, 152, 171, 179, 105, 170, 183, 173, 105, 189,
+    184, 183, 190, 182, 171, 174, 187, 113, 182, 170, 193, 152, 171, 179, 119, 159, 170, 181, 190, 174, 114, 105, 184, 187,
+    105, 183, 178, 181, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 183, 190, 182, 174, 187, 178, 172, 143, 190,
+    181, 181, 105, 134, 105, 188, 178, 195, 174, 105, 199, 134, 105, 183, 178, 181, 105, 170, 183, 173, 105, 182, 170, 193,
+    156, 178, 195, 174, 105, 199, 134, 105, 183, 178, 181, 105, 170, 183, 173, 105, 182, 170, 193, 156, 178, 195, 174, 105,
+    135, 105, 121, 83, 105, 105, 105, 105, 105, 105, 105, 105, 170, 183, 173, 105, 188, 178, 195, 174, 105, 135, 134, 105,
+    182, 170, 193, 156, 178, 195, 174, 83, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 105, 188, 178, 195, 174, 117,
+    105, 182, 170, 193, 156, 178, 195, 174, 117, 105, 183, 190, 182, 174, 187, 178, 172, 143, 190, 181, 181, 83, 174, 183,
+    173, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183, 105, 188, 174, 183, 173, 138, 190, 189,
+    184, 156, 174, 181, 181, 113, 174, 191, 174, 183, 189, 188, 114, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105,
+    188, 174, 181, 181, 105, 134, 105, 174, 191, 174, 183, 189, 188, 105, 170, 183, 173, 105, 174, 191, 174, 183, 189, 188,
+    131, 143, 178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 113, 107, 156, 174, 181, 181, 107, 114, 83,
+    105, 105, 105, 105, 178, 175, 105, 183, 184, 189, 105, 188, 174, 181, 181, 105, 189, 177, 174, 183, 83, 105, 105, 105,
+    105, 105, 105, 105, 105, 192, 170, 187, 183, 113, 107, 164, 173, 142, 183, 195, 140, 187, 174, 170, 189, 184, 187, 105,
+    159, 124, 119, 124, 119, 127, 166, 105, 140, 177, 170, 187, 170, 172, 189, 174, 187, 119, 142, 191, 174, 183, 189, 188,
+    119, 156, 174, 181, 181, 105, 183, 184, 189, 105, 175, 184, 190, 183, 173, 119, 107, 114, 83, 105, 105, 105, 105, 105,
+    105, 105, 105, 187, 174, 189, 190, 187, 183, 105, 175, 170, 181, 188, 174, 83, 105, 105, 105, 105, 174, 183, 173, 83,
+    105, 105, 105, 105, 178, 175, 105, 183, 184, 189, 105, 188, 174, 181, 181, 131, 146, 188, 138, 113, 107, 155, 174, 182,
+    184, 189, 174, 142, 191, 174, 183, 189, 107, 114, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105,
+    192, 170, 187, 183, 113, 107, 164, 173, 142, 183, 195, 140, 187, 174, 170, 189, 184, 187, 105, 159, 124, 119, 124, 119,
+    127, 166, 105, 156, 174, 181, 181, 105, 174, 193, 178, 188, 189, 188, 105, 171, 190, 189, 105, 178, 188, 105, 183, 184,
+    189, 105, 170, 105, 155, 174, 182, 184, 189, 174, 142, 191, 174, 183, 189, 131, 107, 117, 105, 188, 174, 181, 181, 119,
+    140, 181, 170, 188, 188, 151, 170, 182, 174, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 187, 174, 189, 190, 187,
+    183, 105, 175, 170, 181, 188, 174, 83, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 181, 184, 172, 170,
+    181, 105, 184, 180, 117, 105, 174, 187, 187, 105, 134, 105, 185, 172, 170, 181, 181, 113, 175, 190, 183, 172, 189, 178,
+    184, 183, 113, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 188, 174, 181, 181, 131, 143, 178, 187, 174, 156, 174,
+    187, 191, 174, 187, 113, 114, 83, 105, 105, 105, 105, 174, 183, 173, 114, 83, 105, 105, 105, 105, 178, 175, 105, 183,
+    184, 189, 105, 184, 180, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 192, 170, 187, 183, 113,
+    107, 164, 173, 142, 183, 195, 140, 187, 174, 170, 189, 184, 187, 105, 159, 124, 119, 124, 119, 127, 166, 105, 138, 190,
+    189, 184, 156, 174, 181, 181, 105, 174, 187, 187, 184, 187, 131, 107, 117, 105, 174, 187, 187, 114, 83, 105, 105, 105,
+    105, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 105, 175, 170, 181, 188, 174, 83, 105, 105, 105, 105, 174, 183,
+    173, 83, 105, 105, 105, 105, 185, 187, 178, 183, 189, 113, 107, 164, 173, 142, 183, 195, 140, 187, 174, 170, 189, 184,
+    187, 105, 159, 124, 119, 124, 119, 127, 166, 105, 138, 190, 189, 184, 156, 174, 181, 181, 105, 187, 174, 186, 190, 174,
+    188, 189, 105, 188, 174, 183, 189, 132, 105, 192, 170, 178, 189, 178, 183, 176, 105, 175, 184, 187, 105, 188, 170, 181,
+    174, 105, 172, 184, 183, 175, 178, 187, 182, 170, 189, 178, 184, 183, 119, 107, 114, 83, 105, 105, 105, 105, 187, 174,
+    189, 190, 187, 183, 105, 189, 187, 190, 174, 83, 174, 183, 173, 83, 181, 184, 172, 170, 181, 105, 151, 152, 168, 143,
+    152, 152, 141, 168, 140, 152, 151, 143, 146, 155, 150, 168, 156, 142, 140, 152, 151, 141, 156, 105, 134, 105, 124, 119,
+    121, 83, 181, 184, 172, 170, 181, 105, 151, 152, 168, 143, 152, 152, 141, 168, 156, 140, 138, 151, 168, 146, 151, 157,
+    142, 155, 159, 138, 149, 105, 134, 105, 121, 119, 124, 126, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189,
+    178, 184, 183, 105, 176, 174, 189, 138, 172, 189, 178, 191, 174, 140, 177, 190, 183, 180, 188, 155, 184, 184, 189, 113,
+    114, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 181, 178, 191, 174, 105, 134, 105, 160, 184, 187, 180, 188,
+    185, 170, 172, 174, 131, 143, 178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181, 173, 113, 107, 140, 177, 190,
+    183, 180, 188, 107, 114, 83, 105, 105, 105, 105, 178, 175, 105, 181, 178, 191, 174, 105, 189, 177, 174, 183, 105, 187,
+    174, 189, 190, 187, 183, 105, 181, 178, 191, 174, 105, 174, 183, 173, 83, 105, 105, 105, 105, 178, 175, 105, 192, 184,
+    187, 181, 173, 155, 184, 184, 189, 188, 141, 174, 189, 170, 172, 177, 174, 173, 105, 189, 177, 174, 183, 83, 105, 105,
+    105, 105, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 171, 190, 172, 180, 174, 189, 105, 134, 105, 173, 174, 189,
+    170, 172, 177, 174, 173, 160, 184, 187, 181, 173, 155, 184, 184, 189, 188, 119, 140, 177, 190, 183, 180, 188, 83, 105,
+    105, 105, 105, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 105, 171, 190, 172, 180, 174, 189, 105, 170, 183, 173,
+    105, 171, 190, 172, 180, 174, 189, 164, 108, 171, 190, 172, 180, 174, 189, 166, 105, 184, 187, 105, 183, 178, 181, 83,
+    105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 105, 183, 178, 181, 83, 174,
+    183, 173, 83, 181, 184, 172, 170, 181, 105, 181, 184, 184, 189, 140, 184, 178, 183, 188, 140, 170, 183, 173, 194, 142,
+    183, 170, 171, 181, 174, 173, 105, 134, 105, 175, 170, 181, 188, 174, 83, 83, 118, 118, 105, 150, 184, 190, 183, 189,
+    142, 178, 176, 174, 187, 105, 149, 184, 184, 189, 105, 140, 190, 171, 174, 105, 116, 105, 140, 170, 183, 173, 194, 105,
+    172, 184, 181, 181, 174, 172, 189, 184, 187, 119, 83, 118, 118, 105, 139, 184, 189, 177, 105, 189, 170, 187, 176, 174,
+    189, 105, 188, 174, 189, 188, 105, 187, 174, 176, 178, 188, 189, 174, 187, 105, 174, 193, 178, 188, 189, 178, 183, 176,
+    105, 160, 184, 187, 180, 188, 185, 170, 172, 174, 105, 173, 174, 188, 172, 174, 183, 173, 170, 183, 189, 188, 105, 170,
+    183, 173, 105, 183, 174, 192, 181, 194, 105, 170, 173, 173, 174, 173, 105, 184, 171, 179, 174, 172, 189, 188, 119, 83,
+    118, 118, 105, 140, 170, 183, 173, 194, 105, 172, 184, 190, 183, 189, 105, 178, 183, 172, 187, 174, 170, 188, 174, 188,
+    105, 184, 183, 181, 194, 105, 170, 175, 189, 174, 187, 105, 170, 105, 189, 184, 190, 172, 177, 174, 173, 105, 140, 170,
+    183, 173, 194, 105, 181, 174, 170, 191, 174, 188, 105, 160, 184, 187, 180, 188, 185, 170, 172, 174, 119, 83, 181, 184,
+    172, 170, 181, 105, 149, 152, 152, 157, 168, 156, 140, 138, 151, 168, 141, 142, 149, 138, 162, 105, 134, 105, 121, 119,
+    124, 126, 83, 181, 184, 172, 170, 181, 105, 149, 152, 152, 157, 168, 157, 152, 158, 140, 145, 168, 140, 152, 152, 149,
+    141, 152, 160, 151, 105, 134, 105, 121, 119, 129, 83, 181, 184, 172, 170, 181, 105, 181, 170, 188, 189, 140, 190, 171,
+    174, 149, 184, 184, 189, 156, 172, 170, 183, 138, 189, 105, 134, 105, 121, 83, 181, 184, 172, 170, 181, 105, 181, 170,
+    188, 189, 140, 170, 183, 173, 194, 149, 184, 184, 189, 156, 172, 170, 183, 138, 189, 105, 134, 105, 121, 83, 181, 184,
+    172, 170, 181, 105, 181, 184, 184, 189, 157, 184, 190, 172, 177, 160, 170, 187, 183, 174, 173, 105, 134, 105, 175, 170,
+    181, 188, 174, 83, 181, 184, 172, 170, 181, 105, 172, 190, 171, 174, 149, 184, 184, 189, 157, 170, 187, 176, 174, 189,
+    188, 105, 134, 105, 196, 198, 83, 181, 184, 172, 170, 181, 105, 172, 170, 183, 173, 194, 149, 184, 184, 189, 157, 170,
+    187, 176, 174, 189, 188, 105, 134, 105, 196, 198, 83, 181, 184, 172, 170, 181, 105, 172, 190, 171, 174, 149, 184, 184,
+    189, 149, 170, 188, 189, 157, 184, 190, 172, 177, 105, 134, 105, 188, 174, 189, 182, 174, 189, 170, 189, 170, 171, 181,
+    174, 113, 196, 198, 117, 105, 196, 168, 168, 182, 184, 173, 174, 105, 134, 105, 107, 180, 107, 198, 114, 83, 181, 184,
+    172, 170, 181, 105, 172, 170, 183, 173, 194, 149, 184, 184, 189, 149, 170, 188, 189, 157, 184, 190, 172, 177, 105, 134,
+    105, 188, 174, 189, 182, 174, 189, 170, 189, 170, 171, 181, 174, 113, 196, 198, 117, 105, 196, 168, 168, 182, 184, 173,
+    174, 105, 134, 105, 107, 180, 107, 198, 114, 83, 181, 184, 172, 170, 181, 105, 185, 174, 183, 173, 178, 183, 176, 140,
+    170, 183, 173, 194, 153, 178, 172, 180, 190, 185, 105, 134, 105, 188, 174, 189, 182, 174, 189, 170, 189, 170, 171, 181,
+    174, 113, 196, 198, 117, 105, 196, 168, 168, 182, 184, 173, 174, 105, 134, 105, 107, 180, 107, 198, 114, 83, 181, 184,
+    172, 170, 181, 105, 181, 184, 184, 189, 138, 173, 173, 174, 173, 140, 184, 183, 183, 174, 172, 189, 178, 184, 183, 83,
+    181, 184, 172, 170, 181, 105, 181, 184, 184, 189, 155, 174, 182, 184, 191, 178, 183, 176, 140, 184, 183, 183, 174, 172,
+    189, 178, 184, 183, 83, 181, 184, 172, 170, 181, 105, 172, 170, 183, 173, 194, 142, 170, 187, 183, 174, 173, 157, 184,
+    189, 170, 181, 105, 134, 105, 121, 83, 181, 184, 172, 170, 181, 105, 175, 170, 187, 182, 140, 194, 172, 181, 174, 157,
+    184, 189, 170, 181, 105, 134, 105, 121, 83, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183,
+    105, 178, 188, 140, 190, 171, 174, 149, 184, 184, 189, 113, 184, 171, 179, 114, 83, 105, 105, 105, 105, 187, 174, 189,
+    190, 187, 183, 105, 184, 171, 179, 105, 170, 183, 173, 105, 184, 171, 179, 131, 146, 188, 138, 113, 107, 139, 170, 188,
+    174, 153, 170, 187, 189, 107, 114, 105, 170, 183, 173, 105, 184, 171, 179, 119, 151, 170, 182, 174, 105, 134, 134, 105,
+    107, 140, 190, 171, 174, 107, 83, 174, 183, 173, 83, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178,
+    184, 183, 105, 178, 188, 140, 170, 183, 173, 194, 149, 184, 184, 189, 113, 184, 171, 179, 114, 83, 105, 105, 105, 105,
+    187, 174, 189, 190, 187, 183, 105, 184, 171, 179, 105, 170, 183, 173, 105, 184, 171, 179, 131, 146, 188, 138, 113, 107,
+    139, 170, 188, 174, 153, 170, 187, 189, 107, 114, 105, 170, 183, 173, 105, 184, 171, 179, 119, 151, 170, 182, 174, 105,
+    134, 134, 105, 107, 140, 170, 183, 173, 194, 107, 83, 174, 183, 173, 83, 83, 181, 184, 172, 170, 181, 105, 175, 190,
+    183, 172, 189, 178, 184, 183, 105, 187, 174, 176, 178, 188, 189, 174, 187, 149, 184, 184, 189, 113, 184, 171, 179, 114,
+    83, 105, 105, 105, 105, 178, 175, 105, 178, 188, 140, 190, 171, 174, 149, 184, 184, 189, 113, 184, 171, 179, 114, 105,
+    189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 172, 190, 171, 174, 149, 184, 184, 189, 157, 170, 187,
+    176, 174, 189, 188, 164, 184, 171, 179, 166, 105, 134, 105, 189, 187, 190, 174, 83, 105, 105, 105, 105, 174, 181, 188,
+    174, 178, 175, 105, 178, 188, 140, 170, 183, 173, 194, 149, 184, 184, 189, 113, 184, 171, 179, 114, 105, 189, 177, 174,
+    183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 172, 170, 183, 173, 194, 149, 184, 184, 189, 157, 170, 187, 176, 174,
+    189, 188, 164, 184, 171, 179, 166, 105, 134, 105, 189, 187, 190, 174, 83, 105, 105, 105, 105, 174, 183, 173, 83, 174,
+    183, 173, 83, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183, 105, 190, 183, 187, 174, 176,
+    178, 188, 189, 174, 187, 149, 184, 184, 189, 113, 184, 171, 179, 114, 83, 105, 105, 105, 105, 178, 175, 105, 172, 190,
+    171, 174, 149, 184, 184, 189, 157, 170, 187, 176, 174, 189, 188, 164, 184, 171, 179, 166, 105, 189, 177, 174, 183, 83,
+    105, 105, 105, 105, 105, 105, 105, 105, 172, 190, 171, 174, 149, 184, 184, 189, 157, 170, 187, 176, 174, 189, 188, 164,
+    184, 171, 179, 166, 105, 134, 105, 183, 178, 181, 83, 105, 105, 105, 105, 105, 105, 105, 105, 172, 190, 171, 174, 149,
+    184, 184, 189, 149, 170, 188, 189, 157, 184, 190, 172, 177, 164, 184, 171, 179, 166, 105, 134, 105, 183, 178, 181, 83,
+    105, 105, 105, 105, 174, 183, 173, 83, 83, 105, 105, 105, 105, 178, 175, 105, 172, 170, 183, 173, 194, 149, 184, 184,
+    189, 157, 170, 187, 176, 174, 189, 188, 164, 184, 171, 179, 166, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105,
+    105, 105, 105, 172, 170, 183, 173, 194, 149, 184, 184, 189, 157, 170, 187, 176, 174, 189, 188, 164, 184, 171, 179, 166,
+    105, 134, 105, 183, 178, 181, 83, 105, 105, 105, 105, 105, 105, 105, 105, 172, 170, 183, 173, 194, 149, 184, 184, 189,
+    149, 170, 188, 189, 157, 184, 190, 172, 177, 164, 184, 171, 179, 166, 105, 134, 105, 183, 178, 181, 83, 105, 105, 105,
+    105, 105, 105, 105, 105, 178, 175, 105, 185, 174, 183, 173, 178, 183, 176, 140, 170, 183, 173, 194, 153, 178, 172, 180,
+    190, 185, 164, 184, 171, 179, 166, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 185, 174, 183, 173, 178, 183, 176, 140, 170, 183, 173, 194, 153, 178, 172, 180, 190, 185, 164, 184, 171, 179, 166,
+    105, 134, 105, 183, 178, 181, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 172, 170, 183, 173, 194,
+    142, 170, 187, 183, 174, 173, 157, 184, 189, 170, 181, 105, 134, 105, 172, 170, 183, 173, 194, 142, 170, 187, 183, 174,
+    173, 157, 184, 189, 170, 181, 105, 116, 105, 122, 83, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173, 83, 105,
+    105, 105, 105, 174, 183, 173, 83, 174, 183, 173, 83, 83, 175, 184, 187, 105, 168, 117, 105, 184, 171, 179, 105, 178,
+    183, 105, 178, 185, 170, 178, 187, 188, 113, 160, 184, 187, 180, 188, 185, 170, 172, 174, 131, 144, 174, 189, 141, 174,
+    188, 172, 174, 183, 173, 170, 183, 189, 188, 113, 114, 114, 105, 173, 184, 83, 105, 105, 105, 105, 187, 174, 176, 178,
+    188, 189, 174, 187, 149, 184, 184, 189, 113, 184, 171, 179, 114, 83, 174, 183, 173, 83, 181, 184, 184, 189, 138, 173,
+    173, 174, 173, 140, 184, 183, 183, 174, 172, 189, 178, 184, 183, 105, 134, 105, 160, 184, 187, 180, 188, 185, 170, 172,
+    174, 119, 141, 174, 188, 172, 174, 183, 173, 170, 183, 189, 138, 173, 173, 174, 173, 131, 140, 184, 183, 183, 174, 172,
+    189, 113, 187, 174, 176, 178, 188, 189, 174, 187, 149, 184, 184, 189, 114, 83, 181, 184, 184, 189, 155, 174, 182, 184,
+    191, 178, 183, 176, 140, 184, 183, 183, 174, 172, 189, 178, 184, 183, 105, 134, 105, 160, 184, 187, 180, 188, 185, 170,
+    172, 174, 119, 141, 174, 188, 172, 174, 183, 173, 170, 183, 189, 155, 174, 182, 184, 191, 178, 183, 176, 131, 140, 184,
+    183, 183, 174, 172, 189, 113, 190, 183, 187, 174, 176, 178, 188, 189, 174, 187, 149, 184, 184, 189, 114, 83, 83, 181,
+    184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183, 105, 172, 170, 183, 140, 184, 181, 181, 174, 172, 189,
+    149, 184, 184, 189, 113, 178, 189, 174, 182, 117, 105, 174, 193, 185, 174, 172, 189, 174, 173, 151, 170, 182, 174, 114,
+    83, 105, 105, 105, 105, 178, 175, 105, 183, 184, 189, 105, 178, 189, 174, 182, 105, 184, 187, 105, 183, 184, 189, 105,
+    178, 189, 174, 182, 131, 146, 188, 138, 113, 107, 139, 170, 188, 174, 153, 170, 187, 189, 107, 114, 105, 184, 187, 105,
+    183, 184, 189, 105, 178, 189, 174, 182, 119, 153, 170, 187, 174, 183, 189, 83, 105, 105, 105, 105, 105, 105, 105, 105,
+    184, 187, 105, 178, 189, 174, 182, 119, 151, 170, 182, 174, 105, 199, 134, 105, 174, 193, 185, 174, 172, 189, 174, 173,
+    151, 170, 182, 174, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183,
+    105, 175, 170, 181, 188, 174, 83, 105, 105, 105, 105, 174, 183, 173, 83, 83, 105, 105, 105, 105, 181, 184, 172, 170,
+    181, 105, 184, 192, 183, 174, 187, 105, 134, 105, 178, 189, 174, 182, 131, 143, 178, 183, 173, 143, 178, 187, 188, 189,
+    140, 177, 178, 181, 173, 113, 107, 152, 192, 183, 174, 187, 107, 114, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181,
+    105, 189, 178, 182, 174, 149, 174, 175, 189, 105, 134, 105, 178, 189, 174, 182, 131, 143, 178, 183, 173, 143, 178, 187,
+    188, 189, 140, 177, 178, 181, 173, 113, 107, 157, 178, 182, 174, 149, 174, 175, 189, 107, 114, 83, 105, 105, 105, 105,
+    178, 175, 105, 184, 192, 183, 174, 187, 105, 170, 183, 173, 105, 184, 192, 183, 174, 187, 119, 159, 170, 181, 190, 174,
+    105, 199, 134, 105, 107, 107, 105, 170, 183, 173, 105, 184, 192, 183, 174, 187, 119, 159, 170, 181, 190, 174, 105, 199,
+    134, 105, 185, 181, 170, 194, 174, 187, 119, 151, 170, 182, 174, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105,
+    105, 105, 105, 181, 184, 172, 170, 181, 105, 187, 174, 182, 170, 178, 183, 178, 183, 176, 105, 134, 105, 189, 178, 182,
+    174, 149, 174, 175, 189, 105, 170, 183, 173, 105, 189, 184, 183, 190, 182, 171, 174, 187, 113, 189, 178, 182, 174, 149,
+    174, 175, 189, 119, 159, 170, 181, 190, 174, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 187, 174,
+    182, 170, 178, 183, 178, 183, 176, 105, 170, 183, 173, 105, 187, 174, 182, 170, 178, 183, 178, 183, 176, 105, 135, 105,
+    121, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 187, 174, 189, 190, 187,
+    183, 105, 175, 170, 181, 188, 174, 83, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105,
+    174, 183, 173, 83, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 105, 189, 187, 190, 174, 83, 174, 183, 173, 83,
+    83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183, 105, 181, 184, 184, 189, 140, 184, 178, 183,
+    188, 140, 170, 183, 173, 194, 156, 189, 174, 185, 113, 114, 83, 105, 105, 105, 105, 178, 175, 105, 183, 184, 189, 105,
+    181, 184, 184, 189, 140, 184, 178, 183, 188, 140, 170, 183, 173, 194, 142, 183, 170, 171, 181, 174, 173, 105, 189, 177,
+    174, 183, 105, 187, 174, 189, 190, 187, 183, 105, 174, 183, 173, 83, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181,
+    105, 183, 184, 192, 105, 134, 105, 184, 188, 119, 172, 181, 184, 172, 180, 113, 114, 83, 105, 105, 105, 105, 181, 184,
+    172, 170, 181, 105, 172, 177, 170, 187, 105, 134, 105, 185, 181, 170, 194, 174, 187, 119, 140, 177, 170, 187, 170, 172,
+    189, 174, 187, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 187, 184, 184, 189, 105, 134, 105, 172, 177, 170,
+    187, 105, 170, 183, 173, 105, 172, 177, 170, 187, 131, 143, 178, 183, 173, 143, 178, 187, 188, 189, 140, 177, 178, 181,
+    173, 113, 107, 145, 190, 182, 170, 183, 184, 178, 173, 155, 184, 184, 189, 153, 170, 187, 189, 107, 114, 83, 105, 105,
+    105, 105, 178, 175, 105, 183, 184, 189, 105, 187, 184, 184, 189, 105, 189, 177, 174, 183, 105, 187, 174, 189, 190, 187,
+    183, 105, 174, 183, 173, 83, 83, 105, 105, 105, 105, 178, 175, 105, 189, 194, 185, 174, 113, 175, 178, 187, 174, 189,
+    184, 190, 172, 177, 178, 183, 189, 174, 187, 174, 188, 189, 114, 105, 199, 134, 105, 107, 175, 190, 183, 172, 189, 178,
+    184, 183, 107, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 183, 184, 189, 105,
+    181, 184, 184, 189, 157, 184, 190, 172, 177, 160, 170, 187, 183, 174, 173, 105, 189, 177, 174, 183, 83, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 181, 184, 184, 189, 157, 184, 190, 172, 177, 160, 170, 187, 183, 174, 173,
+    105, 134, 105, 189, 187, 190, 174, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 192, 170, 187, 183,
+    113, 107, 164, 173, 142, 183, 195, 140, 187, 174, 170, 189, 184, 187, 166, 105, 149, 184, 184, 189, 105, 140, 190, 171,
+    174, 105, 111, 105, 140, 170, 183, 173, 194, 105, 187, 174, 186, 190, 178, 187, 174, 188, 105, 175, 178, 187, 174, 189,
+    184, 190, 172, 177, 178, 183, 189, 174, 187, 174, 188, 189, 105, 188, 190, 185, 185, 184, 187, 189, 105, 178, 183, 105,
+    189, 177, 174, 105, 174, 193, 174, 172, 190, 189, 184, 187, 119, 107, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105,
+    174, 183, 173, 83, 105, 105, 105, 105, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 83, 105, 105, 105, 105, 174,
+    183, 173, 83, 83, 105, 105, 105, 105, 118, 118, 105, 140, 190, 171, 174, 105, 172, 184, 181, 181, 174, 172, 189, 184,
+    187, 131, 105, 176, 181, 184, 171, 170, 181, 105, 160, 184, 187, 180, 188, 185, 170, 172, 174, 105, 187, 174, 176, 178,
+    188, 189, 187, 194, 117, 105, 182, 170, 189, 172, 177, 178, 183, 176, 105, 150, 184, 190, 183, 189, 142, 178, 176, 174,
+    187, 119, 83, 105, 105, 105, 105, 178, 175, 105, 183, 184, 192, 105, 118, 105, 181, 170, 188, 189, 140, 190, 171, 174,
+    149, 184, 184, 189, 156, 172, 170, 183, 138, 189, 105, 135, 134, 105, 149, 152, 152, 157, 168, 156, 140, 138, 151, 168,
+    141, 142, 149, 138, 162, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 181, 170, 188, 189, 140,
+    190, 171, 174, 149, 184, 184, 189, 156, 172, 170, 183, 138, 189, 105, 134, 105, 183, 184, 192, 83, 105, 105, 105, 105,
+    105, 105, 105, 105, 175, 184, 187, 105, 178, 189, 174, 182, 105, 178, 183, 105, 185, 170, 178, 187, 188, 113, 172, 190,
+    171, 174, 149, 184, 184, 189, 157, 170, 187, 176, 174, 189, 188, 114, 105, 173, 184, 83, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 178, 175, 105, 178, 189, 174, 182, 119, 153, 170, 187, 174, 183, 189, 105, 170, 183, 173,
+    105, 172, 170, 183, 140, 184, 181, 181, 174, 172, 189, 149, 184, 184, 189, 113, 178, 189, 174, 182, 117, 105, 107, 140,
+    190, 171, 174, 107, 114, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 181, 184, 172, 170, 181, 105, 185, 187, 174, 191, 178, 184, 190, 188, 105, 134, 105, 172, 190, 171, 174,
+    149, 184, 184, 189, 149, 170, 188, 189, 157, 184, 190, 172, 177, 164, 178, 189, 174, 182, 166, 105, 184, 187, 105, 121,
+    83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 183, 184, 192, 105,
+    118, 105, 185, 187, 174, 191, 178, 184, 190, 188, 105, 135, 134, 105, 149, 152, 152, 157, 168, 157, 152, 158, 140, 145,
+    168, 140, 152, 152, 149, 141, 152, 160, 151, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 172, 190, 171, 174, 149, 184, 184, 189, 149, 170, 188, 189, 157,
+    184, 190, 172, 177, 164, 178, 189, 174, 182, 166, 105, 134, 105, 183, 184, 192, 83, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 185, 172, 170, 181, 181, 113, 175, 190, 183, 172, 189,
+    178, 184, 183, 113, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 175, 178, 187, 174, 189, 184, 190, 172, 177, 178, 183, 189, 174, 187, 174, 188, 189, 113,
+    187, 184, 184, 189, 117, 105, 178, 189, 174, 182, 117, 105, 121, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 175, 178, 187, 174, 189, 184, 190, 172, 177,
+    178, 183, 189, 174, 187, 174, 188, 189, 113, 187, 184, 184, 189, 117, 105, 178, 189, 174, 182, 117, 105, 122, 114, 83,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173, 114,
+    83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 174, 181, 188, 174, 178, 175, 105, 183, 184, 189, 105, 178, 189, 174, 182,
+    119, 153, 170, 187, 174, 183, 189, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 190, 183, 187, 174, 176, 178, 188, 189, 174, 187, 149, 184, 184, 189, 113, 178, 189, 174, 182,
+    114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 105, 105,
+    105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 174, 183, 173, 83, 83, 105, 105, 105, 105, 118, 118, 105, 140, 170,
+    183, 173, 194, 105, 172, 184, 181, 181, 174, 172, 189, 184, 187, 105, 187, 174, 182, 170, 178, 183, 188, 105, 178, 183,
+    173, 174, 185, 174, 183, 173, 174, 183, 189, 105, 188, 184, 105, 178, 189, 188, 105, 172, 184, 190, 183, 189, 174, 187,
+    105, 178, 188, 105, 183, 184, 189, 105, 182, 178, 193, 174, 173, 105, 192, 178, 189, 177, 105, 140, 190, 171, 174, 119,
+    83, 105, 105, 105, 105, 178, 175, 105, 183, 184, 192, 105, 118, 105, 181, 170, 188, 189, 140, 170, 183, 173, 194, 149,
+    184, 184, 189, 156, 172, 170, 183, 138, 189, 105, 135, 134, 105, 149, 152, 152, 157, 168, 156, 140, 138, 151, 168, 141,
+    142, 149, 138, 162, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 181, 170, 188, 189, 140, 170,
+    183, 173, 194, 149, 184, 184, 189, 156, 172, 170, 183, 138, 189, 105, 134, 105, 183, 184, 192, 83, 105, 105, 105, 105,
+    105, 105, 105, 105, 175, 184, 187, 105, 178, 189, 174, 182, 105, 178, 183, 105, 185, 170, 178, 187, 188, 113, 172, 170,
+    183, 173, 194, 149, 184, 184, 189, 157, 170, 187, 176, 174, 189, 188, 114, 105, 173, 184, 83, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 178, 189, 174, 182, 119, 153, 170, 187, 174, 183, 189, 105, 170, 183,
+    173, 105, 172, 170, 183, 140, 184, 181, 181, 174, 172, 189, 149, 184, 184, 189, 113, 178, 189, 174, 182, 117, 105, 107,
+    140, 170, 183, 173, 194, 107, 114, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 185, 187, 174, 191, 178, 184, 190, 188, 105, 134, 105, 172, 170,
+    183, 173, 194, 149, 184, 184, 189, 149, 170, 188, 189, 157, 184, 190, 172, 177, 164, 178, 189, 174, 182, 166, 105, 184,
+    187, 105, 121, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 183,
+    184, 192, 105, 118, 105, 185, 187, 174, 191, 178, 184, 190, 188, 105, 135, 134, 105, 149, 152, 152, 157, 168, 157, 152,
+    158, 140, 145, 168, 140, 152, 152, 149, 141, 152, 160, 151, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 172, 170, 183, 173, 194, 149, 184, 184, 189, 149,
+    170, 188, 189, 157, 184, 190, 172, 177, 164, 178, 189, 174, 182, 166, 105, 134, 105, 183, 184, 192, 83, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 189,
+    184, 190, 172, 177, 174, 173, 105, 134, 105, 185, 172, 170, 181, 181, 113, 175, 190, 183, 172, 189, 178, 184, 183, 113,
+    114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 175, 178, 187, 174, 189, 184, 190, 172, 177, 178, 183, 189, 174, 187, 174, 188, 189, 113, 187, 184, 184, 189,
+    117, 105, 178, 189, 174, 182, 117, 105, 121, 114, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 175, 178, 187, 174, 189, 184, 190, 172, 177, 178, 183, 189, 174,
+    187, 174, 188, 189, 113, 187, 184, 184, 189, 117, 105, 178, 189, 174, 182, 117, 105, 122, 114, 83, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173, 114, 83, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 178, 175, 105, 189, 184, 190, 172,
+    177, 174, 173, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 185, 174, 183, 173, 178, 183, 176, 140, 170, 183, 173, 194, 153, 178, 172,
+    180, 190, 185, 164, 178, 189, 174, 182, 166, 105, 134, 105, 189, 187, 190, 174, 83, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105,
+    105, 174, 181, 188, 174, 178, 175, 105, 183, 184, 189, 105, 178, 189, 174, 182, 119, 153, 170, 187, 174, 183, 189, 105,
+    189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 190, 183, 187,
+    174, 176, 178, 188, 189, 174, 187, 149, 184, 184, 189, 113, 178, 189, 174, 182, 114, 83, 105, 105, 105, 105, 105, 105,
+    105, 105, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105,
+    105, 105, 174, 183, 173, 83, 174, 183, 173, 83, 181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183,
+    105, 175, 178, 183, 173, 151, 174, 170, 187, 171, 194, 143, 184, 184, 173, 113, 187, 184, 184, 189, 114, 83, 105, 105,
+    105, 105, 181, 184, 172, 170, 181, 105, 172, 177, 190, 183, 180, 188, 105, 134, 105, 176, 174, 189, 138, 172, 189, 178,
+    191, 174, 140, 177, 190, 183, 180, 188, 155, 184, 184, 189, 113, 114, 83, 105, 105, 105, 105, 178, 175, 105, 183, 184,
+    189, 105, 172, 177, 190, 183, 180, 188, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 187, 174,
+    189, 190, 187, 183, 105, 183, 178, 181, 105, 118, 118, 105, 183, 178, 181, 105, 182, 174, 170, 183, 188, 105, 182, 170,
+    185, 120, 172, 177, 190, 183, 180, 188, 105, 170, 187, 174, 105, 183, 184, 189, 105, 187, 174, 170, 173, 194, 132, 105,
+    173, 184, 105, 183, 184, 189, 105, 188, 189, 170, 187, 189, 120, 172, 184, 190, 183, 189, 105, 189, 178, 182, 174, 187,
+    83, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 184, 180, 117, 105, 173,
+    174, 188, 172, 174, 183, 173, 170, 183, 189, 188, 105, 134, 105, 185, 172, 170, 181, 181, 113, 175, 190, 183, 172, 189,
+    178, 184, 183, 113, 114, 105, 187, 174, 189, 190, 187, 183, 105, 172, 177, 190, 183, 180, 188, 131, 144, 174, 189, 141,
+    174, 188, 172, 174, 183, 173, 170, 183, 189, 188, 113, 114, 105, 174, 183, 173, 114, 83, 105, 105, 105, 105, 178, 175,
+    105, 183, 184, 189, 105, 184, 180, 105, 189, 177, 174, 183, 105, 187, 174, 189, 190, 187, 183, 105, 183, 178, 181, 105,
+    174, 183, 173, 83, 105, 105, 105, 105, 175, 184, 187, 105, 168, 117, 105, 184, 171, 179, 105, 178, 183, 105, 178, 185,
+    170, 178, 187, 188, 113, 173, 174, 188, 172, 174, 183, 173, 170, 183, 189, 188, 114, 105, 173, 184, 83, 105, 105, 105,
+    105, 105, 105, 105, 105, 178, 175, 105, 184, 171, 179, 131, 146, 188, 138, 113, 107, 139, 170, 188, 174, 153, 170, 187,
+    189, 107, 114, 105, 170, 183, 173, 105, 184, 171, 179, 119, 153, 170, 187, 174, 183, 189, 105, 170, 183, 173, 105, 184,
+    171, 179, 131, 146, 188, 141, 174, 188, 172, 174, 183, 173, 170, 183, 189, 152, 175, 113, 172, 177, 190, 183, 180, 188,
+    114, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 105, 187, 174, 189, 190, 187,
+    183, 105, 189, 187, 190, 174, 83, 105, 105, 105, 105, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 174,
+    183, 173, 83, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 105, 175, 170, 181, 188, 174, 83, 174, 183, 173, 83,
+    181, 184, 172, 170, 181, 105, 175, 190, 183, 172, 189, 178, 184, 183, 105, 182, 184, 183, 178, 189, 184, 187, 149, 170,
+    183, 173, 178, 183, 176, 142, 170, 189, 153, 187, 184, 176, 187, 174, 188, 188, 113, 177, 190, 182, 117, 105, 187, 184,
+    184, 189, 114, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 172, 177, 190, 183, 180, 188, 105, 134, 105, 176,
+    174, 189, 138, 172, 189, 178, 191, 174, 140, 177, 190, 183, 180, 188, 155, 184, 184, 189, 113, 114, 83, 105, 105, 105,
+    105, 178, 175, 105, 183, 184, 189, 105, 172, 177, 190, 183, 180, 188, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105,
+    105, 105, 105, 105, 183, 184, 143, 184, 184, 173, 156, 178, 183, 172, 174, 105, 134, 105, 183, 178, 181, 83, 105, 105,
+    105, 105, 105, 105, 105, 105, 183, 184, 143, 184, 184, 173, 140, 177, 190, 183, 180, 188, 155, 184, 184, 189, 105, 134,
+    105, 183, 178, 181, 83, 105, 105, 105, 105, 105, 105, 105, 105, 172, 177, 190, 183, 180, 188, 155, 174, 170, 173, 194,
+    156, 178, 183, 172, 174, 105, 134, 105, 183, 178, 181, 83, 105, 105, 105, 105, 105, 105, 105, 105, 181, 170, 183, 173,
+    178, 183, 176, 140, 184, 183, 175, 178, 187, 182, 174, 173, 138, 189, 105, 134, 105, 183, 178, 181, 83, 105, 105, 105,
+    105, 105, 105, 105, 105, 187, 174, 189, 190, 187, 183, 105, 175, 170, 181, 188, 174, 83, 105, 105, 105, 105, 174, 183,
+    173, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 182, 170, 185, 151, 170, 182, 174, 117, 105, 180, 174, 194,
+    105, 134, 105, 176, 174, 189, 150, 170, 185, 151, 170, 182, 174, 113, 114, 83, 105, 105, 105, 105, 181, 184, 172, 170,
+    181, 105, 178, 173, 174, 183, 189, 178, 189, 194, 105, 134, 105, 180, 174, 194, 105, 199, 134, 105, 107, 107, 105, 170,
+    183, 173, 105, 113, 107, 182, 170, 185, 131, 107, 105, 119, 119, 105, 180, 174, 194, 114, 105, 184, 187, 105, 172, 177,
+    190, 183, 180, 188, 83, 105, 105, 105, 105, 181, 184, 172, 170, 181, 105, 172, 177, 170, 183, 176, 174, 173, 105, 134,
+    105, 175, 170, 181, 188, 174, 83, 105, 105, 105, 105, 178, 175, 105, 189, 194, 185, 174, 184, 175, 113, 178, 173, 174,
+    183, 189, 178, 189, 194, 114, 105, 134, 134, 105, 107, 146, 183, 188, 189, 170, 183, 172, 174, 107, 105, 189, 177, 174,
+    183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 172, 177, 170, 183, 176, 174, 173, 105, 134, 105, 183, 184, 143, 184,
+    184, 173, 140, 177, 190, 183, 180, 188, 155, 184, 184, 189, 105, 199, 134, 105, 178, 173, 174, 183, 189, 178, 189, 194,
+    83, 105, 105, 105, 105, 174, 181, 188, 174, 83, 105, 105, 105, 105, 105, 105, 105, 105, 172, 177, 170, 183, 176, 174,
+    173, 105, 134, 105, 183, 184, 143, 184, 184, 173, 150, 170, 185, 148, 174, 194, 105, 199, 134, 105, 178, 173, 174, 183,
+    189, 178, 189, 194, 83, 105, 105, 105, 105, 174, 183, 173, 83, 105, 105, 105, 105, 178, 175, 105, 172, 177, 170, 183,
+    176, 174, 173, 105, 189, 177, 174, 183, 83, 105, 105, 105, 105, 105, 105, 105, 105, 183, 184, 143, 184, 184, 173, 150,
+    170, 185, 148, 174, 194, 105, 134, 105, 189, 194, 185, 174, 184, 175, 113, 178, 173, 174, 183, 189, 178, 189, 194, 114,
+    105, 134, 134, 105, 107, 188, 189, 187, 178, 183, 176, 107, 105, 170, 183, 173, 105, 178, 173, 174, 183, 189, 178, 189,
+    194, 105, 184, 187, 105, 107, 107, 83, 105, 105, 105, 105, 105, 105, 105, 105, 183, 184, 143, 184, 184, 173, 140, 177,
+    190, 183, 180, 188, 155, 184, 184, 189, 105, 134, 105, 189, 194, 185, 174, 184, 175, 113, 178, 173, 174, 183, 189, 178,
+    189, 194, 114, 105, 134, 134, 105, 107, 146, 183, 188, 189, 170, 183, 172, 174, 107, 105, 170, 183, 173, 105, 178, 173,
+    174, 183, 189, 178, 189, 194, 105, 184, 18
