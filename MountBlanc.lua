@@ -195,7 +195,7 @@ function UI:NewWindow(title)
     titleCorner.Parent = self.TitleBar
     self.TitleText = Instance.new("TextLabel")
     self.TitleText.Name = "TitleText"
-    self.TitleText.Size = UDim2.new(1, -40, 1, 0)
+    self.TitleText.Size = UDim2.new(1, -76, 1, 0)
     self.TitleText.Position = UDim2.new(0, 10, 0, 0)
     self.TitleText.BackgroundTransparency = 1
     self.TitleText.Text = title
@@ -206,14 +206,26 @@ function UI:NewWindow(title)
     self.TitleText.Parent = self.TitleBar
     self.CollapseBtn = Instance.new("TextButton")
     self.CollapseBtn.Name = "CollapseBtn"
-    self.CollapseBtn.Size = UDim2.new(0, 40, 1, 0)
-    self.CollapseBtn.Position = UDim2.new(1, -40, 0, 0)
+    self.CollapseBtn.Size = UDim2.new(0, 34, 1, 0)
+    self.CollapseBtn.Position = UDim2.new(1, -68, 0, 0)
     self.CollapseBtn.BackgroundTransparency = 1
     self.CollapseBtn.Text = "-"
     self.CollapseBtn.Font = Enum.Font.GothamBold
     self.CollapseBtn.TextSize = 18
     self.CollapseBtn.TextColor3 = UI.Theme.Text
     self.CollapseBtn.Parent = self.TitleBar
+
+    self.CloseBtn = Instance.new("TextButton")
+    self.CloseBtn.Name = "CloseBtn"
+    self.CloseBtn.Size = UDim2.new(0, 34, 1, 0)
+    self.CloseBtn.Position = UDim2.new(1, -34, 0, 0)
+    self.CloseBtn.BackgroundTransparency = 1
+    self.CloseBtn.Text = "×"
+    self.CloseBtn.Font = Enum.Font.GothamBold
+    self.CloseBtn.TextSize = 18
+    self.CloseBtn.TextColor3 = UI.Theme.Text
+    self.CloseBtn.Parent = self.TitleBar
+
     self.ContentContainer = Instance.new("Frame")
     self.ContentContainer.Name = "ContentContainer"
     self.ContentContainer.Size = UDim2.new(1, 0, 1, -40)
@@ -230,6 +242,11 @@ function UI:NewWindow(title)
     self.IsCollapsed = false
     self:TrackConnection(self.CollapseBtn.MouseButton1Click:Connect(function()
         if not self._destroyed then self:ToggleCollapse() end
+    end))
+    self:TrackConnection(self.CloseBtn.MouseButton1Click:Connect(function()
+        if not self._destroyed and self.MainGui then
+            self.MainGui:Destroy()
+        end
     end))
     self.Sections = {}
     self.CurrentY = 0
