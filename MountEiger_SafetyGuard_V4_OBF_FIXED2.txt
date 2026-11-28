@@ -1,6 +1,6 @@
--- MountEiger dEnzCreator Safety Guard V5 — UPDATED
+-- MountEiger dEnzCreator Safety Guard V5.1 — STARTUP FIX
 -- Base: decoded MountEiger_SafetyGuard_V4_OBF_FIXED2.
--- V5 update: one-time execution lock; duplicate executions are rejected.
+-- V5.1 update: bounded dependency waits and release lock on startup dependency failure.
 -- Header: dEnzCreator with collapse (-) and close (×) controls.
 -- Emergency Stop integration is intentionally omitted per user request.
 -- Original V2 and V4 source files remain untouched.
@@ -60,10 +60,11 @@ end
 
 
 -- ================================================================
--- dEnzCreator | ONE-TIME EXECUTION LOCK
--- First successful execution is allowed. Further executions in the
--- same executor environment are rejected, even after the UI is closed.
--- The lock is intentionally not cleared by closing the panel.
+-- dEnzCreator | ONE-TIME EXECUTION LOCK + BOUNDED STARTUP
+-- The lock is claimed before yielding so parallel duplicate launches
+-- cannot both initialize. It is retained after successful startup/UI close.
+-- If required game objects are absent during startup, the lock is released
+-- so a later retry is possible instead of permanently blocking execution.
 -- ================================================================
 local executionEnvironment = _G
 if type(getgenv) == "function" then
@@ -87,9 +88,45 @@ if executionEnvironment[EXECUTION_LOCK_KEY] == true then
 end
 executionEnvironment[EXECUTION_LOCK_KEY] = true
 
-local Events = ReplicatedStorage:WaitForChild("Events")
+local function releaseStartupLock()
+    if executionEnvironment[EXECUTION_LOCK_KEY] == true then
+        executionEnvironment[EXECUTION_LOCK_KEY] = nil
+    end
+end
+
+local Events = ReplicatedStorage:WaitForChild("Events", 12)
+if not Events then
+    releaseStartupLock()
+    warn("[dEnzCreator] Startup stopped: ReplicatedStorage.Events was not found within 12 seconds.")
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "dEnzCreator - Startup",
+            Text = "Events tidak ditemukan. Coba masuk ulang ke ETW lalu jalankan lagi.",
+            Duration = 7
+        })
+    end)
+    return
+end
+
 local LocalPlayer = Players.LocalPlayer
-local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+if not LocalPlayer then
+    releaseStartupLock()
+    warn("[dEnzCreator] Startup stopped: LocalPlayer is unavailable.")
+    return
+end
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui", 12)
+if not PlayerGui then
+    releaseStartupLock()
+    warn("[dEnzCreator] Startup stopped: PlayerGui was not found within 12 seconds.")
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "dEnzCreator - Startup",
+            Text = "PlayerGui belum siap. Coba jalankan lagi setelah karakter masuk.",
+            Duration = 7
+        })
+    end)
+    return
+end
 configPath = LocalPlayer.Name .. "_chi_chi_world_config.json"
 -- ===================== Configuration Manager =====================
 local config = {
@@ -2645,41 +2682,4 @@ local function CreateTeleportGrabUI()
         local ok, err = pcall(function()
             grabEvent:Fire()
         end)
-        if not ok then return false, tostring(err) end
-        return true
-    end
-
-    local function beginTarget(target)
-        selectedTarget = target
-        targetInfo.Text = "Target: @" .. target.Name
-        setStatus("Target dipilih | follow aktif", Color3.fromRGB(100, 220, 150))
-    end
-
-    local function startHunt()
-        local target = selectedTarget
-        if not target then
-            setStatus("Pilih target dahulu", Color3.fromRGB(255, 180, 90))
-            return
-        end
-
-        local _, _, myRoot = getAliveCharacter(LocalPlayer)
-        local _, _, targetRoot = getAliveCharacter(target)
-        if not myRoot or not targetRoot then
-            setStatus("Character / target belum siap", Color3.fromRGB(255, 180, 90))
-            return
-        end
-
-        running = true
-        runToken += 1
-        local token = runToken
-        originPivot = LocalPlayer.Character:GetPivot()
-        huntStartedAt = os.clock()
-        cycleState = "FOLLOW"
-        grabSentAt = 0
-        targetYBeforeGrab = nil
-        successPauseUntil = 0
-        updateTargetRowColors()
-        setStatus("ON | memburu @" .. target.Name, Color3.fromRGB(100, 220, 150))
-
-        followConnection = RunService.Heartbeat:Connect(function()
-            if not running or token ~= run
+  
