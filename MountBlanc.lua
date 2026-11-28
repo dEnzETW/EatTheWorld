@@ -728,7 +728,14 @@ LocalPlayer.CharacterRemoving:Connect(function(oldCharacter)
         characterGeneration += 1
     end
 end)
+-- Suppress feature ON/OFF popups while replacing an old instance.
+-- These are cleanup operations, not user-initiated feature changes.
+local suppressFeatureNotifications = false
+
 local function Message(Title, Text, Time)
+    if suppressFeatureNotifications then
+        return
+    end
     if mainUI then
         mainUI:Message(Title, Text, Time)
     else
@@ -2210,26 +2217,48 @@ local function toggleSlippageElimination(enabled)
     end
 end
 -- Gravity Lock
+-- Preserve the gravity value from immediately before activation and restore it
+-- when switched OFF. Do not assume Roblox's default is always 196.2.
+local gravityBeforeLock = nil
+
 local function toggleGravityLock(enabled)
     if enabled then
-        if gravityLockConnection then
-            task.cancel(gravityLockConnection)
-            gravityLockConnection = nil
+        if gravityLockEnabled then
+            return
         end
+
+        local readOK, currentGravity = pcall(function()
+            return workspace.Gravity
+        end)
+        if readOK and type(currentGravity) == "number" then
+            gravityBeforeLock = currentGravity
+        else
+            gravityBeforeLock = nil
+        end
+
         gravityLockEnabled = true
         gravityLockConnection = task.spawn(function()
             while gravityLockEnabled do
-                workspace.Gravity = 99999999 -- Default gravity
+                pcall(function()
+                    workspace.Gravity = 99999999
+                end)
                 task.wait(0.1)
             end
         end)
         Message("Gravity Lock", "Gravity Lock enabled", 2)
     else
-        -- CloseGravity Lock
         gravityLockEnabled = false
         if gravityLockConnection then
-            task.cancel(gravityLockConnection)
+            pcall(task.cancel, gravityLockConnection)
             gravityLockConnection = nil
+        end
+
+        if gravityBeforeLock ~= nil then
+            local restoreValue = gravityBeforeLock
+            gravityBeforeLock = nil
+            pcall(function()
+                workspace.Gravity = restoreValue
+            end)
         end
         Message("Gravity Lock", "Gravity Lock disabled", 2)
     end
@@ -4931,6 +4960,7 @@ getgenv().FPDH = workspace.FallenPartsDestroyHeight
 -- ================================================================
 local function dEnzCreatorShutdownPreviousInstance()
     local cleanupSucceeded = true
+    suppressFeatureNotifications = true
     local function attempt(label, callback)
         local ok, err = pcall(callback)
         if not ok then
@@ -5053,6 +5083,9 @@ local function dEnzCreatorShutdownPreviousInstance()
     end
 
     if not cleanupSucceeded then
+        -- If replacement is aborted, keep the old instance usable and restore
+        -- its normal feature notifications.
+        suppressFeatureNotifications = false
         return false
     end
     return true
