@@ -1,5 +1,3 @@
-
--- MountEiger Safety Guard V4.1 | dEnzCreator header + one-time execution lock
 -- MountEiger Safety Guard V4 changelog:
 -- 1) Reworked AutoFarm lifecycle cleanup into an idempotent cleanup path.
 -- 2) Tracks/disconnects Heartbeat, Humanoid.Died, CharacterAdded and CharacterRemoving connections.
@@ -26,22 +24,6 @@ local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
-
--- ===================== One-Time Execution Lock =====================
--- Blocks later executions in the same executor environment.
--- The lock intentionally remains set when the UI is closed.
-local executionEnvironment = _G
-pcall(function()
-    if type(getgenv) == "function" then
-        executionEnvironment = getgenv()
-    end
-end)
-local EXECUTION_LOCK_KEY = "__DENZCREATOR_MOUNTEIGER_V4_ONCE"
-if executionEnvironment[EXECUTION_LOCK_KEY] then
-    warn("[dEnzCreator] Already executed in this executor session; duplicate execution blocked.")
-    return
-end
-executionEnvironment[EXECUTION_LOCK_KEY] = true
 -- ===================== Whitelist System =====================
 --==================================================
 -- dEnzCreator | REMOTE WHITELIST GATE
@@ -213,7 +195,7 @@ function UI:NewWindow(title)
     titleCorner.Parent = self.TitleBar
     self.TitleText = Instance.new("TextLabel")
     self.TitleText.Name = "TitleText"
-    self.TitleText.Size = UDim2.new(1, -76, 1, 0)
+    self.TitleText.Size = UDim2.new(1, -40, 1, 0)
     self.TitleText.Position = UDim2.new(0, 10, 0, 0)
     self.TitleText.BackgroundTransparency = 1
     self.TitleText.Text = title
@@ -224,26 +206,14 @@ function UI:NewWindow(title)
     self.TitleText.Parent = self.TitleBar
     self.CollapseBtn = Instance.new("TextButton")
     self.CollapseBtn.Name = "CollapseBtn"
-    self.CollapseBtn.Size = UDim2.new(0, 36, 1, 0)
-    self.CollapseBtn.Position = UDim2.new(1, -72, 0, 0)
+    self.CollapseBtn.Size = UDim2.new(0, 40, 1, 0)
+    self.CollapseBtn.Position = UDim2.new(1, -40, 0, 0)
     self.CollapseBtn.BackgroundTransparency = 1
     self.CollapseBtn.Text = "-"
     self.CollapseBtn.Font = Enum.Font.GothamBold
     self.CollapseBtn.TextSize = 18
     self.CollapseBtn.TextColor3 = UI.Theme.Text
     self.CollapseBtn.Parent = self.TitleBar
-
-    self.CloseBtn = Instance.new("TextButton")
-    self.CloseBtn.Name = "CloseBtn"
-    self.CloseBtn.Size = UDim2.new(0, 36, 1, 0)
-    self.CloseBtn.Position = UDim2.new(1, -36, 0, 0)
-    self.CloseBtn.BackgroundTransparency = 1
-    self.CloseBtn.Text = "×"
-    self.CloseBtn.Font = Enum.Font.GothamBold
-    self.CloseBtn.TextSize = 18
-    self.CloseBtn.TextColor3 = UI.Theme.Text
-    self.CloseBtn.Parent = self.TitleBar
-
     self.ContentContainer = Instance.new("Frame")
     self.ContentContainer.Name = "ContentContainer"
     self.ContentContainer.Size = UDim2.new(1, 0, 1, -40)
@@ -260,14 +230,6 @@ function UI:NewWindow(title)
     self.IsCollapsed = false
     self:TrackConnection(self.CollapseBtn.MouseButton1Click:Connect(function()
         if not self._destroyed then self:ToggleCollapse() end
-    end))
-    self:TrackConnection(self.CloseBtn.MouseButton1Click:Connect(function()
-        if self._destroyed then return end
-        -- Close UI only; the one-time execution lock remains active.
-        self:CleanupConnections()
-        pcall(function()
-            if self.MainGui then self.MainGui:Destroy() end
-        end)
     end))
     self.Sections = {}
     self.CurrentY = 0
@@ -2684,4 +2646,2193 @@ local function CreateTeleportGrabUI()
             end
 
             local now = os.clock()
-            if 
+            if SAFETY_TIMEOUT > 0 and now - huntStartedAt >= SAFETY_TIMEOUT then
+                stopRun("Safety timeout | OFF")
+                return
+            end
+
+            -- Setelah target terangkat, hentikan follow dan Grab sejenak,
+            -- lalu mulai siklus berburu target yang sama selama ON.
+            if cycleState == "SUCCESS_PAUSE" then
+                if now < successPauseUntil then
+                    return
+                end
+                cycleState = "FOLLOW"
+                grabSentAt = 0
+                targetYBeforeGrab = nil
+                setStatus("ON | berburu ulang @" .. target.Name,
+                    Color3.fromRGB(100, 220, 150))
+            end
+
+            -- Konfirmasi praktis: target naik setidaknya 1.25 stud
+            -- dalam 1.4 detik setelah request Grab. Ini indikator visual,
+            -- bukan konfirmasi server resmi.
+            if cycleState == "WAIT_RESULT" then
+                local rise = currentTargetRoot.Position.Y - targetYBeforeGrab
+                if rise >= GRAB_SUCCESS_RISE then
+                    cycleState = "SUCCESS_PAUSE"
+                    successPauseUntil = now + SUCCESS_PAUSE
+                    setStatus("GRAB terdeteksi | lanjut berburu",
+                        Color3.fromRGB(100, 220, 150))
+                    return
+                elseif now - grabSentAt >= GRAB_SUCCESS_WINDOW then
+                    cycleState = "FOLLOW"
+                    targetYBeforeGrab = nil
+                    setStatus("Belum terdeteksi | follow + retry",
+                        Color3.fromRGB(255, 180, 90))
+                end
+                -- Sengaja tidak return: karakter tetap mengikuti target
+                -- selama menunggu hasil Grab.
+            end
+
+            if cycleState == "FOLLOW" or cycleState == "WAIT_RESULT" then
+                -- Jarak adaptif: setengah kedalaman kedua HumanoidRootPart
+                -- ditambah clearance 1 stud antar badan.
+                local adaptiveDistance =
+                    (currentMyRoot.Size.Z * 0.5)
+                    + (currentTargetRoot.Size.Z * 0.5)
+                    + FOLLOW_CLEARANCE
+
+                -- Prediksi pendek agar posisi follow tidak tertinggal
+                -- ketika target sedang bergerak.
+                local targetVelocity = currentTargetRoot.AssemblyLinearVelocity
+                local predictionTime = 0.10
+                local predictedTargetPosition =
+                    currentTargetRoot.Position + targetVelocity * predictionTime
+
+                local behindPosition = predictedTargetPosition
+                    - currentTargetRoot.CFrame.LookVector * adaptiveDistance
+
+                -- Tanpa Raycast: ikuti ketinggian target secara langsung.
+                -- Ini menghindari status tertahan karena ground tidak terdeteksi.
+                local targetFootY = currentTargetRoot.Position.Y
+                    - targetHumanoid.HipHeight
+                    - (currentTargetRoot.Size.Y * 0.5)
+
+                local myStandingHeight = myHumanoid.HipHeight
+                    + (currentMyRoot.Size.Y * 0.5)
+
+                local followRootY = targetFootY + myStandingHeight
+
+                local desiredRootPosition = Vector3.new(
+                    behindPosition.X,
+                    followRootY,
+                    behindPosition.Z
+                )
+                local desiredRootCFrame = CFrame.lookAt(
+                    desiredRootPosition,
+                    desiredRootPosition + currentTargetRoot.CFrame.LookVector,
+                    Vector3.yAxis
+                )
+                local pivotRelativeToRoot = currentMyRoot.CFrame:ToObjectSpace(myCharacter:GetPivot())
+                local desiredPivot = desiredRootCFrame * pivotRelativeToRoot
+
+                local moved = pcall(function()
+                    myCharacter:PivotTo(desiredPivot)
+                end)
+                if not moved then
+                    setStatus("PivotTo gagal | Follow tertahan",
+                        Color3.fromRGB(255, 180, 90))
+                    return
+                end
+
+                -- Grab segera setelah posisi follow diperbarui, lalu retry
+                -- tiap 0.12 detik. Follow tetap berjalan selama menunggu.
+                if grabSentAt == 0 or now - grabSentAt >= GRAB_RETRY_INTERVAL then
+                    grabSentAt = now
+                    targetYBeforeGrab = currentTargetRoot.Position.Y
+                    local sent, reason = sendGrabRequest()
+                    if sent then
+                        cycleState = "WAIT_RESULT"
+                        setStatus("INSTANT GRAB | follow aktif",
+                            Color3.fromRGB(100, 220, 150))
+                    else
+                        setStatus("Remote error: " .. tostring(reason),
+                            Color3.fromRGB(255, 120, 100))
+                    end
+                end
+            end
+        end)
+    end
+
+    local function toggleTarget(target)
+        if running and selectedTarget == target then
+            stopRun("OFF | @" .. target.Name)
+            return
+        end
+
+        if running then
+            stopRun("Target diganti")
+        end
+
+        beginTarget(target)
+        startHunt()
+    end
+
+    local function refreshPlayers()
+        for _, child in ipairs(playerList:GetChildren()) do
+            if child:IsA("TextButton") then child:Destroy() end
+        end
+        table.clear(targetButtons)
+        local targets = {}
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p ~= LocalPlayer then table.insert(targets, p) end
+        end
+        table.sort(targets, function(a, b)
+            return string.lower(a.Name) < string.lower(b.Name)
+        end)
+        for _, target in ipairs(targets) do
+            local button = Instance.new("TextButton")
+            button.Size = UDim2.new(1, -4, 0, 24)
+            button.BackgroundColor3 = NORMAL_ROW_COLOR
+            button.BorderSizePixel = 0
+            button.Text = target.DisplayName .. "  (@" .. target.Name .. ")"
+            button.TextColor3 = UI.Theme.Text
+            button.TextSize = 8
+            button.Font = Enum.Font.Gotham
+            button.Parent = playerList
+            targetButtons[target] = button
+            Instance.new("UICorner", button).CornerRadius = UDim.new(0, 5)
+            button.Activated:Connect(function() toggleTarget(target) end)
+        end
+    end
+
+    local playerAddedConnection = Players.PlayerAdded:Connect(function()
+        task.defer(refreshPlayers)
+    end)
+    local playerRemovingConnection = Players.PlayerRemoving:Connect(function(leaving)
+        if leaving == selectedTarget and running then
+            stopRun("Target keluar | posisi dikembalikan")
+        end
+        task.defer(refreshPlayers)
+    end)
+
+    teleportGrabCleanup = function()
+        dragging = false
+        UserInputService.MouseIconEnabled = true
+        if inputChangedConnection then
+            inputChangedConnection:Disconnect()
+            inputChangedConnection = nil
+        end
+        if playerAddedConnection then
+            playerAddedConnection:Disconnect()
+            playerAddedConnection = nil
+        end
+        if playerRemovingConnection then
+            playerRemovingConnection:Disconnect()
+            playerRemovingConnection = nil
+        end
+    end
+
+    refreshPlayers()
+    teleportGrabUI = gui
+    return gui
+end
+
+ToggleTeleportGrabUI = function()
+    if not teleportGrabUI then
+        CreateTeleportGrabUI()
+    else
+        if teleportGrabStop then
+            teleportGrabStop("OFF | TP Grab ditutup")
+        end
+        if teleportGrabCleanup then
+            teleportGrabCleanup()
+        end
+        teleportGrabStop = nil
+        teleportGrabCleanup = nil
+        teleportGrabUI:Destroy()
+        teleportGrabUI = nil
+    end
+end
+-- Teleport Slam
+local function CreateTeleportThrowUI()
+    if teleportThrowUI then
+        teleportThrowUI:Destroy()
+        teleportThrowUI = nil
+    end
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "TeleportThrowTool"
+    gui.ResetOnSpawn = false
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    gui.Enabled = true
+    gui.IgnoreGuiInset = true
+    pcall(function()
+        gui.Parent = CoreGui
+    end)
+    if gui.Parent ~= CoreGui then
+        gui.Parent = PlayerGui
+    end
+    local mainFrame = Instance.new("Frame")
+    mainFrame.Name = "mainFrame"
+    mainFrame.Parent = gui
+    mainFrame.BackgroundColor3 = Color3.fromRGB(24, 24, 28)
+    mainFrame.BorderSizePixel = 0
+    mainFrame.Position = UDim2.new(0, 20, 0, 20)
+    mainFrame.Size = UDim2.new(0, 150, 0, 250)
+    mainFrame.Active = true
+    mainFrame.Draggable = false
+    mainFrame.ClipsDescendants = true
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 7)
+    corner.Parent = mainFrame
+    local shadow = Instance.new("UIStroke")
+    shadow.Color = Color3.fromRGB(0, 0, 0)
+    shadow.Transparency = 0.5
+    shadow.Thickness = 2
+    shadow.Parent = mainFrame
+    local titleBar = Instance.new("Frame")
+    titleBar.Name = "titleBar"
+    titleBar.Parent = mainFrame
+    titleBar.BackgroundColor3 = Color3.fromRGB(36, 36, 42)
+    titleBar.BorderSizePixel = 0
+    titleBar.Size = UDim2.new(1, 0, 0, 32)
+    titleBar.Position = UDim2.new(0, 0, 0, 0)
+    titleBar.Active = true
+    titleBar.Draggable = false
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.Name = "titleLabel"
+    titleLabel.Parent = titleBar
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Size = UDim2.new(1, -30, 1, 0)
+    titleLabel.Position = UDim2.new(0, 8, 0, 0)
+    titleLabel.Font = Enum.Font.GothamBold
+    titleLabel.Text = "TP Slam"
+    titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    titleLabel.TextSize = 13
+    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    titleBar.Active = true
+    titleBar.Draggable = false
+    local closeButton = Instance.new("TextButton")
+    closeButton.Name = "closeButton"
+    closeButton.Parent = titleBar
+    closeButton.BackgroundTransparency = 1
+    closeButton.Position = UDim2.new(1, -30, 0, 0)
+    closeButton.Size = UDim2.new(0, 30, 1, 0)
+    closeButton.Font = Enum.Font.GothamBold
+    closeButton.Text = "ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â"
+    closeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    closeButton.TextSize = 16
+    closeButton.MouseButton1Click:Connect(function()
+        gui.Enabled = not gui.Enabled
+    end)
+    local playersScroll = Instance.new("ScrollingFrame")
+    playersScroll.Name = "playersScroll"
+    playersScroll.Parent = mainFrame
+    playersScroll.Active = true
+    playersScroll.BackgroundTransparency = 1
+    playersScroll.BorderSizePixel = 0
+    playersScroll.Position = UDim2.new(0, 6, 0, 37)
+    playersScroll.Size = UDim2.new(1, -12, 1, -43)
+    playersScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    playersScroll.ScrollBarThickness = 3
+    playersScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    local UIListLayout = Instance.new("UIListLayout")
+    UIListLayout.Parent = playersScroll
+    UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    UIListLayout.Padding = UDim.new(0, 4)
+    local function addbtn(parent, plr)
+        local playerbutton = Instance.new("TextButton")
+        playerbutton.Name = plr.Name
+        playerbutton.Parent = parent
+        playerbutton.BackgroundColor3 = Color3.fromRGB(44, 44, 50)
+        playerbutton.BorderSizePixel = 0
+        playerbutton.Size = UDim2.new(1, 0, 0, 29)
+        playerbutton.Font = Enum.Font.GothamMedium
+        playerbutton.Text = plr.Name
+        if plr.Name ~= plr.DisplayName then
+            playerbutton.Text = playerbutton.Text .. " (" .. plr.DisplayName .. ")"
+        end
+        playerbutton.TextColor3 = Color3.fromRGB(255, 255, 255)
+        playerbutton.TextSize = 11
+        playerbutton.TextXAlignment = Enum.TextXAlignment.Left
+        playerbutton.TextYAlignment = Enum.TextYAlignment.Center
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 5)
+        corner.Parent = playerbutton
+        playerbutton.MouseButton1Click:Connect(function()
+            local localPlayer = LocalPlayer
+            if not localPlayer or not localPlayer.Character then return end
+            local localHumanoidRootPart = localPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if not localHumanoidRootPart then return end
+            grabForwardObject()
+            task.wait(0.4)
+            if plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+                local playerRootPart = plr.Character.HumanoidRootPart
+                local currency = getCurrency()
+                local distance = getDistanceByCurrency(currency)
+                local behindPosition = playerRootPart.Position - playerRootPart.CFrame.LookVector * distance
+                behindPosition = Vector3.new(behindPosition.X, localHumanoidRootPart.Position.Y, behindPosition.Z)
+                local direction = (playerRootPart.Position - behindPosition).Unit
+                localHumanoidRootPart.CFrame = CFrame.new(behindPosition, behindPosition + Vector3.new(direction.X, 0, direction.Z))
+            end
+        end)
+        playerbutton.MouseEnter:Connect(function()
+            TweenService:Create(playerbutton, TweenInfo.new(0.1), {
+                BackgroundColor3 = Color3.fromRGB(54, 54, 60)
+            }):Play()
+        end)
+        playerbutton.MouseLeave:Connect(function()
+            TweenService:Create(playerbutton, TweenInfo.new(0.1), {
+                BackgroundColor3 = Color3.fromRGB(44, 44, 50)
+            }):Play()
+        end)
+    end
+    for i, v in pairs(Players:GetPlayers()) do
+        addbtn(playersScroll, v)
+    end
+    local con = nil
+    con = Players.PlayerAdded:Connect(function(plr)
+        if gui then
+            addbtn(playersScroll, plr)
+        else
+            con:Disconnect()
+        end
+    end)
+    local con = nil
+    con = Players.PlayerRemoving:Connect(function(plr)
+        if gui then
+            local playerbutton = playersScroll:FindFirstChild(plr.Name)
+            if playerbutton then
+                playerbutton:Destroy()
+            end
+        else
+            con:Disconnect()
+        end
+    end)
+    local dragging = false
+    local dragStart = Vector2.new()
+    local startPos = UDim2.new()
+    titleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = mainFrame.Position
+            UserInputService.MouseIconEnabled = false
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            mainFrame.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+            UserInputService.MouseIconEnabled = true
+        end
+    end)
+    titleBar.Position = UDim2.new(0, 0, 0, 0)
+    titleBar.Size = UDim2.new(1, 0, 0, 32)
+    teleportThrowUI = gui
+    return gui
+end
+local function ToggleTeleportThrowUI()
+    if not teleportThrowUI then
+        CreateTeleportThrowUI()
+    else
+        teleportThrowUI:Destroy()
+        teleportThrowUI = nil
+    end
+end
+local function ragdollCharacter()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum:ChangeState(Enum.HumanoidStateType.Physics)
+        hum.AutoRotate = false
+    end
+    for _,v in pairs(char:GetDescendants()) do
+        if v:IsA("Motor6D") then
+            local a0 = Instance.new("Attachment")
+            local a1 = Instance.new("Attachment")
+            a0.CFrame = v.C0
+            a1.CFrame = v.C1
+            a0.Parent = v.Part0
+            a1.Parent = v.Part1
+            local socket = Instance.new("BallSocketConstraint")
+            socket.Attachment0 = a0
+            socket.Attachment1 = a1
+            socket.LimitsEnabled = true
+            socket.TwistLimitsEnabled = true
+            socket.UpperAngle = 45
+            socket.TwistLowerAngle = -45
+            socket.TwistUpperAngle = 45
+            socket.Parent = v.Part0
+            table.insert(createdAttachments,a0)
+            table.insert(createdAttachments,a1)
+            table.insert(createdConstraints,socket)
+            table.insert(disabledMotors,v)
+            v.Enabled = false
+        end
+    end
+end
+local function unragdollCharacter()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+        hum.AutoRotate = true
+    end
+    for _,v in pairs(createdConstraints) do
+        if v then
+            v:Destroy()
+        end
+    end
+    for _,v in pairs(createdAttachments) do
+        if v then
+            v:Destroy()
+        end
+    end
+    for _,v in pairs(disabledMotors) do
+        if v then
+            v.Enabled = true
+        end
+    end
+    createdAttachments = {}
+    createdConstraints = {}
+    disabledMotors = {}
+end
+local function ToggleRagdoll()
+    ragdolled = not ragdolled
+    if ragdolled then
+        ragdollCharacter()
+        Message("Ragdoll", "Ragdoll enabled", 2)
+    else
+        unragdollCharacter()
+        Message("Ragdoll", "Ragdoll disabled", 2)
+    end
+end
+local mainUI
+
+-- dEnzCreator PLAYER ESP | V2.2 card integrated into MountEiger Character section
+-- Card: 160x65 | Avatar 47x47 | Name 12 | Username 11 | Stats 9
+-- No standalone control panel; the existing MountEiger ESP toggle controls this module.
+local playerESPEnabled = false
+local espObjects = {}
+
+local function readUpgradeLevel(player, upgradeName)
+    local upgrades = player:FindFirstChild("Upgrades")
+    if not upgrades then return nil end
+    local upgrade = upgrades:FindFirstChild(upgradeName)
+    if not upgrade then return nil end
+    local ok, value = pcall(function() return upgrade.Value end)
+    if ok and typeof(value) == "number" then return value end
+    return nil
+end
+
+local function formatESPNumber(value)
+    if value == nil then return "N/A" end
+    if math.abs(value - math.floor(value)) < 0.000001 then
+        local raw = tostring(math.floor(value))
+        local formatted = raw:reverse():gsub("(%d%d%d)", "%1,"):reverse()
+        return formatted:gsub("^,", "")
+    end
+    return string.format("%.1f", value):gsub("%.0$", "")
+end
+
+-- Same effective-value formulas used by the standalone V2.2 module.
+local function getEffectiveESPValue(upgradeName, level)
+    if level == nil then return nil end
+    if upgradeName == "MaxSize" then
+        return math.floor(((level + 0.5) ^ 2 - 0.25) / 2 * 100)
+    elseif upgradeName == "Multiplier" then
+        return math.floor(level)
+    elseif upgradeName == "Speed" then
+        return math.floor(level * 2 + 10)
+    elseif upgradeName == "EatSpeed" then
+        return math.floor((1 + (level - 1) * 0.2) * 10) / 10
+    end
+    return nil
+end
+
+local function espStatText(player, upgradeName)
+    local level = readUpgradeLevel(player, upgradeName)
+    if level == nil then return upgradeName .. ": N/A" end
+    local effective = getEffectiveESPValue(upgradeName, level)
+    if effective == nil then return upgradeName .. ": " .. formatESPNumber(level) end
+    return upgradeName .. ": " .. formatESPNumber(effective)
+        .. "  (Lv. " .. formatESPNumber(level) .. ")"
+end
+
+local function removePlayerStatsESP(targetPlayer)
+    local entry = espObjects[targetPlayer]
+    if entry then
+        if entry.billboard then pcall(function() entry.billboard:Destroy() end) end
+        espObjects[targetPlayer] = nil
+    end
+end
+
+local function createPlayerStatsESP(targetPlayer)
+    if targetPlayer == LocalPlayer then return end
+    local character = targetPlayer.Character
+    if not character then return end
+    local adornee = character:FindFirstChild("Head") or character:FindFirstChild("HumanoidRootPart")
+    if not adornee then return end
+
+    removePlayerStatsESP(targetPlayer)
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "dEnzCreator_PlayerESP_V22"
+    billboard.Adornee = adornee
+    billboard.AlwaysOnTop = true
+    billboard.LightInfluence = 0
+    billboard.Size = UDim2.fromOffset(160, 65)
+    billboard.StudsOffset = Vector3.new(0, 3.3, 0)
+    billboard.MaxDistance = 10000
+    billboard.Enabled = playerESPEnabled
+    billboard.Parent = character
+
+    local background = Instance.new("Frame")
+    background.Name = "Card"
+    background.Size = UDim2.fromScale(1, 1)
+    background.BackgroundColor3 = Color3.fromRGB(7, 10, 27)
+    background.BackgroundTransparency = 0.32
+    background.BorderSizePixel = 0
+    background.Parent = billboard
+    Instance.new("UICorner", background).CornerRadius = UDim.new(0, 9)
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(83, 99, 226)
+    stroke.Thickness = 1
+    stroke.Transparency = 0.12
+    stroke.Parent = background
+
+    local avatar = Instance.new("ImageLabel")
+    avatar.Name = "Avatar"
+    avatar.Size = UDim2.fromOffset(47, 47)
+    avatar.Position = UDim2.fromOffset(3, 9)
+    avatar.BackgroundColor3 = Color3.fromRGB(17, 22, 48)
+    avatar.BackgroundTransparency = 0
+    avatar.BorderSizePixel = 0
+    avatar.ScaleType = Enum.ScaleType.Crop
+    avatar.Parent = background
+    Instance.new("UICorner", avatar).CornerRadius = UDim.new(1, 0)
+    local avatarStroke = Instance.new("UIStroke")
+    avatarStroke.Color = Color3.fromRGB(83, 99, 226)
+    avatarStroke.Thickness = 1
+    avatarStroke.Parent = avatar
+
+    task.spawn(function()
+        local ok, imageUrl = pcall(function()
+            return Players:GetUserThumbnailAsync(targetPlayer.UserId,
+                Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+        end)
+        if ok and avatar.Parent then avatar.Image = imageUrl end
+    end)
+
+    local nameLabel = Instance.new("TextLabel")
+    nameLabel.Name = "PlayerName"
+    nameLabel.Size = UDim2.new(1, -56, 0, 14)
+    nameLabel.Position = UDim2.fromOffset(51, 2)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.TextColor3 = Color3.fromRGB(245, 247, 255)
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.TextSize = 12
+    nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+    nameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+    nameLabel.Parent = background
+
+    local usernameLabel = Instance.new("TextLabel")
+    usernameLabel.Name = "Username"
+    usernameLabel.Size = UDim2.new(1, -56, 0, 13)
+    usernameLabel.Position = UDim2.fromOffset(51, 15)
+    usernameLabel.BackgroundTransparency = 1
+    usernameLabel.TextColor3 = Color3.fromRGB(190, 197, 220)
+    usernameLabel.Font = Enum.Font.Gotham
+    usernameLabel.TextSize = 11
+    usernameLabel.TextXAlignment = Enum.TextXAlignment.Left
+    usernameLabel.TextTruncate = Enum.TextTruncate.AtEnd
+    usernameLabel.Parent = background
+
+    local stats = Instance.new("TextLabel")
+    stats.Name = "Stats"
+    stats.Size = UDim2.new(1, -53, 0, 37)
+    stats.Position = UDim2.fromOffset(51, 27)
+    stats.BackgroundTransparency = 1
+    stats.TextColor3 = Color3.fromRGB(245, 247, 255)
+    stats.TextStrokeTransparency = 0.85
+    stats.Font = Enum.Font.Gotham
+    stats.TextSize = 9
+    stats.TextXAlignment = Enum.TextXAlignment.Left
+    stats.TextYAlignment = Enum.TextYAlignment.Top
+    stats.TextWrapped = false
+    stats.Parent = background
+
+    espObjects[targetPlayer] = {
+        billboard = billboard,
+        nameLabel = nameLabel,
+        usernameLabel = usernameLabel,
+        statsLabel = stats,
+        character = character
+    }
+end
+
+local function updatePlayerStatsESP(targetPlayer)
+    if targetPlayer == LocalPlayer then return end
+    local character = targetPlayer.Character
+    if not character then
+        removePlayerStatsESP(targetPlayer)
+        return
+    end
+    local entry = espObjects[targetPlayer]
+    if not entry or entry.character ~= character or not entry.billboard or not entry.billboard.Parent then
+        createPlayerStatsESP(targetPlayer)
+        entry = espObjects[targetPlayer]
+    end
+    if not entry then return end
+
+    entry.nameLabel.Text = targetPlayer.DisplayName
+    entry.usernameLabel.Text = "@" .. targetPlayer.Name
+    entry.statsLabel.Text = table.concat({
+        espStatText(targetPlayer, "MaxSize"),
+        espStatText(targetPlayer, "Multiplier"),
+        espStatText(targetPlayer, "Speed"),
+        espStatText(targetPlayer, "EatSpeed")
+    }, "\n")
+    entry.billboard.Enabled = playerESPEnabled
+end
+
+-- Safety Guard V2: ESP update loop runs only while the existing toggle is ON.
+-- A generation token prevents duplicate/stale loops after rapid toggle changes.
+local ESP_UPDATE_INTERVAL = 1.5
+local espLoopGeneration = 0
+
+local function startPlayerESPUpdateLoop()
+    espLoopGeneration = espLoopGeneration + 1
+    local thisGeneration = espLoopGeneration
+
+    task.spawn(function()
+        while playerESPEnabled and thisGeneration == espLoopGeneration do
+            for _, targetPlayer in ipairs(Players:GetPlayers()) do
+                if not playerESPEnabled or thisGeneration ~= espLoopGeneration then
+                    break
+                end
+                updatePlayerStatsESP(targetPlayer)
+            end
+            if playerESPEnabled and thisGeneration == espLoopGeneration then
+                task.wait(ESP_UPDATE_INTERVAL)
+            end
+        end
+    end)
+end
+
+local function setPlayerESPEnabled(enabled)
+    local nextEnabled = enabled == true
+    if playerESPEnabled == nextEnabled then return end
+
+    playerESPEnabled = nextEnabled
+    if playerESPEnabled then
+        for _, targetPlayer in ipairs(Players:GetPlayers()) do
+            updatePlayerStatsESP(targetPlayer)
+        end
+        startPlayerESPUpdateLoop()
+    else
+        -- Invalidates the active loop immediately; it exits at its next check.
+        espLoopGeneration = espLoopGeneration + 1
+        for _, entry in pairs(espObjects) do
+            if entry.billboard then entry.billboard.Enabled = false end
+        end
+    end
+end
+
+Players.PlayerAdded:Connect(function(targetPlayer)
+    targetPlayer.CharacterAdded:Connect(function()
+        task.wait(0.5)
+        if playerESPEnabled then updatePlayerStatsESP(targetPlayer) end
+    end)
+    if playerESPEnabled then updatePlayerStatsESP(targetPlayer) end
+end)
+Players.PlayerRemoving:Connect(removePlayerStatsESP)
+for _, targetPlayer in ipairs(Players:GetPlayers()) do
+    if targetPlayer ~= LocalPlayer then
+        targetPlayer.CharacterAdded:Connect(function()
+            task.wait(0.5)
+            if playerESPEnabled then updatePlayerStatsESP(targetPlayer) end
+        end)
+    end
+end
+
+-- The ESP loop is started/stopped by setPlayerESPEnabled; no idle polling loop.
+
+
+mainUI = UI:NewWindow("dEnzCreator")
+local autoSection = mainUI:NewSection("Auto")
+local candyEarnedTotal = 0
+
+-- Candy Loot tracker adapted from the working CANGCUD collector.
+-- Counts a Candy only after it was touched and subsequently leaves Workspace.
+local candyLootTargets = {}
+local candyLootLastTouch = setmetatable({}, {__mode = "k"})
+local pendingCandyPickup = setmetatable({}, {__mode = "k"})
+local candyLootScanDelay = 0.35
+local candyLootTouchCooldown = 0.8
+local lastCandyLootScanAt = 0
+local candyLootTouchWarned = false
+local candyLootAddedConnection
+local candyLootRemovingConnection
+
+local function isCandyLoot(obj)
+    return obj and obj:IsA("BasePart") and obj.Name == "Candy"
+end
+
+local function registerCandyLoot(obj)
+    if isCandyLoot(obj) then
+        candyLootTargets[obj] = true
+    end
+end
+
+local function unregisterCandyLoot(obj)
+    if not candyLootTargets[obj] then return end
+    candyLootTargets[obj] = nil
+    candyLootLastTouch[obj] = nil
+
+    if obj.Name == "Candy" and pendingCandyPickup[obj] then
+        pendingCandyPickup[obj] = nil
+        candyEarnedTotal = candyEarnedTotal + 1
+    end
+end
+
+for _, obj in ipairs(Workspace:GetDescendants()) do
+    registerCandyLoot(obj)
+end
+candyLootAddedConnection = Workspace.DescendantAdded:Connect(registerCandyLoot)
+candyLootRemovingConnection = Workspace.DescendantRemoving:Connect(unregisterCandyLoot)
+
+local function canCollectCandy(item)
+    if not isCandyLoot(item) or not item.Parent then return false end
+
+    local owner = item:FindFirstChild("Owner")
+    local timeLeft = item:FindFirstChild("TimeLeft")
+    if owner and owner.Value ~= "" and owner.Value ~= LocalPlayer.Name then
+        local remaining = timeLeft and tonumber(timeLeft.Value)
+        if remaining and remaining > 0 then return false end
+    end
+    return true
+end
+autoSection:CreateToggle("Auto Farm", function(enabled)
+    autofarm = enabled
+    config.autofarm = enabled
+    autoSaveConfig()
+
+    if not enabled then
+        -- The worker owns its cleanup; OFF is observed by the loop and all
+        -- character callbacks are invalidated before restoration.
+        return
+    end
+
+    coroutine.wrap(function()
+        local text
+        local bedrock
+        local autoConn
+        local autoDiedConn
+        local charAddConn
+        local charRemovingConn
+        local hudInputBeganConnection
+        local hudInputChangedConnection
+        local hudInputEndedConnection
+        local activeAutoCharacter
+        local autoCharGeneration = 0
+        local originalCharacterStates = {}
+        local cleaned = false
+
+        local startTime = tick()
+        local eatTime = 0
+        local lastEatTime = tick()
+        local timer = 0
+        local grabTimer = 0
+        local sellDebounce = false
+        local sellCount = 0
+        local numChunks = 0
+
+        local map = workspace:FindFirstChild("Map")
+        local chunks = workspace:FindFirstChild("Chunks")
+        local originalMapParent = map and map.Parent
+        local originalChunksParent = chunks and chunks.Parent
+
+        local function safeDisconnect(connection)
+            if connection then
+                pcall(function()
+                    if connection.Connected then connection:Disconnect() end
+                end)
+            end
+        end
+
+        local function disconnectCharacterConnections()
+            safeDisconnect(autoConn)
+            safeDisconnect(autoDiedConn)
+            autoConn = nil
+            autoDiedConn = nil
+        end
+
+        local function restoreCharacterComponents(char)
+            local saved = char and originalCharacterStates[char]
+            if not saved then return end
+
+            if saved.localChunkManager and saved.localChunkManager.Parent then
+                pcall(function()
+                    saved.localChunkManager.Enabled = saved.localChunkManagerEnabled
+                end)
+            end
+            if saved.animate and saved.animate.Parent then
+                pcall(function()
+                    saved.animate.Enabled = saved.animateEnabled
+                end)
+            end
+            originalCharacterStates[char] = nil
+        end
+
+        local function restoreWorldObjects()
+            if map and map.Parent ~= originalMapParent then
+                pcall(function() map.Parent = originalMapParent end)
+            end
+            if chunks and chunks.Parent ~= originalChunksParent then
+                pcall(function() chunks.Parent = originalChunksParent end)
+            end
+        end
+
+        local function cleanup()
+            if cleaned then return end
+            cleaned = true
+            autofarm = false
+            autoCharGeneration += 1
+
+            safeDisconnect(charAddConn)
+            safeDisconnect(charRemovingConn)
+            charAddConn = nil
+            charRemovingConn = nil
+            disconnectCharacterConnections()
+
+            restoreCharacterComponents(activeAutoCharacter)
+
+            local currentCharacter = activeAutoCharacter
+            local currentHumanoid = currentCharacter and currentCharacter:FindFirstChildOfClass("Humanoid")
+            if currentHumanoid and currentHumanoid.Parent and currentHumanoid.Health > 0 then
+                pcall(function()
+                    currentHumanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+                end)
+            end
+
+            restoreWorldObjects()
+
+            if bedrock then
+                pcall(function() bedrock:Destroy() end)
+                bedrock = nil
+            end
+
+            safeDisconnect(hudInputBeganConnection)
+            safeDisconnect(hudInputChangedConnection)
+            safeDisconnect(hudInputEndedConnection)
+            hudInputBeganConnection = nil
+            hudInputChangedConnection = nil
+            hudInputEndedConnection = nil
+
+            if text then
+                pcall(function() text:Remove() end)
+                text = nil
+            end
+            activeAutoCharacter = nil
+        end
+
+        local function waitForCharacterChild(parent, childName, generation, ownerCharacter, timeout)
+            local deadline = tick() + (timeout or 8)
+            repeat
+                if not autofarm or cleaned or generation ~= autoCharGeneration
+                    or LocalPlayer.Character ~= ownerCharacter
+                    or not ownerCharacter.Parent then
+                    return nil
+                end
+                local child = parent:FindFirstChild(childName)
+                if child then return child end
+                task.wait(0.1)
+            until tick() >= deadline
+            return nil
+        end
+
+        local function pauseServer()
+            pcall(function()
+                Events.SetServerSettings:FireServer({
+                    MapTime = -1,
+                    Paused = true
+                })
+            end)
+        end
+
+        local function onCharAdd(char)
+            autoCharGeneration += 1
+            local thisGeneration = autoCharGeneration
+
+            disconnectCharacterConnections()
+            restoreCharacterComponents(activeAutoCharacter)
+            activeAutoCharacter = char
+            numChunks = 0
+            timer = 0
+            grabTimer = 0
+            sellDebounce = false
+
+            if not char or not autofarm or cleaned then return end
+
+            local hum = waitForCharacterChild(char, "Humanoid", thisGeneration, char, 8)
+            local root = waitForCharacterChild(char, "HumanoidRootPart", thisGeneration, char, 8)
+            local size = waitForCharacterChild(char, "Size", thisGeneration, char, 8)
+            local events = waitForCharacterChild(char, "Events", thisGeneration, char, 8)
+
+            if not hum or not root or not size or not events then
+                warn("[MountEiger Safety Guard V4] AutoFarm: character setup timed out; waiting for next character")
+                return
+            end
+
+            local eat = waitForCharacterChild(events, "Eat", thisGeneration, char, 8)
+            local grab = waitForCharacterChild(events, "Grab", thisGeneration, char, 8)
+            local sell = waitForCharacterChild(events, "Sell", thisGeneration, char, 8)
+            local chunk = waitForCharacterChild(char, "CurrentChunk", thisGeneration, char, 8)
+            local sendTrack = waitForCharacterChild(char, "SendTrack", thisGeneration, char, 8)
+            local radius = waitForCharacterChild(char, "Radius", thisGeneration, char, 8)
+
+            if not eat or not grab or not sell or not chunk or not sendTrack or not radius
+                or hum.Health <= 0 or LocalPlayer.Character ~= char
+                or not autofarm or cleaned or thisGeneration ~= autoCharGeneration then
+                warn("[MountEiger Safety Guard V4] AutoFarm: incomplete or inactive character; Heartbeat not started")
+                return
+            end
+
+            local localChunkManager = char:FindFirstChild("LocalChunkManager")
+            local animate = char:FindFirstChild("Animate")
+            originalCharacterStates[char] = {
+                localChunkManager = localChunkManager,
+                localChunkManagerEnabled = localChunkManager and localChunkManager.Enabled,
+                animate = animate,
+                animateEnabled = animate and animate.Enabled
+            }
+
+            autoConn = game["Run Service"].Heartbeat:Connect(function(dt)
+                if not autofarm or cleaned or thisGeneration ~= autoCharGeneration
+                    or LocalPlayer.Character ~= char or not char.Parent
+                    or not hum.Parent or not root.Parent or hum.Health <= 0 then
+                    safeDisconnect(autoConn)
+                    autoConn = nil
+                    restoreCharacterComponents(char)
+                    return
+                end
+
+                local ok, err = pcall(function()
+                    local ran = tick() - startTime
+                    local hours = math.floor(ran / 3600)
+                    local minutes = math.floor(ran / 60)
+                    local seconds = math.floor(ran)
+                    local eatMinutes = math.floor(eatTime / 60)
+                    local eatSeconds = math.floor(eatTime)
+                    local y = bedrock.Position.Y + bedrock.Size.Y / 2 + hum.HipHeight + root.Size.Y / 2
+                    local sizeAdd = LocalPlayer.Upgrades.Multiplier.Value / 100
+                    local addAmount = LocalPlayer.Upgrades.MaxSize.Value / sizeAdd
+                    local sellTime = addAmount / 2
+                    local sellMinutes = math.floor(sellTime / 60)
+                    local sellSeconds = math.floor(sellTime)
+                    local secondEarn = math.floor(((LocalPlayer.Upgrades.MaxSize.Value + 0.5) ^ 2 - 0.25) / 2 * 100 / sellTime)
+                    local minuteEarn = secondEarn * 60
+                    local hourEarn = minuteEarn * 60
+                    local dayEarn = hourEarn * 24
+
+                    text.Text = ""
+                        .. "\nRun Time: " .. string.format("%ih%im%is", hours, minutes % 60, seconds % 60)
+                        .. "\nActual Time: " .. string.format("%im%is", eatMinutes % 60, eatSeconds % 60)
+                        .. "\nEstimated Time: " .. string.format("%im%is", sellMinutes % 60, sellSeconds % 60)
+                        .. "\nDaily Income: " .. dayEarn
+                        .. "\nBlock Count: " .. numChunks
+                        .. "\nCandy Count: " .. candyEarnedTotal
+
+                    hum:ChangeState(Enum.HumanoidStateType.Physics)
+                    grab:FireServer()
+                    root.Anchored = false
+                    eat:FireServer()
+                    sendTrack:FireServer()
+
+                    if chunk.Value then
+                        if timer > 0 then numChunks += 1 end
+                        timer = 0
+                        grabTimer += dt
+                    else
+                        timer += dt
+                        grabTimer = 0
+                    end
+
+                    -- Preserve original timer behavior; this is not an eat-speed control.
+                    if timer > 60 then
+                        hum.Health = 0
+                        timer = 0
+                        numChunks = 0
+                    end
+                    if grabTimer > 15 then
+                        size.Value = LocalPlayer.Upgrades.MaxSize.Value
+                    end
+
+                    if (size.Value >= LocalPlayer.Upgrades.MaxSize.Value) or timer > 8 then
+                        if timer < 8 then
+                            sell:FireServer()
+                            if not sellDebounce then
+                                pauseServer()
+                            end
+                            sellDebounce = true
+                        else
+                            pauseServer()
+                        end
+                        numChunks = 0
+                    elseif size.Value == 0 then
+                        if sellDebounce then
+                            local currentEatTime = tick()
+                            eatTime = currentEatTime - lastEatTime
+                            lastEatTime = currentEatTime
+                            sellCount += 1
+                        end
+                        sellDebounce = false
+                    end
+
+                    if farmMoving then
+                        local bound = 300
+                        local startPos = CFrame.new(-bound / 2, y, -bound / 2)
+                        local r = radius.Value * 1.1
+                        local dist = r * numChunks
+                        local x = dist % bound
+                        local z = math.floor(dist / bound) * r
+                        local offset = CFrame.new(x, 0, z + r * 2)
+                        if z > bound then
+                            pauseServer()
+                            numChunks = 0
+                        end
+                        root.CFrame = startPos * offset
+                    else
+                        root.CFrame = CFrame.new(0, y, 0)
+                    end
+                end)
+
+                if not ok then
+                    warn("[MountEiger Safety Guard V4] AutoFarm Heartbeat stopped after error: " .. tostring(err))
+                    safeDisconnect(autoConn)
+                    autoConn = nil
+                    restoreCharacterComponents(char)
+                    pauseServer()
+                end
+            end)
+
+            autoDiedConn = hum.Died:Connect(function()
+                disconnectCharacterConnections()
+                restoreCharacterComponents(char)
+                pauseServer()
+            end)
+
+            if localChunkManager then
+                pcall(function() localChunkManager.Enabled = false end)
+            end
+            if animate then
+                pcall(function() animate.Enabled = false end)
+            end
+        end
+
+        local ok, err = xpcall(function()
+            text = Drawing.new("Text")
+            text.Outline = true
+            text.OutlineColor = Color3.new(0, 0, 0)
+            text.Color = Color3.new(1, 1, 1)
+            text.Center = false
+            text.Position = Vector2.new(64, 64)
+            text.Text = ""
+            text.Size = 14
+            text.Visible = true
+
+            local hudDragging, hudDragInput = false, nil
+            local hudDragStart, hudStartPosition
+
+            hudInputBeganConnection = UserInputService.InputBegan:Connect(function(input)
+                local kind = input.UserInputType
+                if kind ~= Enum.UserInputType.MouseButton1 and kind ~= Enum.UserInputType.Touch then return end
+                local pos, bounds = input.Position, text.TextBounds
+                local left, top = text.Position.X, text.Position.Y
+                if pos.X >= left and pos.X <= left + math.max(bounds.X, 100)
+                    and pos.Y >= top and pos.Y <= top + math.max(bounds.Y, 24) then
+                    hudDragging, hudDragInput = true, input
+                    hudDragStart, hudStartPosition = Vector2.new(pos.X, pos.Y), text.Position
+                end
+            end)
+
+            hudInputChangedConnection = UserInputService.InputChanged:Connect(function(input)
+                if not hudDragging then return end
+                local kind = input.UserInputType
+                if kind == Enum.UserInputType.MouseMovement or kind == Enum.UserInputType.Touch then
+                    local delta = Vector2.new(input.Position.X, input.Position.Y) - hudDragStart
+                    text.Position = hudStartPosition + delta
+                end
+            end)
+
+            hudInputEndedConnection = UserInputService.InputEnded:Connect(function(input)
+                if input == hudDragInput or input.UserInputType == Enum.UserInputType.MouseButton1 then
+                    hudDragging, hudDragInput = false, nil
+                end
+            end)
+
+            bedrock = Instance.new("Part")
+            bedrock.Anchored = true
+            bedrock.Size = Vector3.new(2048, 10, 2048)
+            bedrock.Position = Vector3.new(0, -5, 0)
+            bedrock.BrickColor = BrickColor.Black()
+            bedrock.Parent = workspace
+
+            if map and chunks then
+                map.Parent, chunks.Parent = nil, nil
+            end
+
+            if LocalPlayer.Character then
+                task.spawn(onCharAdd, LocalPlayer.Character)
+            else
+                task.spawn(function()
+                    local newCharacter = LocalPlayer.CharacterAdded:Wait()
+                    if autofarm and not cleaned then onCharAdd(newCharacter) end
+                end)
+            end
+
+            charAddConn = LocalPlayer.CharacterAdded:Connect(onCharAdd)
+            charRemovingConn = LocalPlayer.CharacterRemoving:Connect(function(oldCharacter)
+                if oldCharacter == activeAutoCharacter then
+                    autoCharGeneration += 1
+                    disconnectCharacterConnections()
+                    restoreCharacterComponents(oldCharacter)
+                    activeAutoCharacter = nil
+                end
+            end)
+
+            while autofarm and not cleaned do
+                task.wait()
+                local loading = workspace:FindFirstChild("Loading")
+                if loading then
+                    pcall(function() loading:Destroy() end)
+                end
+
+                if map and chunks then
+                    if showMap then
+                        map.Parent, chunks.Parent = originalMapParent, originalChunksParent
+                    else
+                        map.Parent, chunks.Parent = nil, nil
+                    end
+                end
+            end
+        end, debug.traceback)
+
+        cleanup()
+
+        if not ok then
+            warn("[MountEiger Safety Guard V4] AutoFarm cleanup completed after worker error: " .. tostring(err))
+        end
+    end)()
+end)
+-- CANGCUD-style Auto Collect: original Coin/Token target changed ONLY to "Cube".
+-- Candy collector remains separate so its counter behavior is preserved.
+local cubeLootTargets = {}
+local cubeLootLastTouch = setmetatable({}, {__mode = "k"})
+local cubeLootScanDelay = 0.35
+local cubeLootTouchCooldown = 0.8
+local lastCubeLootScanAt = 0
+local cubeLootTouchWarned = false
+local cubeLootCollectingEnabled = false
+local cubeLootAddedConnection
+local cubeLootRemovingConnection
+local cubeLootHeartbeatConnection
+
+local function isCubeLoot(obj)
+    return obj and obj:IsA("BasePart") and obj.Name == "Cube"
+end
+
+local function registerCubeLoot(obj)
+    if isCubeLoot(obj) then cubeLootTargets[obj] = true end
+end
+
+local function unregisterCubeLoot(obj)
+    if not cubeLootTargets[obj] then return end
+    cubeLootTargets[obj] = nil
+    cubeLootLastTouch[obj] = nil
+end
+
+for _, obj in ipairs(Workspace:GetDescendants()) do registerCubeLoot(obj) end
+cubeLootAddedConnection = Workspace.DescendantAdded:Connect(registerCubeLoot)
+cubeLootRemovingConnection = Workspace.DescendantRemoving:Connect(unregisterCubeLoot)
+
+local function canCollectCube(item)
+    if not isCubeLoot(item) or not item.Parent then return false end
+    local owner = item:FindFirstChild("Owner")
+    local timeLeft = item:FindFirstChild("TimeLeft")
+    if owner and owner.Value ~= "" and owner.Value ~= LocalPlayer.Name then
+        local remaining = timeLeft and tonumber(timeLeft.Value)
+        if remaining and remaining > 0 then return false end
+    end
+    return true
+end
+
+local function collectCubeStep()
+    if not cubeLootCollectingEnabled then return end
+    local now = os.clock()
+    if now - lastCubeLootScanAt < cubeLootScanDelay then return end
+    lastCubeLootScanAt = now
+
+    local character = LocalPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    if type(firetouchinterest) ~= "function" then
+        if not cubeLootTouchWarned then
+            cubeLootTouchWarned = true
+            warn("[dEnzCreator] Cube Auto Collect requires firetouchinterest support in the executor.")
+        end
+        return
+    end
+
+    for item in pairs(cubeLootTargets) do
+        if item.Parent and canCollectCube(item) then
+            local previous = cubeLootLastTouch[item] or 0
+            if now - previous >= cubeLootTouchCooldown then
+                cubeLootLastTouch[item] = now
+                pcall(function()
+                    firetouchinterest(root, item, 0)
+                    firetouchinterest(root, item, 1)
+                end)
+            end
+        elseif not item.Parent then
+            unregisterCubeLoot(item)
+        end
+    end
+end
+
+autoSection:CreateToggle("Auto Collect", function(enabled)
+    autoCollectingCubes = enabled
+    cubeLootCollectingEnabled = enabled
+    config.autoCollectingCubes = enabled
+    autoSaveConfig()
+
+    local playerScripts = LocalPlayer:FindFirstChild("PlayerScripts")
+    local cubeVis = playerScripts and playerScripts:FindFirstChild("CubeVis")
+    if cubeVis then cubeVis.Enabled = not enabled end
+
+    if cubeLootHeartbeatConnection then
+        cubeLootHeartbeatConnection:Disconnect()
+        cubeLootHeartbeatConnection = nil
+    end
+    lastCubeLootScanAt = 0
+
+    if enabled then
+        cubeLootHeartbeatConnection = RunService.Heartbeat:Connect(function()
+            pcall(collectCubeStep)
+        end)
+
+        -- Existing Candy-only collector retained; no Token/Coin collection.
+        coroutine.wrap(function()
+            while autoCollectingCubes do
+                task.wait(candyLootScanDelay)
+                local now = os.clock()
+                if now - lastCandyLootScanAt < candyLootScanDelay then continue end
+                lastCandyLootScanAt = now
+
+                local character = LocalPlayer.Character
+                local root = character and character:FindFirstChild("HumanoidRootPart")
+                if not root then continue end
+                if type(firetouchinterest) ~= "function" then
+                    if not candyLootTouchWarned then
+                        candyLootTouchWarned = true
+                        warn("[dEnzCreator] Candy collector requires firetouchinterest support in the executor.")
+                    end
+                    break
+                end
+
+                for item in pairs(candyLootTargets) do
+                    if item.Parent and canCollectCandy(item) then
+                        local previous = candyLootLastTouch[item] or 0
+                        if now - previous >= candyLootTouchCooldown then
+                            candyLootLastTouch[item] = now
+                            local touched = pcall(function()
+                                firetouchinterest(root, item, 0)
+                                firetouchinterest(root, item, 1)
+                            end)
+                            if touched then pendingCandyPickup[item] = true end
+                        end
+                    elseif not item.Parent then
+                        unregisterCandyLoot(item)
+                    end
+                end
+            end
+        end)()
+    end
+end)
+
+autoSection:CreateToggle("Auto Claim", function(enabled)
+    autoClaimRewards = enabled
+    config.autoClaimRewards = enabled
+    autoSaveConfig()
+    coroutine.wrap(function()
+        while autoClaimRewards do
+            task.wait(1)
+            for _, reward in LocalPlayer.TimedRewards:GetChildren() do
+                if reward.Value > 0 then
+                    Events.RewardEvent:FireServer(reward)
+                end
+            end
+            Events.SpinEvent:FireServer()
+        end
+    end)()
+end)
+autoSection:CreateToggle("Move Mode", function(enabled)
+    farmMoving = enabled
+    config.farmMoving = enabled
+    autoSaveConfig()
+end)
+autoSection:CreateToggle("Show Map", function(enabled)
+    showMap = enabled
+    config.showMap = enabled
+    autoSaveConfig()
+end)
+autoSection:CreateToggle("Auto Eat", function(enabled)
+    autoeat = enabled
+    config.autoeat = enabled
+    autoSaveConfig()
+    coroutine.wrap(function()
+        while autoeat do
+            task.wait()
+            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") and LocalPlayer.Character:FindFirstChild("Size") and LocalPlayer.Character:FindFirstChild("Events") and LocalPlayer.Character.Events:FindFirstChild("Grab") and LocalPlayer.Character.Events:FindFirstChild("Eat") and LocalPlayer.Character:FindFirstChild("CurrentChunk") then
+                LocalPlayer.Character.HumanoidRootPart.Anchored = false
+                LocalPlayer.Character.Events.Grab:FireServer()
+                LocalPlayer.Character.Events.Eat:FireServer()
+            end
+        end
+    end)()
+end)
+local figureSection = mainUI:NewSection("Character")
+figureSection:CreateToggle("No Slip", function(enabled)
+    toggleSlippageElimination(enabled)
+    config.slippageEliminationEnabled = enabled
+    autoSaveConfig()
+end)
+-- ANTI ANCHOR (GELUT): unanchor every BasePart inside the local character.
+-- The RenderStepped connection is explicitly disconnected when switched OFF.
+local function setAntiAnchorEnabled(enabled)
+    antiAnchorEnabled = enabled
+    config.keepUnanchor = enabled
+    autoSaveConfig()
+
+    if antiAnchorConnection then
+        antiAnchorConnection:Disconnect()
+        antiAnchorConnection = nil
+    end
+
+    if enabled then
+        antiAnchorConnection = RunService.RenderStepped:Connect(function()
+            if not mainUI or not mainUI.MainGui or not mainUI.MainGui.Parent
+                or not antiAnchorEnabled then
+                return
+            end
+
+            local character = LocalPlayer.Character
+            if not character then return end
+
+            for _, part in ipairs(character:GetDescendants()) do
+                if part:IsA("BasePart") and part.Anchored then
+                    part.Anchored = false
+                end
+            end
+        end)
+    end
+end
+
+figureSection:CreateToggle("Anti Anchor", function(enabled)
+    setAntiAnchorEnabled(enabled)
+end)
+figureSection:CreateToggle("Anti Fall", function(enabled)
+    antiFallEnabled = enabled
+    config.antiFallEnabled = enabled
+    autoSaveConfig()
+    if enabled then
+        local char = LocalPlayer.Character
+        if char and char.Parent then
+            startAntiFall(char)
+        end
+    else
+        stopAntiFall()
+    end
+end)
+
+-- GELUT FLIGHT MODE: original movement/force behavior, adapted to MountEiger.
+local flightEnabled = false
+local flightSpeed = 100
+local flyBodyVelocity = nil
+local flyBodyGyro = nil
+
+local function clearFlightForces()
+    if flyBodyVelocity then
+        pcall(function() flyBodyVelocity:Destroy() end)
+        flyBodyVelocity = nil
+    end
+    if flyBodyGyro then
+        pcall(function() flyBodyGyro:Destroy() end)
+        flyBodyGyro = nil
+    end
+end
+
+local function setFlightEnabled(enabled)
+    flightEnabled = enabled
+    if not enabled then
+        clearFlightForces()
+        local character = LocalPlayer.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        if humanoid and humanoid.PlatformStand then
+            humanoid.PlatformStand = false
+            humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end
+    end
+end
+
+-- Place Wall Clip beside Anti Fall, then Flight Mode with its speed field.
+figureSection:CreateToggle("Wall Clip", function(enabled)
+    setWallClipEnabled(enabled)
+end)
+
+local flightRowY = figureSection.ContentY
+figureSection:CreateToggle("Flight Mode", function(enabled)
+    setFlightEnabled(enabled)
+end)
+
+local flightSpeedBox = Instance.new("TextBox")
+flightSpeedBox.Name = "FlightSpeedValue"
+flightSpeedBox.Size = UDim2.new(0.50, -4, 0, 25)
+flightSpeedBox.Position = UDim2.new(0, 2, 0, flightRowY + 3)
+flightSpeedBox.BackgroundColor3 = UI.Theme.Row
+flightSpeedBox.BorderSizePixel = 0
+flightSpeedBox.Text = tostring(flightSpeed)
+flightSpeedBox.PlaceholderText = "Flight Speed"
+flightSpeedBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+flightSpeedBox.PlaceholderColor3 = Color3.fromRGB(170, 170, 170)
+flightSpeedBox.TextSize = 12
+flightSpeedBox.Font = Enum.Font.GothamMedium
+flightSpeedBox.ClearTextOnFocus = false
+flightSpeedBox.TextXAlignment = Enum.TextXAlignment.Center
+flightSpeedBox.Parent = figureSection.Content
+local flightSpeedCorner = Instance.new("UICorner")
+flightSpeedCorner.CornerRadius = UDim.new(0, 7)
+flightSpeedCorner.Parent = flightSpeedBox
+flightSpeedBox.FocusLost:Connect(function()
+    local entered = tonumber(flightSpeedBox.Text)
+    if entered then
+        flightSpeed = math.clamp(math.floor(entered), 1, 1000)
+    end
+    flightSpeedBox.Text = tostring(flightSpeed)
+end)
+
+task.spawn(function()
+    while mainUI and mainUI.MainGui and mainUI.MainGui.Parent do
+        local character = LocalPlayer.Character
+        local root = character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+        if flightEnabled and root and humanoid and humanoid.Health > 0 then
+            humanoid.PlatformStand = true
+
+            if not flyBodyVelocity or flyBodyVelocity.Parent ~= root then
+                clearFlightForces()
+
+                flyBodyVelocity = Instance.new("BodyVelocity")
+                flyBodyVelocity.Name = "GELUT_FlightVelocity"
+                flyBodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+                flyBodyVelocity.Velocity = Vector3.zero
+                flyBodyVelocity.Parent = root
+
+                flyBodyGyro = Instance.new("BodyGyro")
+                flyBodyGyro.Name = "GELUT_FlightGyro"
+                flyBodyGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+                flyBodyGyro.P = 50000
+                flyBodyGyro.D = 500
+                flyBodyGyro.CFrame = root.CFrame
+                flyBodyGyro.Parent = root
+            end
+
+            local camera = Workspace.CurrentCamera
+            local cameraCFrame = camera and camera.CFrame or root.CFrame
+            local worldMove = humanoid.MoveDirection
+            local targetVelocity = Vector3.zero
+
+            if worldMove.Magnitude > 0.05 then
+                targetVelocity = worldMove.Unit * flightSpeed
+            end
+
+            if not UserInputService.TouchEnabled then
+                if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+                    targetVelocity += Vector3.new(0, flightSpeed, 0)
+                end
+                if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift)
+                    or UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
+                    targetVelocity -= Vector3.new(0, flightSpeed, 0)
+                end
+            elseif humanoid.Jump then
+                targetVelocity += Vector3.new(0, flightSpeed * 0.8, 0)
+            end
+
+            flyBodyVelocity.Velocity = targetVelocity
+            flyBodyGyro.CFrame = cameraCFrame
+        else
+            clearFlightForces()
+            if humanoid and humanoid.PlatformStand then
+                humanoid.PlatformStand = false
+                humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+            end
+        end
+        task.wait()
+    end
+
+    clearFlightForces()
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    if humanoid then humanoid.PlatformStand = false end
+end)
+
+-- GELUT WALL CLIP: preserve each part's original CanCollide value and restore it on OFF.
+local wallClipEnabled = false
+local wallClipConnection = nil
+local wallClipOriginal = setmetatable({}, {__mode = "k"})
+
+local function restoreWallClipParts()
+    for part, originalValue in pairs(wallClipOriginal) do
+        if part and part.Parent then
+            pcall(function()
+                part.CanCollide = originalValue
+            end)
+        end
+        wallClipOriginal[part] = nil
+    end
+end
+
+local function setWallClipEnabled(enabled)
+    wallClipEnabled = enabled
+
+    if wallClipConnection then
+        wallClipConnection:Disconnect()
+        wallClipConnection = nil
+    end
+
+    if not enabled then
+        restoreWallClipParts()
+        return
+    end
+
+    wallClipConnection = RunService.Stepped:Connect(function()
+        if not mainUI or not mainUI.MainGui or not mainUI.MainGui.Parent
+            or not wallClipEnabled then
+            return
+        end
+
+        local character = LocalPlayer.Character
+        if not character then return end
+
+        for _, part in ipairs(character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                if wallClipOriginal[part] == nil then
+                    wallClipOriginal[part] = part.CanCollide
+                end
+                if part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
+        end
+    end)
+end
+
+LocalPlayer.CharacterAdded:Connect(function()
+    if wallClipEnabled then
+        restoreWallClipParts()
+    end
+end)
+local invisibilityGui = nil
+local invisibilityConnections = {}
+figureSection:CreateToggle("Invisible", function(enabled)
+    if enabled then
+        local player = game.Players.LocalPlayer
+        local character = player.Character or player.CharacterAdded:Wait()
+        local humanoid = character:WaitForChild("Humanoid")
+        local rootPart = character:WaitForChild("HumanoidRootPart")
+        local parts = {}
+        for _, part in pairs(character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                if part.Transparency == 0 then
+                    table.insert(parts, part)
+                end
+            end
+        end
+        local isInvisible = false
+        local connections = {}
+        local gui = Instance.new("ScreenGui")
+        gui.Name = "InvisibilityGui"
+        gui.ResetOnSpawn = false
+        local button = Instance.new("TextButton")
+        button.Size = UDim2.new(0, 100, 0, 50)
+        button.Position = UDim2.new(0.5, -50, 0.1, 0)
+        button.Text = "Gost"
+        button.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+        button.Parent = gui
+        gui.Parent = player:WaitForChild("PlayerGui")
+        local dragging = false
+        local dragStart = Vector2.new()
+        local startPos = button.Position
+        button.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                dragging = true
+                dragStart = input.Position
+                startPos = button.Position
+            end
+        end)
+        button.InputChanged:Connect(function(input)
+            if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+                local delta = input.Position - dragStart
+                button.Position = UDim2.new(
+                    startPos.X.Scale,
+                    startPos.X.Offset + delta.X,
+                    startPos.Y.Scale,
+                    startPos.Y.Offset + delta.Y
+                )
+            end
+        end)
+        button.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                dragging = false
+            end
+        end)
+        local function toggleInvisibility()
+            isInvisible = not isInvisible
+            for _, part in pairs(parts) do
+                if isInvisible then
+                    part.Transparency = 0.5
+                else
+                    part.Transparency = 0
+                end
+            end
+        end
+        button.MouseButton1Click:Connect(toggleInvisibility)
+        local mouse = player:GetMouse()
+        connections[1] = mouse.KeyDown:Connect(function(key)
+            if key == "g" then
+                toggleInvisibility()
+            end
+        end)
+        connections[2] = game:GetService("RunService").Heartbeat:Connect(function()
+            if isInvisible then
+                local cf = rootPart.CFrame
+                local offset = CFrame.new(0, -200000, 0)
+                local newCf = cf * offset
+                local camOffset = newCf:ToObjectSpace(CFrame.new(cf.Position)).Position
+                rootPart.CFrame = newCf
+                humanoid.CameraOffset = camOffset
+                game:GetService("RunService").RenderStepped:Wait()
+                rootPart.CFrame = cf
+                humanoid.CameraOffset = Vector3.new(0, 0, 0)
+            end
+        end)
+        connections[3] = player.CharacterAdded:Connect(function(newCharacter)
+            isInvisible = false
+            parts = {}
+            local newHumanoid = newCharacter:WaitForChild("Humanoid")
+            local newRootPart = newCharacter:WaitForChild("HumanoidRootPart")
+            humanoid = newHumanoid
+            rootPart = newRootPart
+            for _, part in pairs(newCharacter:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    if part.Transparency == 0 then
+                        table.insert(parts, part)
+                    end
+                end
+            end
+        end)
+        invisibilityGui = gui
+        invisibilityConnections = connections
+        Message("Invisible", "Feature activated", 2)
+    else
+        if invisibilityGui then
+            invisibilityGui:Destroy()
+            invisibilityGui = nil
+        end
+        for _, connection in pairs(invisibilityConnections) do
+            if connection and connection.Connected then
+                connection:Disconnect()
+            end
+        end
+        invisibilityConnections = {}
+        local player = game.Players.LocalPlayer
+        local character = player.Character
+        if character then
+            for _, part in pairs(character:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.Transparency = 0
+                end
+            end
+        end
+        Message("Invisible", "Feature disabled", 2)
+    end
+    for _, btn in ipairs(figureSection.Buttons) do
+        if btn.Name == "ToggleBtn_Invisible" then
+            local stateLabel = btn:FindFirstChildOfClass("TextLabel")
+            if stateLabel then
+                stateLabel.Text = "Invisible"
+                stateLabel.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+            end
+            break
+        end
+    end
+end)
+figureSection:CreateToggle("Gravity Lock", function(enabled)
+    toggleGravityLock(enabled)
+    config.gravityLockEnabled = enabled
+    autoSaveConfig()
+end)
+figureSection:CreateToggle("CS Grab", function(enabled)
+    toggleContinuousGrab(enabled)
+end)
+figureSection:CreateToggle("Ragdoll", function(enabled)
+    ToggleRagdoll()
+    for _, btn in ipairs(figureSection.Buttons) do
+        if btn.Name == "ToggleBtn_Ragdoll" then
+            local stateLabel = btn:FindFirstChildOfClass("TextLabel")
+            if stateLabel then
+                stateLabel.Text = "Ragdoll"
+                stateLabel.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+            end
+            break
+        end
+    end
+end)
+figureSection:CreateToggle("ESP", function(enabled)
+    setPlayerESPEnabled(enabled)
+end)
+figureSection:CreateToggle("Action Pack", function(enabled)
+    loadCustomEmotes()
+    for _, btn in ipairs(figureSection.Buttons) do
+        if btn.Name == "ToggleBtn_Action Pack" then
+            local stateLabel = btn:FindFirstChildOfClass("TextLabel")
+            if stateLabel then
+                stateLabel.Text = "Action Pack"
+                stateLabel.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+            end
+            break
+        end
+    end
+end)
+local map = workspace:FindFirstChild("Map")
+local chunks = workspace:FindFirstChild("Chunks")
+local bedrock = nil
+local mapHidden = false
+local function toggleMap()
+    if mapHidden then
+        if map then
+            map.Parent = workspace
+        end
+        if chunks then
+            chunks.Parent = workspace
+        end
+        if bedrock and bedrock.Parent then
+            bedrock:Destroy()
+            bedrock = nil
+        end
+        Message("Notice", "Environment restored; platform removed", 2)
+        mapHidden = false
+    else
+        if map then
+            map.Parent = nil
+        end
+        if chunks then
+            chunks.Parent = nil
+        end
+        bedrock = Instance.new("Part")
+        bedrock.Name = "HiddenEnvironmentBedrock"
+        bedrock.Anchored = true
+        bedrock.Size = Vector3.new(8192, 2, 8192)
+        bedrock.Position = Vector3.new(0, 0, 0)
+        bedrock.BrickColor = BrickColor.new("grey")
+        bedrock.Parent = workspace
+        Message("Notice", "Environment hidden; platform created", 2)
+        mapHidden = true
+    end
+end
+-- GELUT BIG PLATFORM mechanism, retained under MountEiger's existing Platform toggle.
+local bigPlatformPart = nil
+local platformEnabled = config.platformEnabled == true
+
+local function createBigPlatform()
+    if bigPlatformPart and bigPlatformPart.Parent then return end
+
+    -- Clean up an older copy before creating the platform.
+    local oldPlatform = workspace:FindFirstChild("ETW_DRAMA_BigPlatform")
+    if oldPlatform then
+        pcall(function() oldPlatform:Destroy() end)
+    end
+
+    local part = Instance.new("Part")
+    part.Name = "ETW_DRAMA_BigPlatform"
+    part.Size = Vector3.new(180000, 10, 180000)
+    part.Anchored = true
+    part.CanCollide = true
+    part.Transparency = 1
+    part.Material = Enum.Material.Fabric
+    part.Position = Vector3.new(0, -6, 0)
+    part.Parent = workspace
+    bigPlatformPart = part
+end
+
+local function removeBigPlatform()
+    if bigPlatformPart then
+        pcall(function() bigPlatformPart:Destroy() end)
+        bigPlatformPart = nil
+    end
+end
+
+local function setPlatformEnabled(enabled, saveState)
+    platformEnabled = enabled == true
+
+    if platformEnabled then
+        createBigPlatform()
+        Message("Platform", "Platform created", 2)
+    else
+        removeBigPlatform()
+        Message("Platform", "Platform removed", 2)
+    end
+
+    config.platformEnabled = platformEnabled
+    if saveState ~= false then
+        autoSaveConfig()
+    end
+end
+
+-- Restore the saved state and keep the platform available after respawn.
+if platformEnabled then
+    task.defer(createBigPlatform)
+end
+
+LocalPlayer.CharacterAdded:Connect(function()
+    if platformEnabled then
+        task.defer(createBigPlatform)
+    end
+end)
+-- RUN SPEED (GELUT): original movement logic, integrated into MountEiger Character panel.
+-- Default 100; accepts any finite non-negative number; no fixed upper cap.
+local runSpeedEnabled = false
+local runSpeedValue = 100
+local runSpeedConnection = nil
+
+local function setRunSpeedEnabled(enabled)
+    runSpeedEnabled = enabled
+
+    if runSpeedConnection then
+        runSpeedConnection:Disconnect()
+        runSpeedConnection = nil
+    end
+
+    if enabled then
+        runSpeedConnection = RunService.Heartbeat:Connect(function(delta)
+            if not mainUI or not mainUI.MainGui or not mainUI.MainGui.Parent or not runSpeedEnabled then
+                return
+            end
+
+            local character = LocalPlayer.Character
+            local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+            local root = character and character:FindFirstChild("HumanoidRootPart")
+
+            if humanoid and root and humanoid.Health > 0 then
+                root.Anchored = false
+                local moveDirection = humanoid.MoveDirection
+                if moveDirection.Magnitude > 0 then
+                    local nextPosition = root.Position + moveDirection * runSpeedValue * delta
+                    root.CFrame = CFrame.new(nextPosition, nextPosition + root.CFrame.LookVector)
+                end
+            end
+        end)
+    end
+end
+
+local runSpeedToggle = figureSection:CreateToggle("RUN SPEED", function(enabled)
+    setRunSpeedEnabled(enabled)
+end)
+
+-- Compact numeric field embedded in the MountEiger toggle, styled from UI.Theme.
+local runSpeedBox = Instance.new("TextBox")
+runSpeedBox.Name = "RunSpeedValue"
+runSpeedBox.Size = UDim2.new(0, 29, 0, 23)
+runSpeedBox.Position = UDim2.new(1, -32, 0.5, -11)
+runSpeedBox.BackgroundColor3 = UI.Theme.Row
+runSpeedBox.BorderSizePixel = 0
+runSpeedBox.Text = tostring(runSpeedValue)
+runSpeedBox.PlaceholderText = "Speed"
+runSpeedBox.TextColor3 = UI.Theme.Text
+runSpeedBox.PlaceholderColor3 = UI.Theme.Muted or UI.Theme.Text
+runSpeedBox.TextSize = 10
+runSpeedBox.Font = Enum.Font.GothamBold
+runSpeedBox.ClearTextOnFocus = false
+runSpeedBox.MultiLine = false
+runSpeedBox.TextXAlignment = Enum.TextXAlignment.Center
+runSpeedBox.ZIndex = runSpeedToggle.ZIndex + 1
+runSpeedBox.Parent = runSpeedToggle
+
+local runSpeedBoxCorner = Instance.new("UICorner")
+runSpeedBoxCorner.CornerRadius = UDim.new(0, 5)
+runSpeedBoxCorner.Parent = runSpeedBox
+
+local runSpeedBoxStroke = Instance.new("UIStroke")
+runSpeedBoxStroke.Color = UI.Theme.Border
+runSpeedBoxStroke.Thickness = 1
+runSpeedBoxStroke.Transparency = 0.25
+runSpeedBoxStroke.Parent = runSpeedBox
+
+local runSpeedToggleLabel = runSpeedToggle:FindFirstChildOfClass("TextLabel")
+if runSpeedToggleLabel then
+    runSpeedToggleLabel.Size = UDim2.new(1, -36, 1, 0)
+    runSpeedToggleLabel.Position = UDim2.new(0, 5, 0, 0)
+    runSpeedToggleLabel.Text = "RUN SPEED"
+    runSpeedToggleLabel.TextSize = 11
+    runSpeedToggleLabel.TextXAlignment = Enum.TextXAlignment.Left
+end
+
+runSpeedBox.FocusLost:Connect(function()
+    local entered = tonumber(runSpeedBox.Text)
+    if entered and entered >= 0 and entered < math.huge then
+        runSpeedValue = entered
+    end
+    runSpeedBox.Text = tostring(runSpeedValue)
+end)
+
+LocalPlayer.CharacterRemoving:Connect(function()
+    if runSpeedConnection then
+        runSpeedConnection:Disconnect()
+        runSpeedConnection = nil
+    end
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+    if runSpeedEnabled then
+        task.wait(0.2)
+        setRunSpeedEnabled(true)
+    end
+end)
+
+
+-- SKYWALK (GELUT V13): integrated into MountEiger's existing Other section.
+-- Keeps the tested GELUT behavior: save origin, teleport +4000 studs,
+-- create a transparent 250000 x 10 x 250000 local platform, normal Humanoid movement,
+-- and restore the saved pivot when switched OFF.
+local SKY_TELEPORT_HEIGHT = 4000
+local skyWalkEnabled = false
+local skyWalkSavedPivot = nil
+local skyWalkSavedPosition = nil
+local skyWalkPlatform = nil
+local skyWalkHeartbeat = nil
+
+local function skyWalkClearObjects()
+    if skyWalkHeartbeat then
+        skyWalkHeartbeat:Disconnect()
+        skyWalkHeartbeat = nil
+    end
+    if skyWalkPlatform then
+        pcall(function()
+            skyWalkPlatform:Destroy()
+        end)
+        skyWalkPlatform = nil
+    end
+end
+
+local function skyWalkStop()
+    skyWalkEnabled = false
+    skyWalkClearObjects()
+
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+    -- Return to the exact activation transform, matching GELUT V13.
+    if character and skyWalkSavedPivot then
+        pcall(function()
+            character:PivotTo(skyWalkSavedPivot)
+            local root = character:FindFirstChild("HumanoidRootPart")
+            if root then
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+            end
+        end)
+    end
+
+    if humanoid then
+        humanoid.PlatformStand = false
+        humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+    end
+
+    skyWalkSavedPivot = nil
+    skyWalkSavedPosition = nil
+end
+
+local function skyWalkStart()
+    local character = LocalPlayer.Character
+    local root = character and character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+    if not character or not root or not humanoid or humanoid.Health <= 0 then
+        warn("SKYWALK: character is not ready.")
+        return false
+    end
+
+    skyWalkClearObjects()
+    skyWalkSavedPivot = character:GetPivot()
+    skyWalkSavedPosition = root.Position
+
+    local targetPivot = skyWalkSavedPivot + Vector3.new(0, SKY_TELEPORT_HEIGHT, 0)
+    local ok = pcall(function()
+        character:PivotTo(targetPivot)
+    end)
+
+    if not ok then
+        skyWalkSavedPivot = nil
+        skyWalkSavedPosition = nil
+        return false
+    end
+
+    root = character:FindFirstChild("HumanoidRootPart")
+    humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not root or not humanoid then
+        skyWalkStop()
+        return false
+    end
+
+    local platformThickness = 10
+    local footOffset = humanoid.HipHeight + (root.Size.Y * 0.5)
+    local platformTopY = root.Position.Y - footOffset
+
+    skyWalkPlatform = Instance.new("Part")
+    skyWalkPlatform.Name = "GELUT_SkyWalkPlatform_V13"
+    skyWalkPlatform.Anchored = true
+    skyWalkPlatform.Size = Vector3.new(250000, 10, 250000)
+    skyWalkPlatform.CFrame = CFrame.new(
+        root.Position.X,
+        platformTopY - (platformThickness * 0.5),
+        root.Position.Z
+    )
+    skyWalkPlatform.Transparency = 1
+    skyWalkPlatform.CanCollide = true
+    skyWalkPlatform.CanTouch = false
+    skyWalkPlatform.CanQuery = false
+    skyWalkPlatform.CastShadow = false
+    skyWalkPlatform.Parent = workspace
+
+    -- Keep ordinary Humanoid movement and joystick control; no flight forces.
+    humanoid.PlatformStand = false
+    humanoid.AutoRotate = true
+    humanoid.Sit = false
+    humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+    root.AssemblyLinearVelocity = Vector3.zero
+    root.AssemblyAngularVelocity = Vector3.zero
+
+    skyWalkEnabled = true
+    skyWalkHeartbeat = RunService.Heartbeat:Connect(function()
+        if not skyWalkEnabled then return end
+
+        local currentCharacter = LocalPlayer.Character
+        local currentRoot = currentCharacter and currentCharacter:FindFirstChild("HumanoidRootPart")
+        local currentHumanoid = currentCharacter and currentCharacter:FindFirstChildOfClass("Humanoid")
+
+        if not currentRoot or not currentHumanoid or currentHumanoid.Health <= 0 or not skyWalkPlatform then
+            skyWalkStop()
+            return
+        end
+    end)
+
+    return true
+end
+
+local function setSkyWalkEnabled(enabled)
+    if enabled then
+        if not skyWalkStart() then
+            skyWalkEnabled = false
+        end
+    else
+        skyWalkStop()
+    end
+end
+
+-- If the character respawns while SkyWalk is active, clear the old local platform
+-- and reset the state, matching the standalone GELUT V13 lifecycle behavior.
+LocalPlayer.CharacterAdded:Connect(function()
+    if skyWalkEnabled or skyWalkPlatform or skyWalkHeartbeat then
+        skyWalkEnabled = false
+        skyWalkClearObjects()
+        skyWalkSavedPivot = nil
+        skyWalkSavedPosition = nil
+    end
+end)
+
+local otherSection = mainUI:NewSection("Other")
+otherSection:CreateToggle("Platform", function(enabled)
+    setPlatformEnabled(enabled)
+end)
+otherSection:CreateToggle("SkyWalk", function(enabled)
+    setSkyWalkEnabled(enabled)
+end)
+otherSection:CreateToggle("Hide Map", function(enabled)
+    toggleMap()
+    for _, btn in ipairs(otherSection.Buttons) do
+        if btn.Name == "ToggleBtn_Hide Map" then
+            local stateLabel = btn:FindFirstChildOfClass("TextLabel")
+            if stateLabel then
+                stateLabel.Text = "Hide Map"
+                stateLabel.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+            end
+            break
+        end
+    end
+end)
+otherSection:CreateToggle("View Data", function(enabled)
+    if enabled then
+        loadAndRunPlayerDataScript()
+        for _, btn in ipairs(otherSection.Buttons) do
+            if btn.Name == "ToggleBtn_View Data" then
+                local stateLabel = btn:FindFirstChildOfClass("TextLabel")
+                if stateLabel then
+                    stateLabel.Text = "View Data"
+                    stateLabel.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+                end
+                break
+            end
+        end
+    end
+end)
+otherSection:CreateToggle("TP Slam", function(enabled)
+    ToggleTeleportThrowUI()
+    for _, btn in ipairs(otherSection.Buttons) do
+        if btn.Name == "ToggleBtn_Teleport Slam" then
+            local stateLabel = btn:FindFirstChildOfClass("TextLabel")
+            if stateLabel then
+                stateLabel.Text = "TP Slam"
+                stateLabel.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+            end
+            break
+        end
+    end
+end)
+otherSection:CreateToggle("TP Grab", function(enabled)
+    ToggleTeleportGrabUI()
+    for _, btn in ipairs(otherSection.Buttons) do
+        if btn.Name == "ToggleBtn_Teleport Grab" then
+            local stateLabel = btn:FindFirstChildOfClass("TextLabel")
+            if stateLabel then
+                stateLabel.Text = "TP Grab"
+                stateLabel.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+            end
+            break
+        end
+    end
+end)
+LocalPlayer.CharacterAdded:Connect(function(newCharacter)
+    task.wait(0.5)
+    if antiFallEnabled then
+        startAntiFall(newCharacter)
+    end
+end)
+getgenv().FPDH = workspace.FallenPartsDestroyHeight
+-- Built-in startup notification removed; dEnzCreator startup UI is used instead.
