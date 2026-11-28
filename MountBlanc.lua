@@ -1,6 +1,6 @@
 -- MountEiger dEnzCreator Safety Guard V5 — UPDATED
 -- Base: decoded MountEiger_SafetyGuard_V4_OBF_FIXED2.
--- V5 update: one-time execution lock; duplicate executions are rejected.
+-- V5 update: Replace Instance; a new execution shuts down the prior registered instance.
 -- Header: dEnzCreator with collapse (-) and close (×) controls.
 -- Emergency Stop integration is intentionally omitted per user request.
 -- Original V2 and V4 source files remain untouched.
@@ -60,10 +60,10 @@ end
 
 
 -- ================================================================
--- dEnzCreator | ONE-TIME EXECUTION LOCK
--- First successful execution is allowed. Further executions in the
--- same executor environment are rejected, even after the UI is closed.
--- The lock is intentionally not cleared by closing the panel.
+-- dEnzCreator | REPLACE INSTANCE GUARD
+-- A new execution asks the previous V5 instance to shut down first.
+-- Legacy V5 instances without a registered shutdown handler are not
+-- force-killed: a clean executor restart is required for first upgrade.
 -- ================================================================
 local executionEnvironment = _G
 if type(getgenv) == "function" then
@@ -73,19 +73,54 @@ if type(getgenv) == "function" then
     end
 end
 
-local EXECUTION_LOCK_KEY = "__DENZCREATOR_MOUNTEIGER_V5_EXECUTION_LOCK"
-if executionEnvironment[EXECUTION_LOCK_KEY] == true then
-    warn("[dEnzCreator] Repeated execution blocked. The existing session owns this script.")
+local INSTANCE_KEY = "__DENZCREATOR_MOUNTEIGER_V5_ACTIVE_INSTANCE"
+local LEGACY_LOCK_KEY = "__DENZCREATOR_MOUNTEIGER_V5_EXECUTION_LOCK"
+local previousInstance = executionEnvironment[INSTANCE_KEY]
+
+if type(previousInstance) == "table" then
+    if type(previousInstance.shutdown) ~= "function" then
+        warn("[dEnzCreator] Previous instance is still starting or has no cleanup handler. Restart the executor once before using Replace Instance.")
+        pcall(function()
+            game:GetService("StarterGui"):SetCore("SendNotification", {
+                Title = "dEnzCreator",
+                Text = "Instance lama belum memiliki cleanup handler. Restart executor sekali untuk migrasi V5.",
+                Duration = 6
+            })
+        end)
+        return
+    end
+
+    local shutdownOK, shutdownResult = pcall(previousInstance.shutdown)
+    if not shutdownOK or shutdownResult ~= true then
+        warn("[dEnzCreator] Replace Instance aborted: previous cleanup did not confirm success.")
+        pcall(function()
+            game:GetService("StarterGui"):SetCore("SendNotification", {
+                Title = "dEnzCreator",
+                Text = "Cleanup instance lama gagal. Eksekusi baru dibatalkan.",
+                Duration = 6
+            })
+        end)
+        return
+    end
+    executionEnvironment[INSTANCE_KEY] = nil
+    executionEnvironment[LEGACY_LOCK_KEY] = nil
+elseif executionEnvironment[LEGACY_LOCK_KEY] == true then
+    -- Older V5 used a permanent boolean lock and had no global cleanup
+    -- callback. Do not pretend that destroying its GUI stops its workers.
+    warn("[dEnzCreator] Legacy V5 instance detected without a cleanup handler. Restart the executor once before upgrading.")
     pcall(function()
         game:GetService("StarterGui"):SetCore("SendNotification", {
             Title = "dEnzCreator",
-            Text = "Script sudah dijalankan. Eksekusi berulang ditolak.",
-            Duration = 5
+            Text = "Versi V5 lama tidak punya cleanup handler. Restart executor sekali untuk upgrade aman.",
+            Duration = 6
         })
     end)
     return
 end
-executionEnvironment[EXECUTION_LOCK_KEY] = true
+
+local currentInstance = { status = "starting", shutdown = nil }
+executionEnvironment[INSTANCE_KEY] = currentInstance
+executionEnvironment[LEGACY_LOCK_KEY] = true
 
 local Events = ReplicatedStorage:WaitForChild("Events")
 local LocalPlayer = Players.LocalPlayer
@@ -231,33 +266,33 @@ function UI:NewWindow(title)
     titleCorner.Parent = self.TitleBar
     self.TitleText = Instance.new("TextLabel")
     self.TitleText.Name = "TitleText"
-    self.TitleText.Size = UDim2.new(1, -76, 1, 0)
-    self.TitleText.Position = UDim2.new(0, 10, 0, 0)
+    self.TitleText.Size = UDim2.new(1, -66, 1, 0)
+    self.TitleText.Position = UDim2.new(0, 8, 0, 0)
     self.TitleText.BackgroundTransparency = 1
     self.TitleText.Text = title
     self.TitleText.Font = Enum.Font.GothamBold
-    self.TitleText.TextSize = 16
+    self.TitleText.TextSize = 14
     self.TitleText.TextColor3 = UI.Theme.Text
     self.TitleText.TextXAlignment = Enum.TextXAlignment.Left
     self.TitleText.Parent = self.TitleBar
     self.CollapseBtn = Instance.new("TextButton")
     self.CollapseBtn.Name = "CollapseBtn"
-    self.CollapseBtn.Size = UDim2.new(0, 36, 1, 0)
-    self.CollapseBtn.Position = UDim2.new(1, -72, 0, 0)
+    self.CollapseBtn.Size = UDim2.new(0, 22, 1, 0)
+    self.CollapseBtn.Position = UDim2.new(1, -52, 0, 0)
     self.CollapseBtn.BackgroundTransparency = 1
     self.CollapseBtn.Text = "-"
     self.CollapseBtn.Font = Enum.Font.GothamBold
-    self.CollapseBtn.TextSize = 18
+    self.CollapseBtn.TextSize = 16
     self.CollapseBtn.TextColor3 = UI.Theme.Text
     self.CollapseBtn.Parent = self.TitleBar
     self.CloseBtn = Instance.new("TextButton")
     self.CloseBtn.Name = "CloseBtn"
-    self.CloseBtn.Size = UDim2.new(0, 36, 1, 0)
-    self.CloseBtn.Position = UDim2.new(1, -36, 0, 0)
+    self.CloseBtn.Size = UDim2.new(0, 22, 1, 0)
+    self.CloseBtn.Position = UDim2.new(1, -22, 0, 0)
     self.CloseBtn.BackgroundTransparency = 1
     self.CloseBtn.Text = "×"
     self.CloseBtn.Font = Enum.Font.GothamBold
-    self.CloseBtn.TextSize = 20
+    self.CloseBtn.TextSize = 18
     self.CloseBtn.TextColor3 = UI.Theme.Text
     self.CloseBtn.Parent = self.TitleBar
     self:TrackConnection(self.CloseBtn.MouseButton1Click:Connect(function()
@@ -4887,3 +4922,141 @@ LocalPlayer.CharacterAdded:Connect(function(newCharacter)
 end)
 getgenv().FPDH = workspace.FallenPartsDestroyHeight
 -- Built-in startup notification removed; dEnzCreator startup UI is used instead.
+
+
+-- ================================================================
+-- dEnzCreator | REPLACE INSTANCE SHUTDOWN REGISTRATION
+-- This callback is installed only after the full script has initialized.
+-- Each cleanup action is isolated; any failed action blocks replacement.
+-- ================================================================
+local function dEnzCreatorShutdownPreviousInstance()
+    local cleanupSucceeded = true
+    local function attempt(label, callback)
+        local ok, err = pcall(callback)
+        if not ok then
+            cleanupSucceeded = false
+            warn("[dEnzCreator] Cleanup failed (" .. label .. "): " .. tostring(err))
+        end
+    end
+
+    -- Stop state-driven workers first so their loops can observe OFF.
+    autofarm = false
+    autoCollectingCubes = false
+    autoClaimRewards = false
+    autoeat = false
+    farmMoving = false
+    continuousGrabEnabled = false
+    antiAnchorEnabled = false
+    antiFallEnabled = false
+    slippageEliminationEnabled = false
+    gravityLockEnabled = false
+    runSpeedEnabled = false
+    wallClipEnabled = false
+    flightEnabled = false
+    skyWalkEnabled = false
+    platformEnabled = false
+
+    config.autofarm = false
+    config.autoCollectingCubes = false
+    config.autoClaimRewards = false
+    config.autoeat = false
+    config.farmMoving = false
+    config.keepUnanchor = false
+    config.antiFallEnabled = false
+    config.slippageEliminationEnabled = false
+    config.gravityLockEnabled = false
+    config.platformEnabled = false
+
+    -- Feature-specific cleanup routines.
+    if type(stopAntiFall) == "function" then attempt("Anti Fall", stopAntiFall) end
+    if type(toggleSlippageElimination) == "function" then
+        attempt("No Slip", function() toggleSlippageElimination(false) end)
+    end
+    if type(toggleGravityLock) == "function" then
+        attempt("Gravity Lock", function() toggleGravityLock(false) end)
+    end
+    if type(toggleContinuousGrab) == "function" then
+        attempt("CS Grab", function() toggleContinuousGrab(false) end)
+    end
+    if type(teleportGrabStop) == "function" then
+        attempt("TP Grab worker", function() teleportGrabStop("REPLACED BY NEW INSTANCE") end)
+    end
+    if type(setPlayerESPEnabled) == "function" then
+        attempt("Player ESP", function() setPlayerESPEnabled(false) end)
+    end
+    if type(setAntiAnchorEnabled) == "function" then
+        attempt("Anti Anchor", function() setAntiAnchorEnabled(false) end)
+    end
+    if type(setWallClipEnabled) == "function" then
+        attempt("Wall Clip", function() setWallClipEnabled(false) end)
+    end
+    if type(setRunSpeedEnabled) == "function" then
+        attempt("Run Speed", function() setRunSpeedEnabled(false) end)
+    end
+    if type(setFlightEnabled) == "function" then
+        attempt("Flight", function() setFlightEnabled(false) end)
+    end
+    if type(skyWalkStop) == "function" then attempt("SkyWalk", skyWalkStop) end
+    if type(removeBigPlatform) == "function" then attempt("Platform", removeBigPlatform) end
+    if type(restoreWallClipParts) == "function" then attempt("Wall Clip restore", restoreWallClipParts) end
+    if type(clearFlightForces) == "function" then attempt("Flight forces", clearFlightForces) end
+
+    -- Disconnect known long-lived connections owned by this script.
+    local ownedConnections = {
+        cubeLootHeartbeatConnection, cubeLootAddedConnection, cubeLootRemovingConnection,
+        candyLootAddedConnection, candyLootRemovingConnection, antiAnchorConnection,
+        antiFallConnection, slippageConnection, gravityLockConnection,
+        runSpeedConnection, wallClipConnection, skyWalkHeartbeat, continuousGrabConnection
+    }
+    for index, connection in ipairs(ownedConnections) do
+        if connection and typeof(connection) == "RBXScriptConnection" then
+            attempt("owned connection " .. tostring(index), function()
+                if connection.Connected then connection:Disconnect() end
+            end)
+        end
+    end
+
+    if teleportThrowUI then
+        attempt("TP Slam UI", function() teleportThrowUI:Destroy(); teleportThrowUI = nil end)
+    end
+    if teleportGrabUI then
+        attempt("TP Grab UI", function() teleportGrabUI:Destroy(); teleportGrabUI = nil end)
+    end
+    if continuousGrabUI then
+        attempt("CS Grab UI", function() continuousGrabUI:Destroy(); continuousGrabUI = nil end)
+    end
+    if invisibilityGui then
+        attempt("Invisible UI", function() invisibilityGui:Destroy(); invisibilityGui = nil end)
+    end
+    if invisibilityConnections then
+        for _, connection in pairs(invisibilityConnections) do
+            if connection and connection.Connected then
+                attempt("Invisible connection", function() connection:Disconnect() end)
+            end
+        end
+        invisibilityConnections = {}
+    end
+
+    if ragdolled and type(unragdollCharacter) == "function" then
+        attempt("Ragdoll restore", unragdollCharacter)
+        ragdolled = false
+    end
+    if mapHidden and type(toggleMap) == "function" then
+        attempt("Map restore", toggleMap)
+    end
+
+    -- Give state-driven workers a short opportunity to leave their loops.
+    task.wait(0.35)
+
+    if mainUI and mainUI.MainGui then
+        attempt("Main UI", function() mainUI.MainGui:Destroy() end)
+    end
+
+    if not cleanupSucceeded then
+        return false
+    end
+    return true
+end
+
+currentInstance.shutdown = dEnzCreatorShutdownPreviousInstance
+currentInstance.status = "active"
