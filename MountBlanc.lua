@@ -1,3 +1,10 @@
+-- MountEiger dEnzCreator Safety Guard V5 — UPDATED
+-- Base: decoded MountEiger_SafetyGuard_V4_OBF_FIXED2.
+-- V5 update: one-time execution lock; duplicate executions are rejected.
+-- Header: dEnzCreator with collapse (-) and close (×) controls.
+-- Emergency Stop integration is intentionally omitted per user request.
+-- Original V2 and V4 source files remain untouched.
+
 -- MountEiger Safety Guard V4 changelog:
 -- 1) Reworked AutoFarm lifecycle cleanup into an idempotent cleanup path.
 -- 2) Tracks/disconnects Heartbeat, Humanoid.Died, CharacterAdded and CharacterRemoving connections.
@@ -50,6 +57,35 @@ if not whitelistOK or whitelistResult ~= true then
     end)
     return
 end
+
+
+-- ================================================================
+-- dEnzCreator | ONE-TIME EXECUTION LOCK
+-- First successful execution is allowed. Further executions in the
+-- same executor environment are rejected, even after the UI is closed.
+-- The lock is intentionally not cleared by closing the panel.
+-- ================================================================
+local executionEnvironment = _G
+if type(getgenv) == "function" then
+    local envOK, sharedEnv = pcall(getgenv)
+    if envOK and type(sharedEnv) == "table" then
+        executionEnvironment = sharedEnv
+    end
+end
+
+local EXECUTION_LOCK_KEY = "__DENZCREATOR_MOUNTEIGER_V5_EXECUTION_LOCK"
+if executionEnvironment[EXECUTION_LOCK_KEY] == true then
+    warn("[dEnzCreator] Repeated execution blocked. The existing session owns this script.")
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "dEnzCreator",
+            Text = "Script sudah dijalankan. Eksekusi berulang ditolak.",
+            Duration = 5
+        })
+    end)
+    return
+end
+executionEnvironment[EXECUTION_LOCK_KEY] = true
 
 local Events = ReplicatedStorage:WaitForChild("Events")
 local LocalPlayer = Players.LocalPlayer
@@ -206,26 +242,29 @@ function UI:NewWindow(title)
     self.TitleText.Parent = self.TitleBar
     self.CollapseBtn = Instance.new("TextButton")
     self.CollapseBtn.Name = "CollapseBtn"
-    self.CollapseBtn.Size = UDim2.new(0, 34, 1, 0)
-    self.CollapseBtn.Position = UDim2.new(1, -68, 0, 0)
+    self.CollapseBtn.Size = UDim2.new(0, 36, 1, 0)
+    self.CollapseBtn.Position = UDim2.new(1, -72, 0, 0)
     self.CollapseBtn.BackgroundTransparency = 1
     self.CollapseBtn.Text = "-"
     self.CollapseBtn.Font = Enum.Font.GothamBold
     self.CollapseBtn.TextSize = 18
     self.CollapseBtn.TextColor3 = UI.Theme.Text
     self.CollapseBtn.Parent = self.TitleBar
-
     self.CloseBtn = Instance.new("TextButton")
     self.CloseBtn.Name = "CloseBtn"
-    self.CloseBtn.Size = UDim2.new(0, 34, 1, 0)
-    self.CloseBtn.Position = UDim2.new(1, -34, 0, 0)
+    self.CloseBtn.Size = UDim2.new(0, 36, 1, 0)
+    self.CloseBtn.Position = UDim2.new(1, -36, 0, 0)
     self.CloseBtn.BackgroundTransparency = 1
     self.CloseBtn.Text = "×"
     self.CloseBtn.Font = Enum.Font.GothamBold
-    self.CloseBtn.TextSize = 18
+    self.CloseBtn.TextSize = 20
     self.CloseBtn.TextColor3 = UI.Theme.Text
     self.CloseBtn.Parent = self.TitleBar
-
+    self:TrackConnection(self.CloseBtn.MouseButton1Click:Connect(function()
+        if not self._destroyed and self.MainGui then
+            self.MainGui:Destroy()
+        end
+    end))
     self.ContentContainer = Instance.new("Frame")
     self.ContentContainer.Name = "ContentContainer"
     self.ContentContainer.Size = UDim2.new(1, 0, 1, -40)
@@ -242,11 +281,6 @@ function UI:NewWindow(title)
     self.IsCollapsed = false
     self:TrackConnection(self.CollapseBtn.MouseButton1Click:Connect(function()
         if not self._destroyed then self:ToggleCollapse() end
-    end))
-    self:TrackConnection(self.CloseBtn.MouseButton1Click:Connect(function()
-        if not self._destroyed and self.MainGui then
-            self.MainGui:Destroy()
-        end
     end))
     self.Sections = {}
     self.CurrentY = 0
